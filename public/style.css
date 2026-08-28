@@ -180,10 +180,10 @@ body {
 .act.green:hover { color: var(--green); border-color: var(--green); }
 .act.red:hover { color: var(--red); border-color: var(--red); }
 .video-preview {
-  /* 宽度贴合视频内容并居中，而不是撑满整列（避免大面积黑色幕布） */
+  /* 宽度贴合视频内容、靠左对齐（不再撑满整列，避免大面积黑色幕布） */
   width: fit-content;
   max-width: 100%;
-  margin: 9px auto 0;
+  margin: 9px 0 0;
   border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
   background: #0d1117; /* 柔和深底色，替代纯黑 */
   display: flex; align-items: center; justify-content: center;
