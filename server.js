@@ -4,8 +4,9 @@
  * Express + SQLite + 后台轮询器 + 静态前端
  */
 const path = require('node:path');
+const fs = require('node:fs');
 const express = require('express');
-const { settings, tasks, DEFAULT_SETTINGS, DB_PATH } = require('./db');
+const { settings, tasks, projects, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
 const poller = require('./poller');
 const { log, recent: recentLogs } = require('./logger');
@@ -18,12 +19,19 @@ app.use(express.json({ limit: '2mb' }));
 const MODELS = {
   'agnes-video-2.5-flash': { family: 'v25', sizes: ['720P'], free: true, label: 'Agnes Video 2.5 Flash（免费）' },
   'agnes-video-2.5':       { family: 'v25', sizes: ['720P', '960P', '2K'], free: false, label: 'Agnes Video 2.5（付费）' },
-  'agnes-video-v2.0':      { family: 'v2', free: true, label: 'Agnes Video V2.0（免费 · 文生/图生/关键帧）' },
+  'agnes-video-v2.0':      { family: 'v2', free: true, label: 'Agnes Video V2.0（旧模型 · 下架）' },
 };
 const MODES = ['text', 'keyframe', 'reference'];
 const V2_MODES = ['text', 'image', 'keyframes'];
 const ASPECT_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 const SECONDS_OK = Array.from({ length: 9 }, (_, i) => String(i + 4)); // '4'..'12'
+
+/* 流水线模型（最新免费三件套，M1 固定值） */
+const LLM_MODEL = 'agnes-2.5-flash';        // 文本：提示词优化/文案
+const IMAGE_MODEL = 'agnes-image-2.1-flash'; // 图片：角色/场景
+const IMAGE_SIZES = ['1K', '2K', '3K', '4K'];
+const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'];
+const ARTIFACTS_DIR = path.join(__dirname, 'data', 'artifacts');
 
 /* ---------------- 工具函数 ---------------- */
 
@@ -246,14 +254,14 @@ function buildV25Payload(b) {
   };
 }
 
-/** 提交任务到 Agnes API 并落库（供创建 / 重试复用） */
-async function submitTask(payload, meta) {
+/** 提交任务到 Agnes API 并落库（供创建 / 重试 / 流水线视频复用） */
+async function submitTask(payload, meta, opts = {}) {
   const apiKey = settings.get('api_key', '');
   const baseUrl = settings.get('base_url', DEFAULT_SETTINGS.base_url);
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
 
   const id = tasks.insert({
-    status: 'queued', ...meta, request_json: payload,
+    status: 'queued', ...meta, request_json: payload, project_id: opts.project_id || null,
   });
 
   let r;
@@ -427,6 +435,358 @@ app.post('/api/tasks/bulk/clear-failed', (req, res) => {
 
 // 日志（内存环形缓冲）
 app.get('/api/logs', (req, res) => res.json({ items: recentLogs(200) }));
+
+/* ================= 创作流水线（M1：文本 / 图片 / 项目） ================= */
+
+/** 容错解析 LLM 输出 JSON：剥 markdown 围栏 → 提取首个平衡对象 → JSON.parse */
+function parseLLMJson(text) {
+  if (!text) return null;
+  let s = String(text).trim();
+  // 去掉 ```json ... ``` 围栏
+  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  try {
+    return JSON.parse(s);
+  } catch { /* 继续尝试提取对象 */ }
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < s.length; i++) {
+    if (s[i] === '{') depth++;
+    else if (s[i] === '}') {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(s.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** 文案生成系统提示词：严格输出结构化 JSON */
+const SCRIPT_SYSTEM_PROMPT = `你是资深影视创作者助理。根据用户的一句话创意，输出一份可直接用于 AI 出片的结构化文案。
+只输出一个 JSON 对象（不要 markdown 代码块、不要注释），字段如下：
+{
+  "script": "故事梗概，80~150 字，交代人物、目标、冲突与氛围",
+  "video_prompt": "视频生成提示词，中文，按顺序描述：主体与场景→动作与变化→镜头语言→视觉风格→声音与节奏；若后续会引用角色图，请以\\"以 <Picture 1> 中的角色为参考，保持其外观一致\\"开头或包含该要求；长度 80~180 字",
+  "character_desc": "主角外观设定，适合生成角色立绘：性别年龄、发型发色、五官气质、服装配色、身材体型、有无配饰，100 字内",
+  "scene_desc": "主要场景描述：环境类型、时间光线、色调氛围，80 字内"
+}`;
+
+/** 下载远程图片到本地 artifacts 做永久备份（失败不阻塞） */
+async function downloadArtifact(remoteUrl) {
+  try {
+    fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+    const res = await fetch(remoteUrl, { signal: AbortSignal.timeout(30_000) });
+    if (!res.ok) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length) return null;
+    const ct = res.headers.get('content-type') || '';
+    let ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : ct.includes('jpeg') || ct.includes('jpg') ? '.jpg' : '.png';
+    const name = `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}${ext}`;
+    fs.writeFileSync(path.join(ARTIFACTS_DIR, name), buf);
+    return { local_path: path.join(ARTIFACTS_DIR, name), local_url: `/artifacts/${name}` };
+  } catch {
+    return null;
+  }
+}
+
+/** 校验图片请求并构建 payload（文生图 / 图生图 / 多图合成） */
+function buildImagePayload(b) {
+  const prompt = String(b.prompt || '').trim();
+  if (!prompt) throw new ApiError(400, '图片描述 prompt 不能为空');
+  const size = String(b.size || '1K');
+  if (!IMAGE_SIZES.includes(size) && !/^\d+x\d+$/.test(size)) {
+    throw new ApiError(400, `size 仅支持 ${IMAGE_SIZES.join('/')} 或 精确尺寸（如 1024x768），收到：${size}`);
+  }
+  const ratio = String(b.ratio || '1:1');
+  if (b.ratio !== undefined && !IMAGE_RATIOS.includes(ratio)) {
+    throw new ApiError(400, `ratio 仅支持 ${IMAGE_RATIOS.join('/')}，收到：${ratio}`);
+  }
+  // 输入图：允许 http(s) URL 或 data:image base64（图生图 / 多图合成）
+  const inputImages = [];
+  if (b.image !== undefined && b.image !== null && b.image !== '') {
+    if (!Array.isArray(b.image)) throw new ApiError(400, 'image 必须是数组（URL 或 data:image）');
+    for (const u of b.image) {
+      const s = typeof u === 'string' ? u.trim() : '';
+      if (!s) continue;
+      if (!(isHttpUrl(s) || /^data:image\//.test(s))) {
+        throw new ApiError(400, `image 必须是可公开访问的 http(s) URL 或 data:image 前缀，收到：${s.slice(0, 50)}`);
+      }
+      inputImages.push(s);
+    }
+  }
+  const payload = {
+    model: IMAGE_MODEL,
+    prompt,
+    size,
+    extra_body: { response_format: 'url' },
+  };
+  if (b.ratio !== undefined) payload.ratio = ratio;
+  if (inputImages.length) payload.extra_body.image = inputImages;
+  return { payload, prompt, size, ratio: b.ratio !== undefined ? ratio : null, inputImages };
+}
+
+/* ---------- 文本 / LLM ---------- */
+
+// 通用文本生成（OpenAI 兼容）
+app.post('/api/llm/chat', ah(async (req, res) => {
+  const b = req.body || {};
+  const messages = Array.isArray(b.messages) ? b.messages : [];
+  if (!messages.length) throw new ApiError(400, 'messages 至少需要一条消息');
+  if (b.system) messages.unshift({ role: 'system', content: String(b.system) });
+  const apiKey = settings.get('api_key', '');
+  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  let r;
+  try {
+    r = await agnes.chatComplete({
+      apiKey,
+      baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
+      model: b.model || LLM_MODEL,
+      messages,
+      temperature: b.temperature,
+      max_tokens: b.max_tokens,
+    });
+  } catch (e) {
+    throw new ApiError(502, `文本生成网络异常：${e.message}`);
+  }
+  if (!r.ok) {
+    const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
+    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `文本生成失败（${r.status}）：${String(detail).slice(0, 400)}`);
+  }
+  const content = r.data?.choices?.[0]?.message?.content || '';
+  if (!content) throw new ApiError(502, '文本模型未返回内容');
+  res.json({ content, model: r.data?.model || LLM_MODEL });
+}));
+
+// 创意 → 结构化文案（流水线第 2 步）
+app.post('/api/llm/script', ah(async (req, res) => {
+  const b = req.body || {};
+  const idea = String(b.idea || '').trim();
+  if (!idea) throw new ApiError(400, '请先输入创意想法 idea');
+  if (b.project_id !== undefined && !projects.get(b.project_id)) throw new ApiError(404, '项目不存在');
+  const userMessage = `一句话创意：${idea}\n风格偏好：${b.style || '不限制'}\n画幅：${b.aspect_ratio || '16:9'}\n目标时长：${b.seconds || '5'} 秒`;
+  const apiKey = settings.get('api_key', '');
+  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  let r;
+  try {
+    r = await agnes.chatComplete({
+      apiKey,
+      baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
+      model: LLM_MODEL,
+      messages: [{ role: 'system', content: SCRIPT_SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
+      temperature: 0.8,
+      max_tokens: 2000,
+    });
+  } catch (e) {
+    throw new ApiError(502, `文案生成网络异常：${e.message}`);
+  }
+  if (!r.ok) {
+    const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
+    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `文案生成失败（${r.status}）：${String(detail).slice(0, 400)}`);
+  }
+  const raw = r.data?.choices?.[0]?.message?.content || '';
+  const parsed = parseLLMJson(raw);
+  if (!parsed || typeof parsed !== 'object') {
+    // 降级：模型没按 JSON 输出，返回原文由前端展示
+    return res.json({ parsed: false, content: raw, result: null });
+  }
+  const result = {
+    script: String(parsed.script || '').trim(),
+    video_prompt: String(parsed.video_prompt || '').trim(),
+    character_desc: String(parsed.character_desc || '').trim(),
+    scene_desc: String(parsed.scene_desc || '').trim(),
+  };
+  // 落库到项目（若指定），每个 kind 最新版本自动选中
+  let texts = null;
+  if (b.project_id) {
+    for (const kind of ['script', 'video_prompt', 'character_desc', 'scene_desc']) {
+      if (!result[kind]) continue;
+      const tid = projects.addText({ project_id: b.project_id, kind, content: result[kind], model: LLM_MODEL });
+      projects.selectText(tid, kind, b.project_id);
+    }
+    projects.update(b.project_id, { status: 'copy_done' });
+    texts = projects.texts(b.project_id);
+    log('info', `项目 #${b.project_id} 文案生成完成`);
+  }
+  res.json({ parsed: true, result, texts, model: r.data?.model || LLM_MODEL });
+}));
+
+/* ---------- 图片 ---------- */
+
+// 图片生成（文生图 / 图生图，同步）
+app.post('/api/images/generate', ah(async (req, res) => {
+  const { payload, prompt, size, ratio, inputImages } = buildImagePayload(req.body);
+  const b = req.body || {};
+  const kind = ['character', 'scene'].includes(b.kind) ? b.kind : 'character';
+  if (b.project_id !== undefined && !projects.get(b.project_id)) throw new ApiError(404, '项目不存在');
+  const apiKey = settings.get('api_key', '');
+  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  let r;
+  try {
+    r = await agnes.generateImage({
+      apiKey,
+      baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
+      payload,
+    });
+  } catch (e) {
+    throw new ApiError(504, `图片生成超时或网络异常（${e.message}）`);
+  }
+  if (!r.ok) {
+    const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
+    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `图片生成失败（${r.status}）：${String(detail).slice(0, 400)}`);
+  }
+  const remoteUrl = r.data?.data?.[0]?.url;
+  if (!remoteUrl) throw new ApiError(502, '图片生成响应中未找到 url（请在 extra_body.response_format 指定 url）');
+  // 本地备份（不阻塞）
+  const backup = await downloadArtifact(remoteUrl);
+  let image = null;
+  if (b.project_id) {
+    const imgId = projects.addImage({
+      project_id: b.project_id, kind, prompt, remote_url: remoteUrl,
+      local_path: backup?.local_path || null, size, ratio, model: IMAGE_MODEL,
+    });
+    projects.selectImage(imgId, kind, b.project_id);
+    if (kind === 'character') projects.update(b.project_id, { status: 'character_done' });
+    image = projects.images(b.project_id).find((x) => x.id === imgId) || null;
+    log('info', `项目 #${b.project_id} ${kind === 'character' ? '角色图' : '场景图'}生成完成 #${imgId}`);
+  }
+  res.json({
+    remote_url: remoteUrl,
+    local_url: backup?.local_url || null,
+    size, ratio,
+    image,
+  });
+}));
+
+// 删除项目图片记录
+app.delete('/api/images/:id', (req, res) => {
+  if (!projects.removeImage(req.params.id)) throw new ApiError(404, '图片记录不存在');
+  res.json({ ok: true });
+});
+
+/* ---------- 项目（Projects） ---------- */
+
+app.post('/api/projects', (req, res) => {
+  const b = req.body || {};
+  const name = String(b.name || '').trim();
+  if (!name) throw new ApiError(400, '项目名称不能为空');
+  if (b.aspect_ratio && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+  if (b.seconds && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  const id = projects.insert({
+    name, idea: b.idea, style: b.style, aspect_ratio: b.aspect_ratio, seconds: b.seconds,
+  });
+  res.status(201).json(projects.get(id));
+});
+
+app.get('/api/projects', (req, res) => res.json({ items: projects.list() }));
+
+app.get('/api/projects/:id', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  res.json({
+    project: p,
+    texts: projects.texts(p.id),
+    images: projects.images(p.id),
+    tasks: projects.tasks(p.id),
+  });
+});
+
+app.patch('/api/projects/:id', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const b = req.body || {};
+  if (b.aspect_ratio && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+  if (b.seconds && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  projects.update(p.id, {
+    name: b.name, idea: b.idea, style: b.style, aspect_ratio: b.aspect_ratio, seconds: b.seconds, status: b.status,
+  });
+  res.json(projects.get(p.id));
+});
+
+app.delete('/api/projects/:id', (req, res) => {
+  if (!projects.remove(req.params.id)) throw new ApiError(404, '项目不存在');
+  res.json({ ok: true });
+});
+
+// 选定文案版本（同一 kind 只有一条 selected）
+app.post('/api/projects/:id/select-text', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const textId = Number(req.body?.text_id);
+  const target = projects.texts(p.id).find((t) => t.id === textId);
+  if (!target) throw new ApiError(404, '文案记录不存在');
+  projects.selectText(textId, target.kind, p.id);
+  res.json({ ok: true });
+});
+
+// 编辑文案版本内容（手动微调）
+app.patch('/api/projects/:id/texts/:textId', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const content = String(req.body?.content ?? '').trim();
+  if (!content) throw new ApiError(400, '内容不能为空');
+  if (!projects.updateText(req.params.textId, content)) throw new ApiError(404, '文案记录不存在');
+  res.json({ ok: true });
+});
+
+// 选定图片定稿（同一 kind 只有一张 selected）
+app.post('/api/projects/:id/select-image', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const imgId = Number(req.body?.image_id);
+  const target = projects.images(p.id).find((x) => x.id === imgId);
+  if (!target) throw new ApiError(404, '图片记录不存在');
+  projects.selectImage(imgId, target.kind, p.id);
+  res.json({ ok: true });
+});
+
+// 从项目发起视频任务：角色定稿图 + 选定分镜提示词 → 2.5-flash reference 模式
+app.post('/api/projects/:id/videos', ah(async (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const b = req.body || {};
+  const charImg = projects.selectedImage(p.id, 'character');
+  if (!charImg || !charImg.remote_url) {
+    throw new ApiError(400, '请先完成「角色设定」并定稿一张角色图');
+  }
+  let prompt = String(b.prompt || '').trim();
+  if (!prompt) {
+    const selectedVideo = projects.selectedText(p.id, 'video_prompt');
+    prompt = selectedVideo?.content || '';
+  }
+  if (!prompt) {
+    const latest = projects.texts(p.id).find((t) => t.kind === 'video_prompt');
+    prompt = latest?.content || '';
+  }
+  if (!prompt) throw new ApiError(400, '缺少分镜提示词（请在文案步骤生成或手动输入）');
+  // 提示词中必须引用角色图，显式保持外观一致
+  if (!prompt.includes('<Picture 1>')) {
+    prompt = `以 <Picture 1> 中的角色为参考，保持其外观一致。${prompt}`;
+  }
+  const seconds = String(b.seconds || p.seconds || '5');
+  const aspectRatio = String(b.aspect_ratio || p.aspect_ratio || '16:9');
+  const { payload, meta } = buildPayload({
+    model: 'agnes-video-2.5-flash',
+    prompt,
+    mode: 'reference',
+    seconds,
+    size: '720P',
+    aspect_ratio: aspectRatio,
+    images: [charImg.remote_url],
+  });
+  const task = await submitTask(payload, meta, { project_id: p.id });
+  projects.update(p.id, { status: 'video_submitted' });
+  log('info', `项目 #${p.id} 发起视频任务 #${task.id}（引用角色图 #${charImg.id}）`);
+  res.status(201).json(task);
+}));
+
+/* ---------- 本地图片静态服务 ---------- */
+try { fs.mkdirSync(ARTIFACTS_DIR, { recursive: true }); } catch { /* ignore */ }
+app.use('/artifacts', express.static(ARTIFACTS_DIR, { maxAge: '7d' }));
 
 /* ---------------- 静态前端 ---------------- */
 app.use(express.static(path.join(__dirname, 'public')));

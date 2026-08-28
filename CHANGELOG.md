@@ -8,6 +8,25 @@
 
 - 计划中的功能（欢迎在 issue 中提出建议）。
 
+## [1.1.0] - 2025-07-17
+
+### Added
+
+- **创作流水线 M1（工作台 + 任务中心）**：
+  - 顶部导航分流「🎬 创作工作台」与「📋 任务中心」。
+  - 工作台项目制四步流水线：创意 → 文案与提示词 → 角色设定图 → 视频生成。
+  - 文本模型 `agnes-2.5-flash` 接入：创意生成结构化文案（故事梗概 / 视频提示词 / 角色外观 / 场景），JSON 解析容错，4 类文案可手动编辑保存、多版本选用。
+  - 图片模型 `agnes-image-2.1-flash` 接入：文生图/图生图，同步生成，产出 Agnes CDN URL 并自动下载本地备份（`/artifacts` 静态服务），角色图墙单张定稿。
+  - 项目发起视频：自动组装 `agnes-video-2.5-flash` reference 模式（定稿角色图 + `<Picture 1>` 提示词注入 + 项目时长/画幅），任务入队并关联 `project_id`。
+  - 新建视频表单增加「✨ AI 优化提示词」按钮（调文本模型优化手写描述）。
+  - 任务中心模型收敛：默认 `agnes-video-2.5-flash`，付费 2.5 收进「高级」分组，**`agnes-video-v2.0` 旧模型界面下架**（后端兼容层保留，历史任务正常显示）。
+
+### Changed
+
+- `agnes.js` 扩展 `chatComplete()` / `generateImage()`（图片 180s 长超时）。
+- DB 新增 `projects` / `project_texts` / `project_images` 三表，`tasks` 增加 `project_id` 列（自动迁移）。
+- mock e2e 扩展到 **27 项**，新增 chat/images 端点模拟与流水线全链路用例。
+
 ## [1.0.2] - 2025-07-17
 
 ### Changed

@@ -7,6 +7,8 @@
  */
 
 const REQUEST_TIMEOUT_MS = 30_000;
+const IMAGE_TIMEOUT_MS = 180_000; // 图片同步生成 30–180s（官方建议 60–360s）
+const CHAT_TIMEOUT_MS = 60_000;   // 文本生成最长 60s
 
 /** 归一化 base_url：去掉尾部斜杠与 /v1 后缀（用户可能直接粘贴文档里的 AGNES_BASE_URL） */
 function normalizeBaseUrl(raw) {
@@ -18,9 +20,9 @@ function normalizeBaseUrl(raw) {
 }
 
 /** 统一的 fetch 包装：返回 { ok, status, statusText, data, raw } */
-async function request(method, url, { apiKey, body } = {}) {
+async function request(method, url, { apiKey, body, timeoutMs = REQUEST_TIMEOUT_MS } = {}) {
   const headers = { Authorization: `Bearer ${apiKey}` };
-  const init = { method, headers, signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) };
+  const init = { method, headers, signal: AbortSignal.timeout(timeoutMs) };
   if (body !== undefined) {
     headers['Content-Type'] = 'application/json';
     init.body = JSON.stringify(body);
@@ -51,6 +53,21 @@ const agnes = {
       `${normalizeBaseUrl(baseUrl)}/agnesapi` +
       `?video_id=${encodeURIComponent(videoId)}&model_name=${encodeURIComponent(model || 'agnes-video-2.5')}`;
     return request('GET', url, { apiKey });
+  },
+
+  /** 文本生成（OpenAI 兼容 chat completions）：POST {base}/v1/chat/completions */
+  async chatComplete({ apiKey, baseUrl, model, messages, temperature, max_tokens }) {
+    const url = `${normalizeBaseUrl(baseUrl)}/v1/chat/completions`;
+    const body = { model, messages };
+    if (temperature !== undefined) body.temperature = temperature;
+    if (max_tokens !== undefined) body.max_tokens = max_tokens;
+    return request('POST', url, { apiKey, body, timeoutMs: CHAT_TIMEOUT_MS });
+  },
+
+  /** 图片生成（同步，可能耗时较长）：POST {base}/v1/images/generations */
+  async generateImage({ apiKey, baseUrl, payload }) {
+    const url = `${normalizeBaseUrl(baseUrl)}/v1/images/generations`;
+    return request('POST', url, { apiKey, body: payload, timeoutMs: IMAGE_TIMEOUT_MS });
   },
 };
 

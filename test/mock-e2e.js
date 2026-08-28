@@ -85,6 +85,45 @@ const mockServer = http.createServer(async (req, res) => {
     return send(200, mockResult(job));
   }
 
+  // 模拟文本模型 /v1/chat/completions
+  if (req.method === 'POST' && u.pathname === '/v1/chat/completions') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw || '{}');
+    const sys = (body.messages || []).find((m) => m.role === 'system')?.content || '';
+    let content;
+    if (sys.includes('视频生成提示词优化器')) {
+      content = '雨后的未来城市街道，霓虹灯倒映在湿漉漉的地面，一辆银色跑车缓缓驶过，镜头缓慢横摇跟随，电影级写实风格，自然环境声，高细节';
+    } else if (sys.includes('影视创作者助理')) {
+      content = JSON.stringify({
+        script: '测试梗概：夏日黄昏，穿黄胶鞋的少年沿着麦田土路走向远方，镜头跟随他的背影，暖金色逆光，宁静而怀念。',
+        video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。少年沿麦田土路走向远方，麦浪随风起伏，暖金色逆光，镜头缓慢横摇，电影写实风格，自然环境声',
+        character_desc: '十五岁少年，黑色短发，穿旧蓝白校服与黄色胶鞋，清瘦，腼腆，电影写实',
+        scene_desc: '黄昏麦田土路，麦浪起伏，暖金色逆光，天边晚霞',
+      });
+    } else {
+      content = '（mock）通用文本回复';
+    }
+    return send(200, { choices: [{ message: { role: 'assistant', content } }], model: body.model || 'agnes-2.5-flash' });
+  }
+
+  // 模拟图片模型 /v1/images/generations（返回 CDN URL）
+  if (req.method === 'POST' && u.pathname === '/v1/images/generations') {
+    seq += 1;
+    const url = `http://127.0.0.1:${MOCK_PORT}/out/img-mock-${seq}.png`;
+    return send(200, { created: Date.now(), data: [{ url, b64_json: null, revised_prompt: null }] });
+  }
+
+  // 模拟生成结果图片（供本地备份下载）
+  if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'
+    );
+    res.writeHead(200, { 'Content-Type': 'image/png' });
+    return res.end(png);
+  }
+
   send(404, { detail: 'not found' });
 });
 
@@ -273,6 +312,72 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!v2final || v2final.status !== 'completed') err(`V2.0 任务未完成: ${JSON.stringify(v2final?.status)}`);
   if (!v2final.metadata_url) err('V2.0 完成但缺 metadata_url');
   ok(`V2.0 轮询闭环完成（轮询 ${v2final.poll_count} 次，视频: ${v2final.metadata_url}）`);
+
+  // ================= 流水线全链路（创意→文案→角色图→视频） =================
+  // 16. 创建项目
+  const proj = await api('POST', '/api/projects', {
+    name: '黄昏麦田少年', idea: '黄昏麦田，穿黄胶鞋的少年走向远方', style: '电影写实',
+    aspect_ratio: '16:9', seconds: '8',
+  });
+  if (proj.status !== 201 || !proj.data.id) err(`创建项目失败: ${JSON.stringify(proj.data)}`);
+  const pid = proj.data.id;
+  ok(`创建项目 #${pid}（${proj.data.name}）`);
+
+  // 17. 文案生成（文本模型 → 结构化 JSON 落库）
+  const scr = await api('POST', '/api/llm/script', {
+    idea: '黄昏麦田少年走向远方', style: '电影写实', aspect_ratio: '16:9', seconds: '8', project_id: pid,
+  });
+  if (scr.status !== 200 || !scr.data.parsed) err(`文案生成失败: ${JSON.stringify(scr.data).slice(0, 300)}`);
+  if (!scr.data.result?.video_prompt || !scr.data.result?.character_desc) err('文案缺少 video_prompt/character_desc');
+  {
+    const d = await api('GET', `/api/projects/${pid}`);
+    const kinds = d.data.texts.map((t) => t.kind).sort();
+    if (!['character_desc', 'scene_desc', 'script', 'video_prompt'].every((k) => kinds.includes(k))) {
+      err(`文案未按 4 个 kind 落库: ${kinds.join(',')}`);
+    }
+  }
+  ok('文案生成：4 类文案结构化输出并落库');
+
+  // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
+  const img = await api('POST', '/api/images/generate', {
+    prompt: '角色立绘：银发少年', size: '1K', ratio: '1:1', project_id: pid, kind: 'character',
+  });
+  if (img.status !== 200 || !img.data.remote_url) err(`角色图生成失败: ${JSON.stringify(img.data).slice(0, 300)}`);
+  if (!img.data.image?.selected) err('角色图未自动定稿');
+  ok(`角色图生成并定稿 #${img.data.image.id}（remote=${img.data.remote_url} local=${img.data.local_url || '无'}）`);
+
+  // 19. 从项目发起视频任务（2.5-flash reference 模式）
+  const pv = await api('POST', `/api/projects/${pid}/videos`, { seconds: '8' });
+  if (pv.status !== 201) err(`项目发视频失败: ${JSON.stringify(pv.data)}`);
+  const rq = pv.data.request_json;
+  if (rq.model !== 'agnes-video-2.5-flash') err(`视频模型错误: ${rq.model}`);
+  if (rq.mode !== 'reference' || !Array.isArray(rq.images) || rq.images[0] !== img.data.remote_url) {
+    err(`视频引用角色图错误: ${JSON.stringify(rq)}`);
+  }
+  if (!String(rq.prompt).includes('<Picture 1>')) err('视频提示词未自动注入 <Picture 1> 角色引用');
+  if (pv.data.project_id !== pid) err('视频任务未关联项目');
+  ok(`项目发起视频任务 #${pv.data.id}（reference + 角色图引用 + <Picture 1>）`);
+
+  // 20. 项目视频任务轮询完成
+  let pvFinal = null;
+  const d3 = Date.now() + 20_000;
+  while (Date.now() < d3) {
+    await sleep(500);
+    const r = await api('GET', `/api/tasks/${pv.data.id}`);
+    pvFinal = r.data;
+    if (pvFinal.status === 'completed' || pvFinal.status === 'failed') break;
+  }
+  if (!pvFinal || pvFinal.status !== 'completed') err(`项目视频任务未完成: ${JSON.stringify(pvFinal?.status)}`);
+  if (!pvFinal.metadata_url) err('项目视频任务缺 metadata_url');
+  ok(`项目视频任务轮询完成（视频: ${pvFinal.metadata_url}）`);
+  const projDetail = await api('GET', `/api/projects/${pid}`);
+  if (!projDetail.data.tasks.some((t) => t.id === pv.data.id)) err('项目详情未聚合视频任务');
+  ok('项目详情聚合视频任务');
+
+  // 21. 删除项目
+  const delR = await api('DELETE', `/api/projects/${pid}`);
+  if (delR.status !== 200) err('删除项目失败');
+  ok('删除项目（文案/角色图级联清理）');
 
   // 9. 统计
   const stats = await api('GET', '/api/stats');

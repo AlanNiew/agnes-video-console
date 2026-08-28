@@ -18,9 +18,8 @@
   const MODEL_NAME = {
     'agnes-video-2.5-flash': 'Flash',
     'agnes-video-2.5': '2.5',
-    'agnes-video-v2.0': 'V2.0',
+    'agnes-video-v2.0': 'V2.0（旧）',
   };
-  const IS_V2 = (model) => model === 'agnes-video-v2.0';
 
   const state = {
     tasks: [],
@@ -243,7 +242,14 @@
         sub.textContent = '未连接 · 请先在设置中填写 API Key';
         sub.className = 'brand-sub offline';
       }
-      $('#fModel').value = state.settings.model;
+      $('#keyStatus').textContent = state.settings.api_key_set
+        ? `（已保存 ${state.settings.api_key_masked}，留空则不修改）`
+        : '（未配置）';
+      // 旧模型兜底：设置里的默认模型若不支持，则回退 2.5-flash
+      const m = ['agnes-video-2.5-flash', 'agnes-video-2.5'].includes(state.settings.model)
+        ? state.settings.model : 'agnes-video-2.5-flash';
+      $('#fModel').value = m;
+      onModelChange();
       $('#setModel').value = state.settings.model;
       $('#setBaseUrl').value = state.settings.base_url;
       $('#setPollMs').value = state.settings.poll_interval_ms;
@@ -416,33 +422,6 @@
 
   /* ---------------- 新建任务 ---------------- */
   const refState = { images: [], audios: [], videos: [] };
-  const v2RefState = { keyframes: [] };
-
-  function switchModeV2(mode) {
-    $$('#modeTabsV2 .tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
-    $('#grpV2Image').classList.toggle('hidden', mode !== 'image');
-    $('#grpV2Keyframes').classList.toggle('hidden', mode !== 'keyframes');
-    const hint = $('#mediaHint');
-    if (mode === 'text') hint.textContent = '文生视频：纯文本生成（不携带图片）。';
-    if (mode === 'image') hint.textContent = '图生视频：提供 1 张可公开访问的图片 URL，描述哪些内容应运动、哪些应保持稳定。';
-    if (mode === 'keyframes') hint.textContent = '关键帧动画：提供至少 2 张关键帧图片 URL，描述帧间的过渡关系。';
-  }
-
-  function renderV2Keyframes() {
-    $('#refV2Keyframes').innerHTML = v2RefState.keyframes
-      .map((u, i) => `<div class="list-row">
-        <input type="text" data-i="${i}" value="${esc(u)}" placeholder="https://.../keyframe${i + 1}.png" />
-        <button class="rm" type="button" data-i="${i}" data-v2k>✕</button>
-      </div>`)
-      .join('');
-  }
-
-  function syncV2KeyframesFromDom() {
-    $$('#refV2Keyframes .list-row').forEach((row) => {
-      const i = Number(row.querySelector('.rm').dataset.i);
-      v2RefState.keyframes[i] = row.querySelector('input[type=text]').value.trim();
-    });
-  }
 
   function openNewTask(initial) {
     $('#newTaskModal').hidden = false;
@@ -493,20 +472,13 @@
   }
 
   async function submitTask() {
-    const model = $('#fModel').value;
     const btn = $('#btnSubmitTask');
     btn.disabled = true;
     btn.textContent = '提交中…';
     try {
-      if (IS_V2(model)) {
-        const body = await collectV2Body();
-        const t = await api('/api/tasks', { method: 'POST', body });
-        toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
-      } else {
-        const body = collectV25Body();
-        const t = await api('/api/tasks', { method: 'POST', body });
-        toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
-      }
+      const body = collectBody();
+      const t = await api('/api/tasks', { method: 'POST', body });
+      toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
       $('#newTaskModal').hidden = true;
       resetNewTaskForm();
       await loadTasks();
@@ -519,7 +491,7 @@
     }
   }
 
-  function collectV25Body() {
+  function collectBody() {
     const mode = $('#modeTabs .tab.active').dataset.mode;
     syncRefsFromDom();
     const body = {
@@ -543,47 +515,14 @@
     return body;
   }
 
-  const V2_SIZES = {
-    '16:9': { '480p': { w: 854, h: 480 }, '720p': { w: 1280, h: 720 }, '1080p': { w: 1920, h: 1080 } },
-    '9:16': { '480p': { w: 480, h: 854 }, '720p': { w: 720, h: 1280 }, '1080p': { w: 1080, h: 1920 } },
-    '1:1':  { '480p': { w: 480, h: 480 }, '720p': { w: 720, h: 720 }, '1080p': { w: 1080, h: 1080 } },
-    '4:3':  { '480p': { w: 640, h: 480 }, '720p': { w: 960, h: 720 }, '1080p': { w: 1440, h: 1080 } },
-    '3:4':  { '480p': { w: 480, h: 640 }, '720p': { w: 720, h: 960 }, '1080p': { w: 1080, h: 1440 } },
-  };
-
-  function collectV2Body() {
-    const mode = $('#modeTabsV2 .tab.active').dataset.mode;
-    syncV2KeyframesFromDom();
-    const size = V2_SIZES[$('#fV2Aspect').value][$('#fV2Res').value];
-    const body = {
-      model: 'agnes-video-v2.0',
-      prompt: $('#fPrompt').value.trim(),
-      mode,
-      num_frames: Number($('#fNumFrames').value),
-      frame_rate: Number($('#fFrameRate').value),
-      width: size.w,
-      height: size.h,
-      seed: $('#fV2Seed').value === '' ? null : Number($('#fV2Seed').value),
-      negative_prompt: $('#fNegative').value.trim() || undefined,
-    };
-    if (mode === 'image') body.image = $('#fV2Image').value.trim();
-    if (mode === 'keyframes') body.images = v2RefState.keyframes.filter(Boolean);
-    return body;
-  }
-
   function resetNewTaskForm() {
     $('#fPrompt').value = '';
     $('#fSeed').value = '';
-    $('#fV2Seed').value = '';
-    $('#fNegative').value = '';
-    $('#fV2Image').value = '';
     $('#fFirstFrame').value = '';
     $('#fLastFrame').value = '';
     $('#fTemplate').value = '';
     refState.images = []; refState.audios = []; refState.videos = [];
-    v2RefState.keyframes = [];
     renderRefList('images'); renderRefList('audios'); renderRefList('videos');
-    renderV2Keyframes();
   }
 
   /* ---------------- 模板 ---------------- */
@@ -595,47 +534,31 @@
     'ref-character': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 中的角色和美术风格为参考，角色在花田中自然奔跑，保持外观一致，低机位跟拍' },
     'ref-audio': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 为视觉主体，根据 <Audio 1> 的节奏设计动作和镜头切换，保持自然连贯' },
     'ref-video': { model: 'agnes-video-2.5', mode: 'reference', prompt: '参考 <Video 1> 的主体动作和镜头节奏，将场景改为月光下的卧室，同时保持时序连贯' },
-    'v2-beach': { model: 'agnes-video-v2.0', mode: 'text', prompt: 'A cinematic shot of a cat walking on the beach at sunset, soft ocean waves, warm golden lighting, realistic motion' },
-    'v2-astronaut': { model: 'agnes-video-v2.0', mode: 'text', prompt: 'A young astronaut walking across a red desert planet, dust blowing in the wind, slow cinematic tracking shot, dramatic sunset lighting, realistic sci-fi style' },
-    'v2-image': { model: 'agnes-video-v2.0', mode: 'image', prompt: 'Animate the character with subtle breathing motion, hair moving gently in the wind, background lights flickering softly, while keeping the face and outfit consistent' },
-    'v2-keyframes': { model: 'agnes-video-v2.0', mode: 'keyframes', prompt: 'Create a smooth transition from the first keyframe to the second keyframe, maintaining character identity, consistent camera angle, and natural motion between scenes' },
   };
 
   function applyTemplate(key) {
     const t = TEMPLATES[key];
     if (!t) return;
-    if (t.model) {
+    if (t.model && t.model !== $('#fModel').value) {
       $('#fModel').value = t.model;
       onModelChange();
     }
-    if (IS_V2(t.model)) {
-      switchModeV2(t.mode);
-      $$('#modeTabsV2 .tab').forEach((el) => el.classList.toggle('active', el.dataset.mode === t.mode));
-    } else {
-      switchMode(t.mode);
-      $$('#modeTabs .tab').forEach((el) => el.classList.toggle('active', el.dataset.mode === t.mode));
-    }
+    switchMode(t.mode);
+    $$('#modeTabs .tab').forEach((el) => el.classList.toggle('active', el.dataset.mode === t.mode));
     $('#fPrompt').value = t.prompt;
   }
 
   function onModelChange() {
     const m = $('#fModel').value;
-    const v2 = IS_V2(m);
-    $('#v25Form').classList.toggle('hidden', v2);
-    $('#v2Form').classList.toggle('hidden', !v2);
-    const hint = $('#modelHint');
-    if (v2) {
-      hint.textContent = '（限时免费 · 文生/图生/关键帧 · num_frames 8n+1≤441）';
-    } else if (m === 'agnes-video-2.5-flash') {
-      hint.textContent = '（限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考）';
-    } else {
-      hint.textContent = '（付费 · 720P/960P/2K · 支持视频参考）';
-    }
-    if (!v2) {
-      $('#fSize').innerHTML = m === 'agnes-video-2.5-flash'
-        ? '<option value="720P">720P</option>'
-        : '<option value="720P">720P</option><option value="960P">960P</option><option value="2K">2K</option>';
-    }
+    $('#modelHint').textContent = m === 'agnes-video-2.5-flash'
+      ? '（限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考）'
+      : '（付费 · 720P/960P/2K · 支持视频参考）';
+    $('#fSize').innerHTML = m === 'agnes-video-2.5-flash'
+      ? '<option value="720P">720P</option>'
+      : '<option value="720P">720P</option><option value="960P">960P</option><option value="2K">2K</option>';
+    if (m === 'agnes-video-v2.0') $('#fModel').value = 'agnes-video-2.5-flash'; // 旧模型兜底
+    const grpVideos = $('#grpVideos');
+    if (grpVideos) grpVideos.classList.toggle('hidden', m === 'agnes-video-2.5-flash');
   }
 
   /* ---------------- 设置 ---------------- */
@@ -699,25 +622,6 @@
       const tab = e.target.closest('.tab');
       if (tab) switchMode(tab.dataset.mode);
     });
-    $('#modeTabsV2').addEventListener('click', (e) => {
-      const tab = e.target.closest('.tab');
-      if (tab) switchModeV2(tab.dataset.mode);
-    });
-    // V2.0 关键帧列表
-    $('#grpV2Keyframes').addEventListener('click', (e) => {
-      const addBtn = e.target.closest('[data-add-v2]');
-      if (addBtn) {
-        v2RefState.keyframes.push('');
-        renderV2Keyframes();
-        return;
-      }
-      const rm = e.target.closest('.rm');
-      if (rm) {
-        v2RefState.keyframes.splice(Number(rm.dataset.i), 1);
-        renderV2Keyframes();
-      }
-    });
-    $('#grpV2Keyframes').addEventListener('input', () => syncV2KeyframesFromDom());
     // 参考素材行
     $('#grpReference').addEventListener('click', (e) => {
       const addBtn = e.target.closest('[data-add]');
@@ -742,6 +646,32 @@
 
     // 模型切换
     $('#fModel').addEventListener('change', onModelChange);
+
+    // ✨ AI 优化提示词（调文本模型）
+    $('#btnAiOptimize').addEventListener('click', async () => {
+      const idea = $('#fPrompt').value.trim();
+      if (!idea) { toast('请先填写原始描述', 'err'); return; }
+      const btn = $('#btnAiOptimize');
+      btn.disabled = true;
+      btn.textContent = '优化中…';
+      try {
+        const r = await api('/api/llm/chat', {
+          method: 'POST',
+          body: {
+            system: '你是视频生成提示词优化器。把用户零散的想法优化成一段可直接用于 AI 视频生成的结构化中文提示词（100~200 字），按顺序覆盖：主体与场景 → 动作与变化 → 镜头语言 → 视觉风格 → 声音与节奏。只输出提示词本身，不要任何解释或前缀。',
+            messages: [{ role: 'user', content: idea }],
+            temperature: 0.8,
+          },
+        });
+        $('#fPrompt').value = r.content;
+        toast('提示词已优化，请检查后提交', 'ok');
+      } catch (e) {
+        toast('优化失败：' + e.message, 'err');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✨ AI 优化提示词';
+      }
+    });
 
     // 提交与按钮
     $('#btnSubmitTask').addEventListener('click', submitTask);
@@ -792,22 +722,32 @@
     // 模板下拉
     $('#fTemplate').innerHTML =
       '<option value="">— 选择示例 —</option>' +
-      '<optgroup label="2.5 系列 · 文生视频">' +
+      '<optgroup label="2.5 Flash · 文生视频">' +
       '<option value="text-city">未来城市雨夜（跑车）</option>' +
       '<option value="text-cats">猫咪铜管乐队</option>' +
       '<option value="text-ocean">翡翠海面航拍</option></optgroup>' +
-      '<optgroup label="2.5 系列 · 首尾帧">' +
+      '<optgroup label="2.5 Flash · 首尾帧">' +
       '<option value="keyframe-walk">人物转身走向窗边</option></optgroup>' +
-      '<optgroup label="2.5 系列 · 多模态参考">' +
+      '<optgroup label="2.5 Flash · 多模态参考">' +
       '<option value="ref-character">角色花田奔跑 &lt;Picture 1&gt;</option>' +
-      '<option value="ref-audio">音画协同 &lt;Picture 1&gt;+&lt;Audio 1&gt;</option>' +
-      '<option value="ref-video">视频参考 &lt;Video 1&gt;（2.5 付费）</option></optgroup>' +
-      '<optgroup label="V2.0 · 文生视频">' +
-      '<option value="v2-beach">Cat on the beach（官方示例）</option>' +
-      '<option value="v2-astronaut">Astronaut on red desert</option></optgroup>' +
-      '<optgroup label="V2.0 · 图生 / 关键帧">' +
-      '<option value="v2-image">图生：角色细微呼吸动画</option>' +
-      '<option value="v2-keyframes">关键帧：两帧平滑过渡</option></optgroup>';
+      '<option value="ref-audio">音画协同 &lt;Picture 1&gt;+&lt;Audio 1&gt;</option></optgroup>' +
+      '<optgroup label="高级（付费 2.5）">' +
+      '<option value="ref-video">视频参考 &lt;Video 1&gt;</option></optgroup>';
+
+    // 主视图切换：创作工作台 / 任务中心
+    function switchView(v) {
+      const ws = v === 'workspace';
+      $('#navWorkspace').classList.toggle('active', ws);
+      $('#navTasks').classList.toggle('active', !ws);
+      $('#workspaceView').hidden = !ws;
+      ['.stats', '.toolbar', '#board', '#emptyTip', '#btnNewTask'].forEach((sel) => {
+        const el = $(sel);
+        if (el) el.hidden = ws;
+      });
+      if (ws) window.__ws?.refresh?.();
+    }
+    $('#navWorkspace').addEventListener('click', () => switchView('workspace'));
+    $('#navTasks').addEventListener('click', () => switchView('tasks'));
 
     // 初始加载
     window.__app = { applyTemplate };

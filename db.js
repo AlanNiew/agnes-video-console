@@ -53,6 +53,42 @@ CREATE TABLE IF NOT EXISTS tasks (
 );
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_tasks_created ON tasks(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS projects (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  name TEXT NOT NULL,
+  idea TEXT,
+  style TEXT,
+  aspect_ratio TEXT,
+  seconds TEXT,
+  status TEXT DEFAULT 'draft',
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS project_texts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  content TEXT NOT NULL,
+  model TEXT,
+  selected INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ptexts_project ON project_texts(project_id);
+CREATE TABLE IF NOT EXISTS project_images (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  kind TEXT NOT NULL,
+  prompt TEXT,
+  remote_url TEXT,
+  local_path TEXT,
+  size TEXT,
+  ratio TEXT,
+  model TEXT,
+  selected INTEGER DEFAULT 0,
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_pimgs_project ON project_images(project_id);
 `);
 
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
@@ -64,6 +100,7 @@ const MIGRATE_COLS = [
   ['width', 'INTEGER'],         // v2.0 宽
   ['height', 'INTEGER'],        // v2.0 高
   ['negative_prompt', 'TEXT'],  // v2.0 反向提示词
+  ['project_id', 'INTEGER'],    // 流水线项目关联（M1）
 ];
 for (const [name, type] of MIGRATE_COLS) {
   if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
@@ -77,9 +114,9 @@ const stmts = {
   insertTask: db.prepare(`
     INSERT INTO tasks (status, mode, model, prompt, seconds, size, aspect_ratio, seed,
                        first_frame, last_frame, images, audios, videos, request_json,
-                       image, num_frames, frame_rate, width, height, negative_prompt,
+                       image, num_frames, frame_rate, width, height, negative_prompt, project_id,
                        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   getTask: db.prepare('SELECT * FROM tasks WHERE id = ?'),
   listTasks: db.prepare(`
@@ -109,9 +146,50 @@ const stmts = {
       request_json = ?, task_id = ?, video_id = ?, progress = ?, updated_at = ?, completed_at = ?,
       submit_response = ?, last_poll_response = ?, metadata_url = ?, error_message = ?,
       poll_count = ?, last_polled_at = ?,
-      image = ?, num_frames = ?, frame_rate = ?, width = ?, height = ?, negative_prompt = ?
+      image = ?, num_frames = ?, frame_rate = ?, width = ?, height = ?, negative_prompt = ?,
+      project_id = ?
     WHERE id = ?
   `),
+  insertProject: db.prepare(`
+    INSERT INTO projects (name, idea, style, aspect_ratio, seconds, status, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  getProject: db.prepare('SELECT * FROM projects WHERE id = ?'),
+  listProjects: db.prepare('SELECT * FROM projects ORDER BY updated_at DESC, id DESC'),
+  updateProject: db.prepare(`
+    UPDATE projects SET name = ?, idea = ?, style = ?, aspect_ratio = ?, seconds = ?, status = ?, updated_at = ?
+    WHERE id = ?
+  `),
+  deleteProject: db.prepare('DELETE FROM projects WHERE id = ?'),
+  deleteProjectTexts: db.prepare('DELETE FROM project_texts WHERE project_id = ?'),
+  deleteProjectImages: db.prepare('DELETE FROM project_images WHERE project_id = ?'),
+  detachProjectTasks: db.prepare('UPDATE tasks SET project_id = NULL WHERE project_id = ?'),
+  insertProjectText: db.prepare(`
+    INSERT INTO project_texts (project_id, kind, content, model, selected, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+  `),
+  listProjectTexts: db.prepare('SELECT * FROM project_texts WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
+  getProjectText: db.prepare('SELECT * FROM project_texts WHERE id = ?'),
+  unselectProjectTexts: db.prepare('UPDATE project_texts SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
+  selectProjectText: db.prepare('UPDATE project_texts SET selected = 1 WHERE id = ?'),
+  deleteProjectText: db.prepare('DELETE FROM project_texts WHERE id = ?'),
+  updateProjectText: db.prepare('UPDATE project_texts SET content = ? WHERE id = ?'),
+  insertProjectImage: db.prepare(`
+    INSERT INTO project_images (project_id, kind, prompt, remote_url, local_path, size, ratio, model, selected, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  listProjectImages: db.prepare('SELECT * FROM project_images WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
+  getProjectImage: db.prepare('SELECT * FROM project_images WHERE id = ?'),
+  unselectProjectImages: db.prepare('UPDATE project_images SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
+  selectProjectImage: db.prepare('UPDATE project_images SET selected = 1 WHERE id = ?'),
+  deleteProjectImage: db.prepare('DELETE FROM project_images WHERE id = ?'),
+  getSelectedProjectImage: db.prepare(
+    "SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1"
+  ),
+  getSelectedProjectText: db.prepare(
+    "SELECT * FROM project_texts WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1"
+  ),
+  listProjectTasks: db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
   touchPoll: db.prepare(`
     UPDATE tasks SET poll_count = poll_count + 1, last_polled_at = ?, updated_at = ? WHERE id = ?
   `),
@@ -172,6 +250,7 @@ function toTaskRow(row) {
     width: row.width === null ? null : Number(row.width),
     height: row.height === null ? null : Number(row.height),
     negative_prompt: row.negative_prompt,
+    project_id: row.project_id === null ? null : Number(row.project_id),
   };
 }
 
@@ -188,7 +267,7 @@ const settings = {
 const tasks = {
   insert({ status, mode, model, prompt, seconds, size, aspect_ratio, seed, first_frame,
            last_frame, images, audios, videos, request_json,
-           image, num_frames, frame_rate, width, height, negative_prompt }) {
+           image, num_frames, frame_rate, width, height, negative_prompt, project_id }) {
     const now = Date.now();
     const r = stmts.insertTask.run(
       status, mode, model, prompt, seconds, size, aspect_ratio,
@@ -202,6 +281,7 @@ const tasks = {
       width === null || width === undefined ? null : Number(width),
       height === null || height === undefined ? null : Number(height),
       negative_prompt || null,
+      project_id || null,
       now, now
     );
     return Number(r.lastInsertRowid);
@@ -291,6 +371,7 @@ const tasks = {
       p.width !== undefined ? p.width : cur.width,
       p.height !== undefined ? p.height : cur.height,
       p.negative_prompt !== undefined ? p.negative_prompt : cur.negative_prompt,
+      p.project_id !== undefined ? p.project_id : cur.project_id,
       Number(id)
     );
     return true;
@@ -335,4 +416,133 @@ const DEFAULT_SETTINGS = {
   max_active_minutes: '20',
 };
 
-module.exports = { db, settings, tasks, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };
+/* ---------------- 创作流水线（projects / texts / images） ---------------- */
+
+function projectRowToApi(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    name: row.name,
+    idea: row.idea,
+    style: row.style,
+    aspect_ratio: row.aspect_ratio,
+    seconds: row.seconds,
+    status: row.status,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+const projects = {
+  insert({ name, idea, style, aspect_ratio, seconds }) {
+    const now = Date.now();
+    const r = stmts.insertProject.run(
+      name, idea || null, style || null, aspect_ratio || '16:9', seconds || '5', 'draft', now, now
+    );
+    return Number(r.lastInsertRowid);
+  },
+
+  get(id) {
+    return projectRowToApi(stmts.getProject.get(Number(id)));
+  },
+
+  list() {
+    return stmts.listProjects.all().map(projectRowToApi);
+  },
+
+  update(id, patch = {}) {
+    const cur = stmts.getProject.get(Number(id));
+    if (!cur) return false;
+    stmts.updateProject.run(
+      patch.name !== undefined ? patch.name : cur.name,
+      patch.idea !== undefined ? patch.idea : cur.idea,
+      patch.style !== undefined ? patch.style : cur.style,
+      patch.aspect_ratio !== undefined ? patch.aspect_ratio : cur.aspect_ratio,
+      patch.seconds !== undefined ? patch.seconds : cur.seconds,
+      patch.status !== undefined ? patch.status : cur.status,
+      Date.now(),
+      Number(id)
+    );
+    return true;
+  },
+
+  remove(id) {
+    // 级联清理：文案、图片；视频任务保留但解除关联
+    stmts.deleteProjectTexts.run(Number(id));
+    stmts.deleteProjectImages.run(Number(id));
+    stmts.detachProjectTasks.run(Number(id));
+    return stmts.deleteProject.run(Number(id)).changes > 0;
+  },
+
+  texts(projectId) {
+    return stmts.listProjectTexts.all(Number(projectId)).map((r) => ({
+      id: Number(r.id), project_id: Number(r.project_id), kind: r.kind,
+      content: r.content, model: r.model, selected: Boolean(r.selected),
+      created_at: Number(r.created_at),
+    }));
+  },
+
+  addText({ project_id, kind, content, model }) {
+    const r = stmts.insertProjectText.run(Number(project_id), kind, content, model || null, 0, Date.now());
+    return Number(r.lastInsertRowid);
+  },
+
+  selectText(id, kind, projectId) {
+    stmts.unselectProjectTexts.run(Number(projectId), kind, Number(id));
+    stmts.selectProjectText.run(Number(id));
+  },
+
+  selectedText(projectId, kind) {
+    const row = stmts.getSelectedProjectText.get(Number(projectId), kind);
+    if (!row) return null;
+    return { id: Number(row.id), project_id: Number(row.project_id), kind: row.kind,
+             content: row.content, model: row.model, selected: true, created_at: Number(row.created_at) };
+  },
+
+  images(projectId) {
+    return stmts.listProjectImages.all(Number(projectId)).map((r) => ({
+      id: Number(r.id), project_id: Number(r.project_id), kind: r.kind, prompt: r.prompt,
+      remote_url: r.remote_url, local_path: r.local_path,
+      local_url: r.local_path ? '/artifacts/' + path.basename(r.local_path) : null,
+      size: r.size, ratio: r.ratio,
+      model: r.model, selected: Boolean(r.selected), created_at: Number(r.created_at),
+    }));
+  },
+
+  addImage({ project_id, kind, prompt, remote_url, local_path, size, ratio, model }) {
+    const r = stmts.insertProjectImage.run(
+      Number(project_id), kind, prompt || null, remote_url || null, local_path || null,
+      size || null, ratio || null, model || null, 0, Date.now()
+    );
+    return Number(r.lastInsertRowid);
+  },
+
+  selectImage(id, kind, projectId) {
+    stmts.unselectProjectImages.run(Number(projectId), kind, Number(id));
+    stmts.selectProjectImage.run(Number(id));
+  },
+
+  selectedImage(projectId, kind) {
+    const row = stmts.getSelectedProjectImage.get(Number(projectId), kind);
+    if (!row) return null;
+    return {
+      id: Number(row.id), project_id: Number(row.project_id), kind: row.kind, prompt: row.prompt,
+      remote_url: row.remote_url, local_path: row.local_path, size: row.size, ratio: row.ratio,
+      model: row.model, selected: true, created_at: Number(row.created_at),
+    };
+  },
+
+  removeImage(id) {
+    return stmts.deleteProjectImage.run(Number(id)).changes > 0;
+  },
+
+  updateText(id, content) {
+    return stmts.updateProjectText.run(content, Number(id)).changes > 0;
+  },
+
+  tasks(projectId) {
+    return stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
+  },
+};
+
+module.exports = { db, settings, tasks, projects, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };
