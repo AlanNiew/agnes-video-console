@@ -100,19 +100,24 @@ CREATE TABLE project_images (  -- 图片生成记录
 ALTER TABLE tasks ADD COLUMN project_id INTEGER;  -- 视频任务关联项目
 ```
 
-## 4. 后端 API（新增）
+## 4. 后端 API（新增；实际实现已于 M1 回填）
 
 ```
-POST /api/llm/complete          通用文本生成（内置提示词模板：创意→结构化文案JSON）
+POST /api/llm/chat              通用文本生成（新建任务「AI 优化提示词」使用）
+POST /api/llm/script            创意 → 结构化文案 JSON（可关联项目落库，按 kind 各自成版）
 POST /api/images/generate       图片生成（文生图/图生图，同步，落库）
-GET  /api/images/:id            图片详情
-GET  /artifacts/*               本地图片静态服务（data/artifacts）
+DELETE /api/images/:id          删除项目图片记录
+GET  /artifacts/*               本地图片静态服务（data/artifacts，支持 DATA_DIR 覆盖）
+GET  /api/meta                  模型/画幅/时长元数据（前端下拉单一事实来源）
 
 POST /api/projects              创建项目
 GET  /api/projects              项目列表
 GET  /api/projects/:id          项目详情（聚合文案/图片/视频任务）
-PATCH /api/projects/:id         更新（含步骤产物 selected 切换）
-DELETE /api/projects/:id        删除项目（级联清理）
+PATCH /api/projects/:id         更新（name/idea/style/画幅/时长/status 枚举校验）
+DELETE /api/projects/:id        删除项目（事务级联清理文案/图片，视频任务解绑保留）
+POST /api/projects/:id/select-text      选定文案版本（同 kind 唯一 selected）
+PATCH /api/projects/:id/texts/:textId   编辑文案内容（校验文案归属该项目）
+POST /api/projects/:id/select-image     定稿角色/场景图（同 kind 唯一 selected）
 
 POST /api/projects/:id/videos   从项目发起视频任务：
                                 自动组装 2.5-flash reference 请求：
@@ -120,6 +125,8 @@ POST /api/projects/:id/videos   从项目发起视频任务：
                                  mode: reference, images: [角色定稿图URL], seconds, size: 720P,
                                  aspect_ratio} → 复用 submitTask 入队
 ```
+
+> 与初版计划的差异：原 `POST /api/llm/complete` 拆分为 `chat`（通用/优化）与 `script`（结构化文案）两个端点；原 `GET /api/images/:id`（图片详情）未实现——图片信息经 `GET /api/projects/:id` 聚合返回，暂无单独详情需求。
 
 提示词模板（内置，可调）：系统提示要求模型**只输出 JSON**：
 `{ "script": 梗概, "video_prompt": 视频提示词, "character_desc": 角色外观描述, "scene_desc": 场景描述 }`，便于前端结构化展示与逐项重生成。
@@ -145,9 +152,18 @@ POST /api/projects/:id/videos   从项目发起视频任务：
 ### M2（下一阶段）
 - 分镜脚本结构化（多镜头 storyboard，一个项目批量出多条视频）；
 - 图片本地归档打包导出、项目复制；
-- 统一模型注册表（新旧模型一致化，按需开放付费模型）；
+- 统一模型注册表（新旧模型一致化，按需开放付费模型；元数据下发 `/api/meta` 已于体检阶段完成）；
 - 音频参考/音画同步接入（视 Agnes 能力）；
 - 项目模板库（风格预设、角色库复用）。
+
+### M2 前注意事项（体检阶段架构审计结论，动工前需先解决）
+
+1. **`project_texts.selected` 互斥语义与分镜冲突**：当前「同 kind 多版本、全局唯一选定」的模型无法表达 N 个镜头各自持有 video_prompt 且同时生效；需引入 `shot_no`/`sequence` 或独立 shots 表。
+2. **tasks 缺产物溯源外键**：无 `text_id`/`image_id`/`shot_no` 列，镜头与提示词版本/角色图的对应关系只能解析 `request_json` 文本，无法支撑「改了提示词第 3 版 → 只重跑相关镜头」类查询。
+3. **`projects.status` 单值状态机会被批量语义击穿**：`video_submitted` 每次提交无条件覆写、再生成文案会拉回 `copy_done`；多镜头后项目级状态既不单调也不准确，应改为按任务/镜头聚合推导。
+4. **编排逻辑内联在路由中**：`POST /api/projects/:id/videos` 的「角色图 → 提示词回退链 → `<Picture 1>` 注入 → submitTask」组装需先抽成可复用服务函数，批量发起才能复用。
+5. **`tasks.project_id` 为 ALTER 迁移补列、无索引**：`projects.tasks()` 目前全表过滤，批量任务量上来前应补 `CREATE INDEX`。
+6. **`tasks.update` 为读-改-写非原子**：批量提交 + poller 并发下丢失更新风险上升，可改单语句 UPDATE 或继续依赖单连接同步执行的现状（量级小时可接受）。
 
 ## 7. 风险与对策
 

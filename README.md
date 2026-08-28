@@ -3,34 +3,36 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-18%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-40%20passed-brightgreen)
 
-本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，用**任务队列看板 + 后台自动轮询 + SQLite 本地持久化**一站式管理视频生成任务。
+本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
 [English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
 
 支持三个模型（异步任务 API，`POST /v1/videos` 创建、`GET /agnesapi` 轮询）：
 
-| 模型 | 生成模式 | 参数体系 | 价格 |
-| --- | --- | --- | --- |
-| `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio` | 限时免费 |
-| `agnes-video-v2.0` | 文生 / 图生 / 关键帧动画 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 |
-| `agnes-video-2.5` | 文生 / 首尾帧 / 多模态参考 | `seconds` + `size` + `aspect_ratio` | 付费 |
+| 模型 | 生成模式 | 参数体系 | 价格 | 界面 |
+| --- | --- | --- | --- | --- |
+| `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio` | 限时免费 | ✅ 默认 |
+| `agnes-video-2.5` | 文生 / 首尾帧 / 多模态参考 | `seconds` + `size` + `aspect_ratio` | 付费 | ✅ 高级分组 |
+| `agnes-video-v2.0` | 文生 / 图生 / 关键帧动画 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | ⛔ 已下架（后端兼容保留，历史任务正常显示） |
 
 > 价格与能力以 [Agnes AI 官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准，当前 Flash 与 V2.0 模型限时 `$0 / 秒`。
 
 ## ✨ 特性
 
-- 🎬 **三模型 · 多模式**：选模型后表单自动切换为该模型的参数体系（2.5 系列 vs V2.0）
+- 🎬 **创作工作台（四步流水线）**：一句话创意 → AI 结构化文案（梗概/视频提示词/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 一键发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
+- 🎬 **三模型 · 多模式**：任务中心选模型后表单自动切换参数体系；模型/画幅/时长清单由后端 `/api/meta` 统一下发
 - 📋 **任务队列看板**：队列中 / 生成中 / 已完成 / 失败 四列实时看板，进度条、搜索、状态过滤
 - 🔄 **后台自动轮询**：可配置间隔（默认 2s）；429 / 网络错误指数退避；超时任务自动标记失败
 - 🗄️ **SQLite 本地持久化**：Node 内置 `node:sqlite`，零原生编译；旧库自动迁移、重启不丢
 - 🔁 **失败重试**：一键以原参数重新提交（保留失败记录，便于审计）
 - ▶️ **视频预览/下载**：完成的任务在看板与详情中直接播放
 - 🔍 **任务审计**：完整请求 JSON、创建响应、轮询响应、轮询次数一目了然
+- ✍️ **AI 优化提示词**：新建任务时调文本模型把手写描述优化为结构化提示词
 - 🔐 **密钥安全**：API Key 仅存服务端 SQLite，浏览器只见掩码；服务只监听 `127.0.0.1`
 - 🧾 **内置日志面板**：轮询 / 提交事件在前端可视
-- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路
+- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路（40 项断言）
 
 ## 🚀 快速开始
 
@@ -48,12 +50,16 @@ npm start
 
 ## 📖 使用流程
 
+**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成四类文案（可编辑、多版本选用）→ 生成角色设定图并点选定稿 → 「🚀 提交视频任务」，系统自动组装 reference 模式（定稿角色图 + `<Picture 1>` 外观一致性注入）。
+
+**方式二 · 任务中心（单任务）**：
+
 1. **设置**：填写 API Key、Base URL（默认 `https://apihub.agnes-ai.com`）、轮询间隔、任务超时。
 2. **新建任务**：选模型 → 表单自动适配 → 填 prompt → 按模式补充素材 URL（需**可公开访问**的 http(s) 地址，任务完成前保持有效）→ 提交。
 3. **看板跟踪**：任务自动流转「队列中 → 生成中 → 已完成/失败」，完成即可播放/下载。
 4. **失败处理**：详情查看错误，或一键「重试」（以原参数新建任务）。
 
-**V2.0 提示**：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
+**V2.0 提示**（仅历史任务/后端 API，界面已下架）：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
 
 **提示词建议**：主体与场景 → 动作变化 → 镜头语言 → 视觉风格 → 声音节奏 → 一致性要求。`reference` 模式用 `<Picture 1>` / `<Audio 1>` / `<Video 1>` 指代素材。
 
@@ -61,20 +67,21 @@ npm start
 
 ```
 agnes-video-console/
-├── server.js            # Express API + 参数校验（按模型家族分发）+ 静态服务
-├── db.js                # SQLite 数据层（任务表 / 设置表 / 自动迁移）
-├── agnes.js             # Agnes API 客户端（创建 / 查询）
+├── server.js            # Express API + 参数校验（按模型家族分发）+ 流水线端点 + 静态服务
+├── db.js                # SQLite 数据层（任务/项目/文案/图片/设置表 + 自动迁移 + 事务）
+├── agnes.js             # Agnes API 客户端（视频创建/查询 / chat / 图片）
 ├── poller.js            # 后台轮询器（退避 / 超时 / 悬挂任务清理）
 ├── logger.js            # 内存环形日志
-├── public/              # 前端单页应用（index.html / style.css / app.js）
+├── public/              # 前端单页应用（index.html / style.css / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API）
-└── data/                # 运行时生成：agnes-console.db（已被 .gitignore 忽略）
+└── data/                # 运行时生成：agnes-console.db + artifacts 图片备份（已被 .gitignore 忽略）
 ```
 
 ## 📡 本工具自带 API
 
 ```
 GET  /api/health                       健康检查
+GET  /api/meta                         模型/画幅/时长元数据（前端下拉单一事实来源）
 GET  /api/settings                     获取设置（API Key 仅返回掩码）
 PUT  /api/settings                     保存设置
 GET  /api/stats                        按状态统计
@@ -87,6 +94,20 @@ DELETE /api/tasks/:id                  删除任务
 POST /api/tasks/bulk/clear-completed   清空已完成
 POST /api/tasks/bulk/clear-failed      清空失败
 GET  /api/logs                         最近运行日志
+POST /api/llm/chat                     通用文本生成（提示词优化）
+POST /api/llm/script                   创意 → 结构化文案（可关联项目落库）
+POST /api/images/generate              图片生成（文生图/图生图，可关联项目）
+DELETE /api/images/:id                 删除项目图片记录
+POST /api/projects                     创建创作项目
+GET  /api/projects                     项目列表
+GET  /api/projects/:id                 项目详情（聚合文案/图片/任务）
+PATCH /api/projects/:id                更新项目
+DELETE /api/projects/:id               删除项目（级联清理文案/图片，任务解绑）
+POST /api/projects/:id/select-text     选定文案版本
+PATCH /api/projects/:id/texts/:textId  编辑文案内容（校验归属）
+POST /api/projects/:id/select-image    定稿角色/场景图
+POST /api/projects/:id/videos          从项目发起视频任务（reference + 角色图）
+GET  /artifacts/*                      本地图片备份静态服务
 ```
 
 ## 🧪 测试
@@ -97,7 +118,7 @@ GET  /api/logs                         最近运行日志
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 18 项）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **40 项**断言，覆盖任务全链路、流水线、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 

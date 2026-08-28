@@ -14,16 +14,18 @@ data/
 *.log
 npm-debug.log*
 
-# 环境变量与密钥
+# 环境变量与密钥（安全网：项目当前不读 .env，但防止误提交）
 .env
 .env.*
-!.env.example
 
 # 编辑器 / 系统
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# ZCode CLI 本地会话数据
+.zcode/
 
 # 测试产物
 coverage/
