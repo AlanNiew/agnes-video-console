@@ -140,12 +140,28 @@ class Poller {
     const status = j.status;
     const progress = Number.isFinite(j.progress) ? Number(j.progress) : t.progress;
     const errorMessage = j.error?.message || null;
-    const metadataUrl = j.metadata?.url || null;
+    // 真实接口返回的视频地址可能在 metadata.url（文档）或顶层 url（实测），两者都兼容
+    const metadataUrl = j.metadata?.url || j.url || null;
     this.retryUntil.delete(t.id);
 
     tasks.touchPoll(t.id);
+
+    // 状态映射：真实接口除 queued/in_progress/completed/failed 外还可能返回
+    // pending（排队等待中）等状态 —— 一律视为“等待中”，绝不能误判为失败
+    let finalStatus;
+    if (status === 'completed' || status === 'failed') {
+      finalStatus = status;
+    } else if (status === 'pending' || status === 'processing' || status === 'running') {
+      finalStatus = 'queued';
+    } else if (status === 'queued' || status === 'in_progress') {
+      finalStatus = status;
+    } else {
+      log('warn', `任务 #${t.id} 返回未知状态 "${status}"，按 queued 继续轮询`);
+      finalStatus = 'queued';
+    }
+
     tasks.setPollResult(t.id, {
-      status: /^(queued|in_progress|completed|failed)$/.test(status) ? status : 'failed',
+      status: finalStatus,
       progress,
       completed_at: j.completed_at !== undefined && j.completed_at !== null ? Number(j.completed_at) : null,
       last_poll_response: j,
@@ -156,7 +172,7 @@ class Poller {
     if (status === 'completed') {
       log('info', `任务 #${t.id} 完成，视频地址: ${metadataUrl}`);
     } else if (status === 'failed') {
-      log('error', `任务 #${t.id} 失败: ${errorMessage}`);
+      log('error', `任务 #${t.id} 失败: ${errorMessage || '未知错误'}`);
     }
   }
 

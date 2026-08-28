@@ -20,6 +20,7 @@ const mockJobs = new Map(); // video_id -> job
 let seq = 0;
 
 function mockResult(job) {
+  const completed = job.status === 'completed';
   return {
     id: job.task_id,
     task_id: job.task_id,
@@ -32,7 +33,9 @@ function mockResult(job) {
     completed_at: job.status === 'completed' ? Date.now() : null,
     seconds: job.seconds,
     size: job.size,
-    metadata: job.status === 'completed' ? { url: `http://127.0.0.1:${MOCK_PORT}/out/mock-${seq}.mp4` } : null,
+    // 模拟真实接口：完成时只返回顶层 url（无 metadata 对象），验证控制台的 url 回退逻辑
+    metadata: null,
+    url: completed ? `http://127.0.0.1:${MOCK_PORT}/out/mock-${job.video_id}.mp4` : null,
     error: job.status === 'failed' ? { message: job.error } : null,
   };
 }
@@ -56,7 +59,7 @@ const mockServer = http.createServer(async (req, res) => {
       model: body.model,
       seconds: body.seconds,
       size: body.size,
-      status: 'queued',
+      status: 'pending', // 模拟真实接口：创建后先处于 pending（排队等待）
       progress: 0,
       created_at: Date.now(),
       polls: 0,
@@ -70,10 +73,12 @@ const mockServer = http.createServer(async (req, res) => {
     const job = mockJobs.get(videoId);
     if (!job) return send(404, { detail: 'video not found' });
     job.polls += 1;
-    if (job.status === 'queued' && job.polls >= 1) {
+    if (job.status === 'pending' && job.polls === 1) {
+      // 第一次轮询仍为 pending → 控制台应将其映射为 queued 继续轮询，而非误判失败
+    } else if (job.status === 'pending' && job.polls >= 2) {
       job.status = 'in_progress';
       job.progress = 40;
-    } else if (job.status === 'in_progress' && job.polls >= 2) {
+    } else if (job.status === 'in_progress' && job.polls >= 3) {
       job.status = 'completed';
       job.progress = 100;
     }
@@ -151,6 +156,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!created.data.video_id) err('创建任务未返回 video_id');
   ok(`已创建任务 #${taskId}，video_id=${created.data.video_id}`);
 
+  // 4.1 列表接口回归：任务必须出现在 /api/tasks 列表中（防止占位符参数 bug 回归）
+  const list = await api('GET', '/api/tasks?limit=200');
+  if (!list.data?.items?.some((x) => x.id === taskId)) {
+    err(`任务 #${taskId} 未出现在列表接口中（列表返回 ${list.data?.items?.length || 0} 条）`);
+  }
+  ok(`列表接口正常（items=${list.data.items.length}，含 #${taskId}）`);
+
   // 5. 等待轮询闭环：queued → in_progress → completed
   let final = null;
   const deadline = Date.now() + 20_000;
@@ -162,8 +174,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   }
   if (!final || final.status !== 'completed') err(`任务未按预期完成，最终状态: ${JSON.stringify(final?.status)}`);
   if (!final.metadata_url) err('completed 但缺少 metadata_url');
-  if (final.poll_count < 2) err(`轮询次数异常: ${final.poll_count}`);
-  ok(`轮询闭环完成：${final.status} @ ${final.progress}%，轮询 ${final.poll_count} 次，视频: ${final.metadata_url}`);
+  // pending 兜底 + 两次推进：至少轮询 3 次（pending → in_progress → completed）
+  if (final.poll_count < 3) err(`轮询次数异常: ${final.poll_count}`);
+  ok(`轮询闭环完成：${final.status} @ ${final.progress}%，轮询 ${final.poll_count} 次（含 pending 状态兜底），视频: ${final.metadata_url}`);
 
   // 6. 校验规则：text 模式带媒体 → 400
   const bad1 = await api('POST', '/api/tasks', {

@@ -214,9 +214,11 @@ const tasks = {
   list({ status = null, q = null, limit = 100, offset = 0, includeAll = false } = {}) {
     const lim = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const off = Math.max(Number(offset) || 0, 0);
+    const qp = q ? `%${q}%` : null;
+    // 注意：SQL 有 6 个占位符（状态×2 + 搜索×2 + LIMIT + OFFSET），必须绑定 6 个参数
     const rows = includeAll
       ? stmts.listAll.all(lim, off)
-      : stmts.listTasks.all(status, status, q ? `%${q}%` : null, lim, off);
+      : stmts.listTasks.all(status, status, qp, qp, lim, off);
     return rows.map(toTaskRow);
   },
 

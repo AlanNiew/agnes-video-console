@@ -108,6 +108,9 @@ body {
   display: grid; grid-template-columns: repeat(4, 1fr);
   gap: 14px; padding: 0 22px 26px; align-items: start;
 }
+/* 状态筛选聚焦视图：只显示单列 */
+#board.focus { grid-template-columns: 1fr; }
+.col.col-hidden { display: none; }
 @media (max-width: 1200px) { .board { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 700px) { .board { grid-template-columns: 1fr; } }
 .col {

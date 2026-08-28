@@ -160,22 +160,28 @@
       else if (byCol[t.status]) byCol[t.status].push(t);
       else byCol.failed.push(t); // 未知状态兜底
     }
+    // 状态筛选：选中某状态时只显示该列（单列聚焦视图），「全部」显示四列
+    const filter = state.statusFilter;
     const map = {
       queued: '#colQueued',
       in_progress: '#colActive',
       completed: '#colDone',
       failed: '#colFailed',
     };
-    let emptyAll = true;
+    let hasAny = false;
     for (const col of Object.keys(byCol)) {
+      const colEl = document.querySelector(`.col[data-col="${col}"]`);
+      const isShown = !filter || col === filter;
+      if (colEl) colEl.classList.toggle('col-hidden', !isShown);
+      if (byCol[col].length) hasAny = true;
       const sig = columnSig(col, byCol[col]);
       if (state.lastColSig[col] === sig) continue;
       state.lastColSig[col] = sig;
       const el = $(map[col]);
       el.innerHTML = byCol[col].length ? byCol[col].map(cardHTML).join('') : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
-      if (byCol[col].length) emptyAll = false;
     }
-    $('#emptyTip').hidden = !(emptyAll && state.tasks.length === 0);
+    $('#board').classList.toggle('focus', Boolean(filter));
+    $('#emptyTip').hidden = state.tasks.length > 0;
   }
 
   /* ---------------- 数据加载 ---------------- */
@@ -465,6 +471,7 @@
       await loadTasks();
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
+      await loadTasks(); // 失败也刷新看板，让 submit_error 任务立即显示在“失败”列
     } finally {
       btn.disabled = false;
       btn.textContent = '提交任务';

@@ -279,7 +279,7 @@ async function submitTask(payload, meta) {
     submit_response: j,
     status: /^(queued|in_progress|completed|failed)$/.test(j.status) ? j.status : 'queued',
     progress: Number.isFinite(j.progress) ? Number(j.progress) : 0,
-    metadata_url: j.metadata?.url || null,
+    metadata_url: j.metadata?.url || j.url || null,
   });
   log('info', `任务 #${id} 创建成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
   return tasks.get(id);
