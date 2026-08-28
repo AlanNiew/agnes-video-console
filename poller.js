@@ -14,6 +14,7 @@ class Poller {
   constructor() {
     this.timer = null;
     this.running = false;
+    this.pollingIds = new Set(); // 正在轮询的任务 id（防止定时 tick 与手动 pollNow 并发轮询同一任务）
     this.retryUntil = new Map(); // taskId -> 允许再次轮询的时间戳
   }
 
@@ -65,12 +66,24 @@ class Poller {
   }
 
   async pollOne(t) {
+    // 同一任务同一时刻只允许一个轮询在途，避免旧响应覆盖新状态
+    if (this.pollingIds.has(t.id)) return;
+    this.pollingIds.add(t.id);
+    try {
+      await this._pollOneInner(t);
+    } finally {
+      this.pollingIds.delete(t.id);
+    }
+  }
+
+  async _pollOneInner(t) {
     const apiKey = settings.get('api_key', '');
     const baseUrl = settings.get('base_url', 'https://apihub.agnes-ai.com');
     const maxActiveMs = Math.max((Number(settings.get('max_active_minutes', 20)) || 20) * 60_000, 30_000);
 
     // 轮询超时保护：任务创建超过 max_active_minutes 仍未结束
-    if (Date.now() - t.created_at > maxActiveMs) {
+    // （completed/failed 已是终态，手动「立即查询」不应再把它们翻成失败）
+    if (t.status !== 'completed' && t.status !== 'failed' && Date.now() - t.created_at > maxActiveMs) {
       this.retryUntil.delete(t.id);
       tasks.setPollResult(t.id, {
         status: 'failed',
@@ -140,8 +153,10 @@ class Poller {
     const status = j.status;
     const progress = Number.isFinite(j.progress) ? Number(j.progress) : t.progress;
     const errorMessage = j.error?.message || null;
-    // 真实接口返回的视频地址可能在 metadata.url（文档）或顶层 url（实测），两者都兼容
-    const metadataUrl = j.metadata?.url || j.url || null;
+    // 真实接口返回的视频地址可能在 metadata.url（文档）或顶层 url（实测），两者都兼容；
+    // 落库前校验必须是 http(s) 地址，防止上游异常数据污染前端链接
+    const rawUrl = j.metadata?.url || j.url || null;
+    const metadataUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : null;
     this.retryUntil.delete(t.id);
 
     tasks.touchPoll(t.id);

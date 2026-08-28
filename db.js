@@ -126,7 +126,6 @@ const stmts = {
     ORDER BY created_at DESC, id DESC
     LIMIT ? OFFSET ?
   `),
-  listAll: db.prepare('SELECT * FROM tasks ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?'),
   activeTasks: db.prepare(`
     SELECT * FROM tasks
     WHERE status IN ('queued','in_progress') AND video_id IS NOT NULL AND video_id != ''
@@ -169,17 +168,14 @@ const stmts = {
     VALUES (?, ?, ?, ?, ?, ?)
   `),
   listProjectTexts: db.prepare('SELECT * FROM project_texts WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
-  getProjectText: db.prepare('SELECT * FROM project_texts WHERE id = ?'),
   unselectProjectTexts: db.prepare('UPDATE project_texts SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
   selectProjectText: db.prepare('UPDATE project_texts SET selected = 1 WHERE id = ?'),
-  deleteProjectText: db.prepare('DELETE FROM project_texts WHERE id = ?'),
   updateProjectText: db.prepare('UPDATE project_texts SET content = ? WHERE id = ?'),
   insertProjectImage: db.prepare(`
     INSERT INTO project_images (project_id, kind, prompt, remote_url, local_path, size, ratio, model, selected, created_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   listProjectImages: db.prepare('SELECT * FROM project_images WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
-  getProjectImage: db.prepare('SELECT * FROM project_images WHERE id = ?'),
   unselectProjectImages: db.prepare('UPDATE project_images SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
   selectProjectImage: db.prepare('UPDATE project_images SET selected = 1 WHERE id = ?'),
   deleteProjectImage: db.prepare('DELETE FROM project_images WHERE id = ?'),
@@ -200,7 +196,6 @@ const stmts = {
   `),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
   clearCompleted: db.prepare("DELETE FROM tasks WHERE status = 'completed'"),
-  clearAll: db.prepare('DELETE FROM tasks'),
 };
 
 /** 安全解析 JSON 列 */
@@ -210,6 +205,19 @@ function parseJson(text) {
     return JSON.parse(text);
   } catch {
     return null;
+  }
+}
+
+/** 多步写事务：任一步失败自动回滚（node:sqlite 同步连接，事务只为保证多语句原子性） */
+function tx(fn) {
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const r = fn();
+    db.exec('COMMIT');
+    return r;
+  } catch (e) {
+    try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+    throw e;
   }
 }
 
@@ -291,15 +299,12 @@ const tasks = {
     return toTaskRow(stmts.getTask.get(Number(id)));
   },
 
-  list({ status = null, q = null, limit = 100, offset = 0, includeAll = false } = {}) {
+  list({ status = null, q = null, limit = 100, offset = 0 } = {}) {
     const lim = Math.min(Math.max(Number(limit) || 100, 1), 500);
     const off = Math.max(Number(offset) || 0, 0);
     const qp = q ? `%${q}%` : null;
     // 注意：SQL 有 6 个占位符（状态×2 + 搜索×2 + LIMIT + OFFSET），必须绑定 6 个参数
-    const rows = includeAll
-      ? stmts.listAll.all(lim, off)
-      : stmts.listTasks.all(status, status, qp, qp, lim, off);
-    return rows.map(toTaskRow);
+    return stmts.listTasks.all(status, status, qp, qp, lim, off).map(toTaskRow);
   },
 
   active() {
@@ -402,10 +407,6 @@ const tasks = {
   clearCompleted() {
     return Number(stmts.clearCompleted.run().changes);
   },
-
-  clearAll() {
-    return Number(stmts.clearAll.run().changes);
-  },
 };
 
 /** 默认设置（与文档对齐） */
@@ -467,11 +468,13 @@ const projects = {
   },
 
   remove(id) {
-    // 级联清理：文案、图片；视频任务保留但解除关联
-    stmts.deleteProjectTexts.run(Number(id));
-    stmts.deleteProjectImages.run(Number(id));
-    stmts.detachProjectTasks.run(Number(id));
-    return stmts.deleteProject.run(Number(id)).changes > 0;
+    // 级联清理：文案、图片；视频任务保留但解除关联（事务保证四步原子完成）
+    return tx(() => {
+      stmts.deleteProjectTexts.run(Number(id));
+      stmts.deleteProjectImages.run(Number(id));
+      stmts.detachProjectTasks.run(Number(id));
+      return stmts.deleteProject.run(Number(id)).changes > 0;
+    });
   },
 
   texts(projectId) {
@@ -488,8 +491,10 @@ const projects = {
   },
 
   selectText(id, kind, projectId) {
-    stmts.unselectProjectTexts.run(Number(projectId), kind, Number(id));
-    stmts.selectProjectText.run(Number(id));
+    tx(() => {
+      stmts.unselectProjectTexts.run(Number(projectId), kind, Number(id));
+      stmts.selectProjectText.run(Number(id));
+    });
   },
 
   selectedText(projectId, kind) {
@@ -518,8 +523,10 @@ const projects = {
   },
 
   selectImage(id, kind, projectId) {
-    stmts.unselectProjectImages.run(Number(projectId), kind, Number(id));
-    stmts.selectProjectImage.run(Number(id));
+    tx(() => {
+      stmts.unselectProjectImages.run(Number(projectId), kind, Number(id));
+      stmts.selectProjectImage.run(Number(id));
+    });
   },
 
   selectedImage(projectId, kind) {
@@ -545,4 +552,4 @@ const projects = {
   },
 };
 
-module.exports = { db, settings, tasks, projects, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };
+module.exports = { db, settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };

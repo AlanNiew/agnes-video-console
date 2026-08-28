@@ -15,11 +15,17 @@
     submit_error: '提交失败',
   };
   const MODE_LABEL = { text: '文生', keyframe: '首尾帧', reference: '参考', image: '图生', keyframes: '关键帧' };
-  const MODEL_NAME = {
+  // 模型元数据（GET /api/meta，单一事实来源；加载完成前的静态兜底）
+  let META = null;
+  const MODEL_NAME_FALLBACK = {
     'agnes-video-2.5-flash': 'Flash',
     'agnes-video-2.5': '2.5',
     'agnes-video-v2.0': 'V2.0（旧）',
   };
+  const modelInfo = (id) => META?.models.find((m) => m.id === id) || null;
+  const modelShort = (id) => modelInfo(id)?.short || MODEL_NAME_FALLBACK[id] || String(id).replace('agnes-video-', '');
+  const selectableModels = () => (META ? META.models.filter((m) => !m.deprecated) : []);
+  const DEFAULT_MODEL = () => (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
 
   const state = {
     tasks: [],
@@ -65,7 +71,11 @@
     });
     let data = null;
     try { data = await res.json(); } catch { /* ignore */ }
-    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    if (!res.ok) {
+      const err = new Error(data?.error || `HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     return data;
   }
 
@@ -92,7 +102,7 @@
       t.seconds ? `${t.seconds}s` : null,
       t.aspect_ratio,
       t.size,
-      MODEL_NAME[t.model] || t.model.replace('agnes-video-', ''),
+      modelShort(t.model),
       t.seed !== null && t.seed !== undefined ? `seed ${t.seed}` : null,
       t.video_id ? t.video_id.slice(-10) : null,
     ].filter(Boolean);
@@ -101,7 +111,7 @@
 
     let extra = '';
     if (t.status === 'in_progress') {
-      extra = `<div class="pbar"><div style="width:${Math.max(2, t.progress || 0)}%"></div></div>`;
+      extra = `<div class="pbar"><div style="width:${Math.max(2, Number(t.progress) || 0)}%"></div></div>`;
     }
     if (t.status === 'completed' && t.metadata_url) {
       extra = `
@@ -182,7 +192,16 @@
       el.innerHTML = byCol[col].length ? byCol[col].map(cardHTML).join('') : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
     }
     $('#board').classList.toggle('focus', Boolean(filter));
-    $('#emptyTip').hidden = state.tasks.length > 0;
+    // 空态文案：区分「全局无任务」与「搜索/筛选无结果」
+    const emptyEl = $('#emptyTip');
+    emptyEl.hidden = state.tasks.length > 0;
+    if (!emptyEl.hidden) {
+      emptyEl.querySelector('h3').textContent = state.search
+        ? `没有匹配「${state.search}」的任务`
+        : state.statusFilter
+          ? `暂无${STATUS_LABEL[state.statusFilter] || '该状态'}任务`
+          : '还没有任务';
+    }
     observeVideos();
   }
 
@@ -217,6 +236,24 @@
   }
 
   /* ---------------- 数据加载 ---------------- */
+  let loadFailCount = 0;
+  function renderConn(ok) {
+    const sub = $('#brandSub');
+    if (!ok) {
+      sub.textContent = '连接中断 · 无法访问本地服务，请确认 server.js 是否在运行';
+      sub.className = 'brand-sub offline';
+      return;
+    }
+    const s = state.settings;
+    if (s && s.api_key_set) {
+      sub.textContent = `已连接 · ${s.base_url} · 轮询 ${s.poll_interval_ms}ms · Key ${s.api_key_masked}`;
+      sub.className = 'brand-sub online';
+    } else {
+      sub.textContent = '未连接 · 请先在设置中填写 API Key';
+      sub.className = 'brand-sub offline';
+    }
+  }
+
   async function loadTasks() {
     try {
       const params = new URLSearchParams({ limit: '200' });
@@ -226,38 +263,50 @@
       state.tasks = data.items;
       renderStats(data.stats);
       renderBoard();
+      if (loadFailCount > 0) {
+        loadFailCount = 0;
+        renderConn(true);
+        toast('连接已恢复', 'ok');
+      }
     } catch (e) {
-      console.warn('加载任务失败:', e.message);
+      loadFailCount += 1;
+      renderConn(false);
+      // 首次失败提示一次，之后每 30 秒（15 个轮询周期）提醒一次，避免刷屏
+      if (loadFailCount === 1 || loadFailCount % 15 === 0) toast(`任务刷新失败：${e.message}`, 'err');
     }
+  }
+
+  /* ---------------- 元数据（模型/画幅/时长单一事实来源） ---------------- */
+  async function loadMeta() {
+    META = await api('/api/meta');
+    // 新建任务表单下拉
+    $('#fModel').innerHTML = selectableModels()
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+    $('#fSeconds').innerHTML = META.seconds
+      .map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)}</option>`).join('');
+    $('#fAspect').innerHTML = META.aspect_ratios
+      .map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`).join('');
+    // 设置弹窗默认模型下拉（同样只列未下架模型）
+    $('#setModel').innerHTML = selectableModels()
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
   }
 
   async function loadSettings() {
     try {
       state.settings = await api('/api/settings');
-      const sub = $('#brandSub');
-      if (state.settings.api_key_set) {
-        sub.textContent = `已连接 · ${state.settings.base_url} · 轮询 ${state.settings.poll_interval_ms}ms · Key ${state.settings.api_key_masked}`;
-        sub.className = 'brand-sub online';
-      } else {
-        sub.textContent = '未连接 · 请先在设置中填写 API Key';
-        sub.className = 'brand-sub offline';
-      }
+      renderConn(true);
       $('#keyStatus').textContent = state.settings.api_key_set
         ? `（已保存 ${state.settings.api_key_masked}，留空则不修改）`
         : '（未配置）';
-      // 旧模型兜底：设置里的默认模型若不支持，则回退 2.5-flash
-      const m = ['agnes-video-2.5-flash', 'agnes-video-2.5'].includes(state.settings.model)
-        ? state.settings.model : 'agnes-video-2.5-flash';
+      // 旧模型兜底：设置里的默认模型若已下架，则回退默认免费模型
+      const m = selectableModels().some((x) => x.id === state.settings.model)
+        ? state.settings.model : DEFAULT_MODEL();
       $('#fModel').value = m;
       onModelChange();
-      $('#setModel').value = state.settings.model;
+      $('#setModel').value = m; // 设置弹窗同样做旧模型兜底，避免静默不选中
       $('#setBaseUrl').value = state.settings.base_url;
       $('#setPollMs').value = state.settings.poll_interval_ms;
       $('#setMaxMin').value = state.settings.max_active_minutes;
-      $('#keyStatus').textContent = state.settings.api_key_set
-        ? `（已保存 ${state.settings.api_key_masked}，留空则不修改）`
-        : '（未配置）';
-      onModelChange();
     } catch (e) {
       toast('加载设置失败：' + e.message, 'err');
     }
@@ -315,12 +364,15 @@
   /* ---------------- 卡片点击 → 详情 ---------------- */
   function openDetail(id) {
     state.detailId = id;
+    state.detailSig = null;
+    $('#detailActions').dataset.sig = ''; // 强制重建操作栏，保证按钮闭包绑定当前任务
     $('#detailModal').hidden = false;
     refreshDetail();
   }
   function closeDetail() {
     state.detailId = null;
     state.detailSig = null;
+    $('#detailActions').dataset.sig = '';
     $('#detailModal').hidden = true;
   }
 
@@ -335,7 +387,13 @@
     const id = state.detailId;
     if (!id) return;
     let t;
-    try { t = await api(`/api/tasks/${id}`); } catch { return; }
+    try {
+      t = await api(`/api/tasks/${id}`);
+    } catch (e) {
+      // 任务已被删除（如「清空已完成/失败」）→ 自动关闭弹窗，避免静默 404
+      if (e.status === 404) closeDetail();
+      return;
+    }
     const body = $('#detailBody');
     const sig = JSON.stringify([id, t.status, t.progress, t.metadata_url, t.error_message]);
     if (state.detailSig === sig && body.dataset.rendered === '1') {
@@ -362,8 +420,8 @@
       body.innerHTML = `
         <div class="detail-section">
           <div class="progress-big">
-            <b>${t.status === 'in_progress' ? t.progress + '%' : STATUS_LABEL[t.status] || t.status}</b>
-            ${t.status === 'in_progress' ? `<div class="pbar"><div style="width:${Math.max(2, t.progress || 0)}%"></div></div>` : ''}
+            <b>${t.status === 'in_progress' ? `${Number(t.progress) || 0}%` : esc(STATUS_LABEL[t.status] || t.status)}</b>
+            ${t.status === 'in_progress' ? `<div class="pbar"><div style="width:${Math.max(2, Number(t.progress) || 0)}%"></div></div>` : ''}
           </div>
           ${play}
           <div class="detail-dl">
@@ -397,27 +455,34 @@
       body.dataset.rendered = '1';
     }
 
-    // 操作栏
+    // 操作栏：仅按钮集合变化时重建，避免每 2s 替换节点吃掉点击
     const acts = [];
     if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
     if (t.status === 'failed' || t.status === 'submit_error') acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
     if (t.status === 'completed' && t.metadata_url) acts.push(`<a class="btn primary" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">下载视频</a>`);
     acts.push(`<button class="btn ghost danger" id="dDel">删除任务</button>`);
-    $('#detailActions').innerHTML = acts.join('') + `<button class="btn ghost" data-close>关闭</button>`;
+    const actsSig = acts.join('|');
+    if ($('#detailActions').dataset.sig !== actsSig) {
+      $('#detailActions').dataset.sig = actsSig;
+      $('#detailActions').innerHTML = acts.join('') + `<button class="btn ghost" data-close>关闭</button>`;
 
-    $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
-    $('#dStatus').className = `chip-mini ${t.status}`;
+      $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
+      $('#dStatus').className = `chip-mini ${t.status}`;
 
-    const bind = (idBtn, fn) => { const el = $('#' + idBtn); if (el) el.onclick = fn; };
-    bind('dPoll', async () => { try { const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' }); toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok'); closeDetail(); openDetail(id); await loadTasks(); } catch (e) { toast(e.message, 'err'); } });
-    bind('dRetry', async () => {
-      if (!confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) return;
-      try { const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' }); toast(`已创建新任务 #${r.task.id}`, 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
-    });
-    bind('dDel', async () => {
-      if (!confirm(`确认删除任务 #${id}？`)) return;
-      try { await api(`/api/tasks/${id}`, { method: 'DELETE' }); toast('已删除', 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
-    });
+      const bind = (idBtn, fn) => { const el = $('#' + idBtn); if (el) el.onclick = fn; };
+      bind('dPoll', async () => { try { const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' }); toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok'); await refreshDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); } });
+      bind('dRetry', async () => {
+        if (!confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) return;
+        try { const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' }); toast(`已创建新任务 #${r.task.id}`, 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+      });
+      bind('dDel', async () => {
+        if (!confirm(`确认删除任务 #${id}？`)) return;
+        try { await api(`/api/tasks/${id}`, { method: 'DELETE' }); toast('已删除', 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+      });
+    } else {
+      $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
+      $('#dStatus').className = `chip-mini ${t.status}`;
+    }
   }
 
   /* ---------------- 新建任务 ---------------- */
@@ -443,7 +508,7 @@
     el.innerHTML = refState[key]
       .map((v, i) => {
         const extra = key === 'videos' && typeof v === 'object'
-          ? `<input type="number" data-i="${i}" data-f="start" placeholder="start_seconds" value="${v.start_seconds}" style="max-width:90px" />`
+          ? `<input type="number" data-i="${i}" data-f="start" placeholder="start_seconds" value="${Number(v.start_seconds) || 0}" style="max-width:90px" />`
           : '';
         const url = typeof v === 'string' ? v : v.url;
         return `<div class="list-row">
@@ -549,16 +614,12 @@
   }
 
   function onModelChange() {
-    const m = $('#fModel').value;
-    $('#modelHint').textContent = m === 'agnes-video-2.5-flash'
-      ? '（限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考）'
-      : '（付费 · 720P/960P/2K · 支持视频参考）';
-    $('#fSize').innerHTML = m === 'agnes-video-2.5-flash'
-      ? '<option value="720P">720P</option>'
-      : '<option value="720P">720P</option><option value="960P">960P</option><option value="2K">2K</option>';
-    if (m === 'agnes-video-v2.0') $('#fModel').value = 'agnes-video-2.5-flash'; // 旧模型兜底
+    const info = modelInfo($('#fModel').value);
+    $('#modelHint').textContent = info ? `（${info.hint}）` : '';
+    $('#fSize').innerHTML = (info?.sizes?.length ? info.sizes : ['720P'])
+      .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
     const grpVideos = $('#grpVideos');
-    if (grpVideos) grpVideos.classList.toggle('hidden', m === 'agnes-video-2.5-flash');
+    if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
   }
 
   /* ---------------- 设置 ---------------- */
@@ -605,13 +666,24 @@
   }
 
   /* ---------------- 刷新循环 ---------------- */
-  let logTimer = null;
+  let loopBusy = false; // 防止上一轮请求未完成时堆叠（慢网络下旧响应覆盖新响应）
+  let lastWsTasksRefresh = 0;
   function startLoop() {
     setInterval(async () => {
-      if (document.hidden) return; // 后台标签页不刷新
-      try { await loadTasks(); } catch { /* ignore */ }
-      if (state.detailId) await refreshDetail();
-      if (!$('#logModal').hidden) await refreshLogs();
+      if (document.hidden || loopBusy) return; // 后台标签页不刷新
+      loopBusy = true;
+      try {
+        await loadTasks();
+        if (state.detailId) await refreshDetail();
+        if (!$('#logModal').hidden) await refreshLogs();
+        // 工作台第④步任务进度低频自动更新（10s，独立于整页重绘，不打断编辑）
+        if (!$('#workspaceView').hidden && Date.now() - lastWsTasksRefresh > 10000) {
+          lastWsTasksRefresh = Date.now();
+          window.__ws?.refreshTasks?.();
+        }
+      } catch { /* ignore */ } finally {
+        loopBusy = false;
+      }
     }, 2000);
   }
 
@@ -682,11 +754,21 @@
 
     $('#btnClearDone').addEventListener('click', async () => {
       if (!confirm('确认删除全部已完成任务？')) return;
-      try { const r = await api('/api/tasks/bulk/clear-completed', { method: 'POST' }); toast(`已清理 ${r.removed} 条`, 'ok'); loadTasks(); } catch (e) { toast(e.message, 'err'); }
+      try {
+        const r = await api('/api/tasks/bulk/clear-completed', { method: 'POST' });
+        toast(`已清理 ${r.removed} 条`, 'ok');
+        if (state.detailId) refreshDetail(); // 被清空的任务若是当前打开的详情，触发 404 自动关闭
+        loadTasks();
+      } catch (e) { toast(e.message, 'err'); }
     });
     $('#btnClearFailed').addEventListener('click', async () => {
       if (!confirm('确认删除全部失败/提交失败任务？')) return;
-      try { const r = await api('/api/tasks/bulk/clear-failed', { method: 'POST' }); toast(`已清理 ${r.removed} 条`, 'ok'); loadTasks(); } catch (e) { toast(e.message, 'err'); }
+      try {
+        const r = await api('/api/tasks/bulk/clear-failed', { method: 'POST' });
+        toast(`已清理 ${r.removed} 条`, 'ok');
+        if (state.detailId) refreshDetail();
+        loadTasks();
+      } catch (e) { toast(e.message, 'err'); }
     });
 
     // 搜索 + 状态过滤
@@ -750,7 +832,8 @@
     $('#navTasks').addEventListener('click', () => switchView('tasks'));
 
     // 初始加载
-    window.__app = { applyTemplate };
+    window.__app = { applyTemplate, loadTasks };
+    await loadMeta();
     await loadSettings();
     await loadTasks();
     startLoop();

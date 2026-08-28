@@ -6,7 +6,7 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const express = require('express');
-const { settings, tasks, projects, DEFAULT_SETTINGS, DB_PATH } = require('./db');
+const { settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
 const poller = require('./poller');
 const { log, recent: recentLogs } = require('./logger');
@@ -16,28 +16,55 @@ app.use(express.json({ limit: '2mb' }));
 
 /* ---------------- 常量 ---------------- */
 
+// 模型单一事实来源：前端下拉/提示文案全部经 GET /api/meta 由此渲染
 const MODELS = {
-  'agnes-video-2.5-flash': { family: 'v25', sizes: ['720P'], free: true, label: 'Agnes Video 2.5 Flash（免费）' },
-  'agnes-video-2.5':       { family: 'v25', sizes: ['720P', '960P', '2K'], free: false, label: 'Agnes Video 2.5（付费）' },
-  'agnes-video-v2.0':      { family: 'v2', free: true, label: 'Agnes Video V2.0（旧模型 · 下架）' },
+  'agnes-video-2.5-flash': {
+    family: 'v25', sizes: ['720P'], free: true, short: 'Flash',
+    hint: '限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考',
+    label: 'Agnes Video 2.5 Flash（最新 · 免费）',
+  },
+  'agnes-video-2.5': {
+    family: 'v25', sizes: ['720P', '960P', '2K'], free: false, short: '2.5',
+    hint: '付费 · 720P/960P/2K · 支持视频参考',
+    label: 'Agnes Video 2.5（付费）',
+  },
+  'agnes-video-v2.0': {
+    family: 'v2', sizes: [], free: true, short: 'V2.0（旧）', deprecated: true,
+    hint: '旧模型 · 已从界面下架（后端兼容保留）',
+    label: 'Agnes Video V2.0（旧模型 · 下架）',
+  },
 };
 const MODES = ['text', 'keyframe', 'reference'];
 const V2_MODES = ['text', 'image', 'keyframes'];
 const ASPECT_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 const SECONDS_OK = Array.from({ length: 9 }, (_, i) => String(i + 4)); // '4'..'12'
+const PROJECT_STATUSES = ['draft', 'copy_done', 'character_done', 'video_submitted'];
 
 /* 流水线模型（最新免费三件套，M1 固定值） */
 const LLM_MODEL = 'agnes-2.5-flash';        // 文本：提示词优化/文案
 const IMAGE_MODEL = 'agnes-image-2.1-flash'; // 图片：角色/场景
 const IMAGE_SIZES = ['1K', '2K', '3K', '4K'];
 const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'];
-const ARTIFACTS_DIR = path.join(__dirname, 'data', 'artifacts');
+const ARTIFACTS_DIR = path.join(
+  process.env.DATA_DIR || path.join(__dirname, 'data'),
+  'artifacts'
+);
+
+/* 输入上限 */
+const MAX_TEXT_LEN = 8000;       // 提示词/创意/文案等长文本上限
+const MAX_MESSAGES = 20;         // /api/llm/chat 消息条数上限
+const MAX_INPUT_IMAGES = 5;      // 图片生成输入图上限
 
 /* ---------------- 工具函数 ---------------- */
 
 /** 简单 URL 校验（必须 http/https） */
 function isHttpUrl(s) {
   return typeof s === 'string' && /^https?:\/\/\S+$/i.test(s.trim());
+}
+
+/** 只接受 http(s) 的外部地址，其余（含 javascript: 等异常 scheme）一律置 null */
+function safeUrl(u) {
+  return isHttpUrl(u) ? String(u).trim() : null;
 }
 
 function cleanUrlList(arr, label) {
@@ -287,13 +314,34 @@ async function submitTask(payload, meta, opts = {}) {
     submit_response: j,
     status: /^(queued|in_progress|completed|failed)$/.test(j.status) ? j.status : 'queued',
     progress: Number.isFinite(j.progress) ? Number(j.progress) : 0,
-    metadata_url: j.metadata?.url || j.url || null,
+    metadata_url: safeUrl(j.metadata?.url || j.url),
   });
   log('info', `任务 #${id} 创建成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
   return tasks.get(id);
 }
 
 /* ---------------- API 路由 ---------------- */
+
+// 前端元数据：模型/画幅/时长的单一事实来源，下拉与提示文案全部由此渲染
+app.get('/api/meta', (req, res) => {
+  res.json({
+    models: Object.entries(MODELS).map(([id, m]) => ({
+      id,
+      label: m.label,
+      short: m.short,
+      hint: m.hint,
+      free: Boolean(m.free),
+      deprecated: Boolean(m.deprecated),
+      sizes: m.sizes || [],
+      video_ref: id !== 'agnes-video-2.5-flash' && m.family === 'v25',
+      max_images: id === 'agnes-video-2.5-flash' ? 5 : null,
+    })),
+    aspect_ratios: ASPECT_RATIOS,
+    seconds: SECONDS_OK,
+    image: { model: IMAGE_MODEL, sizes: IMAGE_SIZES, ratios: IMAGE_RATIOS },
+    llm_model: LLM_MODEL,
+  });
+});
 
 // 健康检查
 app.get('/api/health', (req, res) => {
@@ -428,8 +476,11 @@ app.post('/api/tasks/bulk/clear-completed', (req, res) => {
 app.post('/api/tasks/bulk/clear-failed', (req, res) => {
   const failed = tasks.list({ status: 'failed', limit: 500 });
   const fe = tasks.list({ status: 'submit_error', limit: 500 });
-  let n = 0;
-  for (const t of [...failed, ...fe]) if (tasks.remove(t.id)) n++;
+  const n = tx(() => {
+    let c = 0;
+    for (const t of [...failed, ...fe]) if (tasks.remove(t.id)) c++;
+    return c;
+  });
   res.json({ ok: true, removed: n });
 });
 
@@ -498,15 +549,21 @@ async function downloadArtifact(remoteUrl) {
 function buildImagePayload(b) {
   const prompt = String(b.prompt || '').trim();
   if (!prompt) throw new ApiError(400, '图片描述 prompt 不能为空');
+  if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
   const size = String(b.size || '1K');
-  if (!IMAGE_SIZES.includes(size) && !/^\d+x\d+$/.test(size)) {
-    throw new ApiError(400, `size 仅支持 ${IMAGE_SIZES.join('/')} 或 精确尺寸（如 1024x768），收到：${size}`);
+  if (!IMAGE_SIZES.includes(size)) {
+    // 自定义尺寸：限制每边最大 4096，防止无界数值透传上游
+    const m = /^\d{2,4}x\d{2,4}$/.exec(size);
+    const [w, h] = m ? size.split('x').map(Number) : [0, 0];
+    if (!m || w > 4096 || h > 4096) {
+      throw new ApiError(400, `size 仅支持 ${IMAGE_SIZES.join('/')} 或 ≤4096 的精确尺寸（如 1024x768），收到：${size}`);
+    }
   }
   const ratio = String(b.ratio || '1:1');
   if (b.ratio !== undefined && !IMAGE_RATIOS.includes(ratio)) {
     throw new ApiError(400, `ratio 仅支持 ${IMAGE_RATIOS.join('/')}，收到：${ratio}`);
   }
-  // 输入图：允许 http(s) URL 或 data:image base64（图生图 / 多图合成）
+  // 输入图：允许 http(s) URL 或 data:image base64（图生图 / 多图合成），数量受限
   const inputImages = [];
   if (b.image !== undefined && b.image !== null && b.image !== '') {
     if (!Array.isArray(b.image)) throw new ApiError(400, 'image 必须是数组（URL 或 data:image）');
@@ -517,6 +574,9 @@ function buildImagePayload(b) {
         throw new ApiError(400, `image 必须是可公开访问的 http(s) URL 或 data:image 前缀，收到：${s.slice(0, 50)}`);
       }
       inputImages.push(s);
+    }
+    if (inputImages.length > MAX_INPUT_IMAGES) {
+      throw new ApiError(400, `image 最多 ${MAX_INPUT_IMAGES} 张`);
     }
   }
   const payload = {
@@ -537,7 +597,36 @@ app.post('/api/llm/chat', ah(async (req, res) => {
   const b = req.body || {};
   const messages = Array.isArray(b.messages) ? b.messages : [];
   if (!messages.length) throw new ApiError(400, 'messages 至少需要一条消息');
-  if (b.system) messages.unshift({ role: 'system', content: String(b.system) });
+  if (messages.length > MAX_MESSAGES) throw new ApiError(400, `messages 最多 ${MAX_MESSAGES} 条`);
+  for (const m of messages) {
+    if (!m || typeof m !== 'object' || Array.isArray(m)) {
+      throw new ApiError(400, 'messages 每项需为 {role, content} 对象');
+    }
+    if (!['system', 'user', 'assistant'].includes(m.role)) {
+      throw new ApiError(400, `messages role 仅支持 system/user/assistant，收到：${m.role}`);
+    }
+    if (typeof m.content !== 'string' || !m.content.trim()) {
+      throw new ApiError(400, 'messages 每项 content 必须是非空字符串');
+    }
+    if (m.content.length > MAX_TEXT_LEN) {
+      throw new ApiError(400, `messages 单条 content 长度需 ≤ ${MAX_TEXT_LEN}`);
+    }
+  }
+  if (b.system !== undefined && (typeof b.system !== 'string' || b.system.length > MAX_TEXT_LEN)) {
+    throw new ApiError(400, `system 必须是长度 ≤ ${MAX_TEXT_LEN} 的字符串`);
+  }
+  const temperature = b.temperature !== undefined ? Number(b.temperature) : undefined;
+  if (temperature !== undefined && (!Number.isFinite(temperature) || temperature < 0 || temperature > 2)) {
+    throw new ApiError(400, 'temperature 需在 0–2 之间');
+  }
+  const maxTokens = b.max_tokens !== undefined ? Number(b.max_tokens) : undefined;
+  if (maxTokens !== undefined && (!Number.isInteger(maxTokens) || maxTokens < 1 || maxTokens > 8192)) {
+    throw new ApiError(400, 'max_tokens 需为 1–8192 的整数');
+  }
+  if (b.model !== undefined && b.model !== LLM_MODEL) {
+    throw new ApiError(400, `暂只支持文本模型 ${LLM_MODEL}，收到：${b.model}`);
+  }
+  if (b.system) messages.unshift({ role: 'system', content: b.system });
   const apiKey = settings.get('api_key', '');
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
   let r;
@@ -545,10 +634,10 @@ app.post('/api/llm/chat', ah(async (req, res) => {
     r = await agnes.chatComplete({
       apiKey,
       baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
-      model: b.model || LLM_MODEL,
+      model: LLM_MODEL,
       messages,
-      temperature: b.temperature,
-      max_tokens: b.max_tokens,
+      temperature,
+      max_tokens: maxTokens,
     });
   } catch (e) {
     throw new ApiError(502, `文本生成网络异常：${e.message}`);
@@ -567,8 +656,16 @@ app.post('/api/llm/script', ah(async (req, res) => {
   const b = req.body || {};
   const idea = String(b.idea || '').trim();
   if (!idea) throw new ApiError(400, '请先输入创意想法 idea');
+  if (idea.length > MAX_TEXT_LEN) throw new ApiError(400, `idea 长度需 ≤ ${MAX_TEXT_LEN}`);
+  const style = b.style ? String(b.style).trim().slice(0, 200) : '';
+  if (b.aspect_ratio !== undefined && !ASPECT_RATIOS.includes(b.aspect_ratio)) {
+    throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+  }
+  if (b.seconds !== undefined && !SECONDS_OK.includes(String(b.seconds))) {
+    throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  }
   if (b.project_id !== undefined && !projects.get(b.project_id)) throw new ApiError(404, '项目不存在');
-  const userMessage = `一句话创意：${idea}\n风格偏好：${b.style || '不限制'}\n画幅：${b.aspect_ratio || '16:9'}\n目标时长：${b.seconds || '5'} 秒`;
+  const userMessage = `一句话创意：${idea}\n风格偏好：${style || '不限制'}\n画幅：${b.aspect_ratio || '16:9'}\n目标时长：${b.seconds || '5'} 秒`;
   const apiKey = settings.get('api_key', '');
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
   let r;
@@ -699,8 +796,18 @@ app.patch('/api/projects/:id', (req, res) => {
   const p = projects.get(req.params.id);
   if (!p) throw new ApiError(404, '项目不存在');
   const b = req.body || {};
-  if (b.aspect_ratio && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
-  if (b.seconds && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  if (b.name !== undefined) {
+    const n = String(b.name).trim();
+    if (!n) throw new ApiError(400, '项目名称不能为空');
+    b.name = n;
+  }
+  if (b.status !== undefined && !PROJECT_STATUSES.includes(b.status)) {
+    throw new ApiError(400, `status 仅支持 ${PROJECT_STATUSES.join('/')}`);
+  }
+  if (b.aspect_ratio !== undefined && b.aspect_ratio !== null && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+  if (b.seconds !== undefined && b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  if (b.idea !== undefined && b.idea !== null && String(b.idea).length > MAX_TEXT_LEN) throw new ApiError(400, `idea 长度需 ≤ ${MAX_TEXT_LEN}`);
+  if (b.style !== undefined && b.style !== null) b.style = String(b.style).trim().slice(0, 200) || null;
   projects.update(p.id, {
     name: b.name, idea: b.idea, style: b.style, aspect_ratio: b.aspect_ratio, seconds: b.seconds, status: b.status,
   });
@@ -723,13 +830,16 @@ app.post('/api/projects/:id/select-text', (req, res) => {
   res.json({ ok: true });
 });
 
-// 编辑文案版本内容（手动微调）
+// 编辑文案版本内容（手动微调；校验文案归属当前项目，防跨项目越权编辑）
 app.patch('/api/projects/:id/texts/:textId', (req, res) => {
   const p = projects.get(req.params.id);
   if (!p) throw new ApiError(404, '项目不存在');
   const content = String(req.body?.content ?? '').trim();
   if (!content) throw new ApiError(400, '内容不能为空');
-  if (!projects.updateText(req.params.textId, content)) throw new ApiError(404, '文案记录不存在');
+  if (content.length > MAX_TEXT_LEN) throw new ApiError(400, `内容长度需 ≤ ${MAX_TEXT_LEN}`);
+  const target = projects.texts(p.id).find((t) => t.id === Number(req.params.textId));
+  if (!target) throw new ApiError(404, '文案记录不存在');
+  if (!projects.updateText(target.id, content)) throw new ApiError(404, '文案记录不存在');
   res.json({ ok: true });
 });
 
@@ -794,10 +904,11 @@ app.use(express.static(path.join(__dirname, 'public')));
 /* ---------------- 错误处理 ---------------- */
 app.use((req, res) => res.status(404).json({ error: 'Not Found' }));
 app.use((err, req, res, next) => {
+  if (res.headersSent) return next(err); // 响应已开始流式输出时交给 Express 默认处理
   if (err instanceof ApiError) return res.status(err.status).json({ error: err.message });
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: '请求体不是合法 JSON' });
   log('error', `未处理异常: ${err.message}\n${err.stack || ''}`);
-  res.status(500).json({ error: `服务器内部错误：${err.message}` });
+  res.status(500).json({ error: '服务器内部错误（详情见「日志」面板）' });
 });
 
 /* ---------------- 启动 ---------------- */
@@ -833,5 +944,13 @@ function shutdown(signal) {
 }
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
+// 常驻轮询服务的进程级兜底：遗漏的 rejection 记日志不崩；uncaughtException 走优雅退出
+process.on('unhandledRejection', (reason) => {
+  log('error', `未处理的 Promise rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+});
+process.on('uncaughtException', (err) => {
+  log('error', `未捕获异常，进程即将退出: ${err.stack || err.message}`);
+  shutdown('uncaughtException');
+});
 
 module.exports = { app, server }; // 供冒烟测试使用

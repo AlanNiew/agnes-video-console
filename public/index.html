@@ -98,14 +98,8 @@
 
         <div class="field">
           <label>模型 <span class="hint" id="modelHint"></span></label>
-          <select id="fModel">
-            <optgroup label="免费（默认）">
-              <option value="agnes-video-2.5-flash" selected>Agnes Video 2.5 Flash（最新 · 720P）</option>
-            </optgroup>
-            <optgroup label="高级（付费）">
-              <option value="agnes-video-2.5">Agnes Video 2.5（720P/960P/2K）</option>
-            </optgroup>
-          </select>
+          <!-- 选项由 app.js 启动时按 GET /api/meta 动态填充 -->
+          <select id="fModel"></select>
         </div>
 
         <div class="field">
@@ -150,20 +144,13 @@
 
         <div class="grid2">
           <div class="field"><label>时长 seconds</label>
-            <select id="fSeconds"><option>5</option><option>4</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select>
+            <select id="fSeconds"></select>
           </div>
           <div class="field"><label>画幅 aspect_ratio</label>
-            <select id="fAspect">
-              <option value="16:9">16:9 横屏 1280×720</option>
-              <option value="21:9">21:9 超宽 1680×720</option>
-              <option value="4:3">4:3 960×720</option>
-              <option value="1:1">1:1 方形 720×720</option>
-              <option value="3:4">3:4 竖版 720×960</option>
-              <option value="9:16">9:16 竖屏 720×1280</option>
-            </select>
+            <select id="fAspect"></select>
           </div>
           <div class="field"><label>size 分辨率</label>
-            <select id="fSize"><option value="720P">720P</option></select>
+            <select id="fSize"></select>
           </div>
           <div class="field"><label>seed 种子（可选）</label>
             <input type="number" id="fSeed" min="0" placeholder="留空=随机" /></div>
@@ -196,10 +183,7 @@
         </div>
         <div class="field">
           <label>默认模型</label>
-          <select id="setModel">
-            <option value="agnes-video-2.5-flash">Agnes Video 2.5 Flash（免费）</option>
-            <option value="agnes-video-2.5">Agnes Video 2.5（付费）</option>
-          </select>
+          <select id="setModel"></select><!-- 选项由 app.js 按 /api/meta 填充 -->
         </div>
         <div class="grid2">
           <div class="field"><label>轮询间隔 (ms)</label><input type="number" id="setPollMs" min="500" step="100" /></div>

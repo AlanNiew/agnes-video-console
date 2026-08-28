@@ -373,6 +373,7 @@ body {
 }
 .toast.ok { border-left-color: var(--green); }
 .toast.err { border-left-color: var(--red); }
+.toast.warn { border-left-color: #fbbf24; }
 @keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
 
 .hidden { display: none !important; }

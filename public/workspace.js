@@ -23,6 +23,11 @@
   let currentProjectId = null;
   let imgGenBusy = false;
   let scriptBusy = false;
+  let META = null; // 模型/画幅/时长元数据（GET /api/meta，与任务中心同源）
+  async function getMeta() {
+    if (!META) META = await api('/api/meta');
+    return META;
+  }
 
   async function api(path, opts = {}) {
     const res = await fetch(path, {
@@ -71,7 +76,7 @@
           ? `<div class="ws-grid">${items.map(cardHTML).join('')}</div>`
           : `<div class="empty-box" style="margin:40px auto;max-width:480px"><h3>还没有创作项目</h3><p>一句话想法 → AI 出文案 → 生成角色设定图 → 一键发起视频任务，全部免费。</p></div>`}
       </div>`;
-    $('#wsNewProject').onclick = () => openNewProject();
+    $('#wsNewProject').onclick = () => openNewProject().catch((e) => toast('打开新建项目失败：' + e.message, 'err'));
     ws.querySelectorAll('.ws-card').forEach((c) =>
       c.addEventListener('click', () => { currentProjectId = Number(c.dataset.id); renderProject(currentProjectId); })
     );
@@ -91,7 +96,8 @@
       </div>`;
   }
 
-  function openNewProject() {
+  async function openNewProject() {
+    const meta = await getMeta();
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.innerHTML = `
@@ -103,10 +109,10 @@
           <div class="field"><label>风格偏好（可选）</label><input type="text" id="npStyle" placeholder="如：电影写实 / 国风水墨 / 赛博朋克" /></div>
           <div class="grid2">
             <div class="field"><label>画幅</label>
-              <select id="npAspect"><option value="16:9" selected>16:9 横屏</option><option value="9:16">9:16 竖屏</option><option value="1:1">1:1 方形</option><option value="4:3">4:3</option><option value="3:4">3:4</option><option value="21:9">21:9 超宽</option></select>
+              <select id="npAspect">${meta.aspect_ratios.map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
             </div>
             <div class="field"><label>目标时长</label>
-              <select id="npSeconds"><option value="5" selected>5 秒</option><option value="8">8 秒</option><option value="10">10 秒</option><option value="4">4 秒</option><option value="6">6 秒</option><option value="7">7 秒</option><option value="9">9 秒</option><option value="11">11 秒</option><option value="12">12 秒</option></select>
+              <select id="npSeconds">${meta.seconds.map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)} 秒</option>`).join('')}</select>
             </div>
           </div>
         </div>
@@ -141,9 +147,17 @@
     };
   }
 
+  /* 步骤④的模型标签：与流水线实际使用的免费视频模型保持同源 */
+  function videoModelTag(meta) {
+    const m = meta.models.find((x) => x.id === 'agnes-video-2.5-flash')
+      || meta.models.find((x) => !x.deprecated && x.free)
+      || meta.models[0];
+    return `${m.short}（${m.free ? '免费' : '付费'} · ${(m.sizes || ['-'])[0] || '-'}）`;
+  }
+
   /* ---------------- 项目详情 ---------------- */
   async function renderProject(id) {
-    const d = await api(`/api/projects/${id}`);
+    const [d, meta] = await Promise.all([api(`/api/projects/${id}`), getMeta()]);
     const p = d.project;
     const texts = d.texts || [];
     const images = d.images || [];
@@ -195,8 +209,8 @@
             <div class="field">
               <label>画幅 / 分辨率档位</label>
               <div class="grid2">
-                <select id="wsImgRatio"><option value="1:1" selected>1:1</option><option value="3:4">3:4</option><option value="4:3">4:3</option><option value="16:9">16:9</option><option value="9:16">9:16</option></select>
-                <select id="wsImgSize"><option value="1K" selected>1K</option><option value="2K">2K</option><option value="3K">3K</option><option value="4K">4K</option></select>
+                <select id="wsImgRatio">${meta.image.ratios.map((a) => `<option value="${esc(a)}" ${a === '1:1' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
+                <select id="wsImgSize">${meta.image.sizes.map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
               </div>
               ${imgGenBusy ? '<div class="ws-loading mt"><span class="spinner"></span> 图片生成中（约 10–60 秒）…</div>' : '<button class="btn primary sm mt" id="wsGenChar">🎨 生成角色图</button>'}
               <div class="hint mt">点击图片定稿（绿色边框）；不满意可再生成。</div>
@@ -217,50 +231,69 @@
             </div>
             <div class="row mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
               <select id="wsVSeconds" class="meta-tag" title="视频时长" style="background:var(--bg)">
-                ${[4, 5, 6, 7, 8, 9, 10, 11, 12].map((s) => `<option value="${s}" ${String(s) === String(p.seconds || 5) ? 'selected' : ''}>${s} 秒</option>`).join('')}
+                ${meta.seconds.map((s) => `<option value="${esc(s)}" ${s === String(p.seconds || 5) ? 'selected' : ''}>${esc(s)} 秒</option>`).join('')}
               </select>
               <select id="wsVAspect" class="meta-tag" style="background:var(--bg)">
-                ${['16:9', '9:16', '1:1', '4:3', '3:4', '21:9'].map((a) => `<option ${a === (p.aspect_ratio || '16:9') ? 'selected' : ''}>${a}</option>`).join('')}
+                ${meta.aspect_ratios.map((a) => `<option ${a === (p.aspect_ratio || '16:9') ? 'selected' : ''}>${esc(a)}</option>`).join('')}
               </select>
-              <span class="meta-tag">2.5-flash（免费 · 720P）</span>
+              <span class="meta-tag">${esc(videoModelTag(meta))}</span>
               <span class="spacer" style="flex:1"></span>
               <button class="btn primary" id="wsSubmitVideo" ${selChar && selVideoText ? '' : 'disabled'}>🚀 提交视频任务</button>
             </div>
             <div class="hint mt">将用：定稿角色图 + 分镜提示词（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）</div>
           </div>
-          ${tasks.length ? `
-          <div class="mt"><b>本项目视频任务：</b></div>
-          <div class="ver-list mt">${tasks.map((t) => `
-            <div class="ver-item">
-              #${t.id} · ${STATUS_LABEL[t.status] || t.status} · ${t.progress != null ? t.progress + '%' : ''} · ${fmtTime(t.created_at)}
-              ${t.status === 'completed' && t.metadata_url ? `<a class="act green" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">播放/下载</a>` : ''}
-              <a class="act" href="#" data-goto-task="${t.id}" style="margin-left:auto">去任务中心查看</a>
-            </div>`).join('')}
-          </div>` : ''}
+          ${`<div id="wsTaskList">${renderTaskList(tasks)}</div>`}
         </div>
       </div>`;
 
     $('#wsBack').onclick = () => { currentProjectId = null; renderList(); };
     $('#wsDel').onclick = async () => {
       if (!confirm(`确认删除项目「${p.name}」？文案与角色图将一并删除，视频任务保留。`)) return;
-      await api(`/api/projects/${p.id}`, { method: 'DELETE' });
-      toast('项目已删除', 'ok');
-      currentProjectId = null;
-      renderList();
+      try {
+        await api(`/api/projects/${p.id}`, { method: 'DELETE' });
+        toast('项目已删除', 'ok');
+        currentProjectId = null;
+        await renderList();
+      } catch (e) {
+        toast('删除失败：' + e.message, 'err');
+      }
     };
     if (!scriptBusy) $('#wsGenScript').onclick = () => genScript(p.id);
     $('#wsGenChar').onclick = () => genCharacterImage(p.id);
     $('#wsSubmitVideo').onclick = () => submitVideo(p.id);
     bindTextSectionEvents(p.id);
     bindWallEvents(p.id);
-    $('#wsDel').onclick = async () => {
-      if (!confirm(`确认删除项目「${p.name}」？`)) return;
-      await api(`/api/projects/${p.id}`, { method: 'DELETE' });
-      currentProjectId = null;
-      await renderList();
-    };
     // 跳转任务中心
-    ws.querySelectorAll('[data-goto-task]').forEach((a) =>
+    bindGotoTaskLinks();
+  }
+
+  /* 任务列表局部刷新：只更新 #wsTaskList，不打断文案/描述编辑 */
+  async function refreshTasks() {
+    const box = $('#wsTaskList');
+    if (!box || !currentProjectId) return;
+    try {
+      const d = await api(`/api/projects/${currentProjectId}`);
+      box.innerHTML = renderTaskList(d.tasks || []);
+      bindGotoTaskLinks();
+    } catch { /* 静默：下次轮询自愈 */ }
+  }
+
+  /* 项目任务列表（独立渲染，供局部刷新） */
+  function renderTaskList(tasks) {
+    if (!tasks.length) return '';
+    return `
+      <div class="mt"><b>本项目视频任务：</b></div>
+      <div class="ver-list mt">${tasks.map((t) => `
+        <div class="ver-item">
+          #${t.id} · ${esc(STATUS_LABEL[t.status] || t.status)} · ${Number(t.progress) > 0 ? `${Number(t.progress)}%` : ''} · ${fmtTime(t.created_at)}
+          ${t.status === 'completed' && t.metadata_url ? `<a class="act green" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">播放/下载</a>` : ''}
+          <a class="act" href="#" data-goto-task="${t.id}" style="margin-left:auto">去任务中心查看</a>
+        </div>`).join('')}
+      </div>`;
+  }
+
+  function bindGotoTaskLinks() {
+    document.querySelectorAll('#wsTaskList [data-goto-task]').forEach((a) =>
       a.addEventListener('click', (e) => {
         e.preventDefault();
         $('#navTasks')?.click();
@@ -355,13 +388,14 @@
   /* ---------------- 动作：生成文案 / 角色图 / 提交视频 ---------------- */
 
   async function genScript(projectId) {
-    const p = await api(`/api/projects/${projectId}`);
+    if (scriptBusy) return; // 防双击并发（两次 LLM 调用 + 两条重复版本）
     scriptBusy = true;
     await renderProject(projectId);
     try {
+      const { project } = await api(`/api/projects/${projectId}`);
       const r = await api('/api/llm/script', {
         method: 'POST',
-        body: { idea: p.project.idea, style: p.project.style, aspect_ratio: p.project.aspect_ratio, seconds: p.project.seconds, project_id: projectId },
+        body: { idea: project.idea, style: project.style, aspect_ratio: project.aspect_ratio, seconds: project.seconds, project_id: projectId },
       });
       if (!r.parsed) {
         toast('模型未按结构化输出（已保存到脚本区供手动采用）', 'warn');
@@ -372,12 +406,14 @@
       toast('文案生成失败：' + e.message, 'err');
     } finally {
       scriptBusy = false;
-      await renderProject(projectId);
+      // 用户可能已离开该项目视图，不强行拉回
+      if (currentProjectId === projectId) await renderProject(projectId);
     }
   }
 
   async function genCharacterImage(projectId) {
-    const desc = $('#wsCharDesc').value.trim();
+    if (imgGenBusy) return; // 防双击并发
+    const desc = $('#wsCharDesc')?.value.trim();
     if (!desc) { toast('请先填写角色外观描述', 'err'); return; }
     imgGenBusy = true;
     await renderProject(projectId);
@@ -397,11 +433,15 @@
       toast('图片生成失败：' + e.message, 'err');
     } finally {
       imgGenBusy = false;
-      await renderProject(projectId);
+      if (currentProjectId === projectId) await renderProject(projectId);
     }
   }
 
   async function submitVideo(projectId) {
+    const btn = $('#wsSubmitVideo');
+    if (!btn || btn.disabled) return; // 防连点重复提交（每次提交都真实占用生成额度）
+    btn.disabled = true;
+    btn.textContent = '提交中…';
     try {
       const r = await api(`/api/projects/${projectId}/videos`, {
         method: 'POST',
@@ -412,9 +452,13 @@
       setTimeout(() => window.__app?.loadTasks?.(), 300);
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
+      if (btn.isConnected) {
+        btn.disabled = false;
+        btn.textContent = '🚀 提交视频任务';
+      }
     }
   }
 
-  // 暴露给 app.js 的视图切换使用
-  window.__ws = { refresh };
+  // 暴露给 app.js 的视图切换 / 轮询循环使用
+  window.__ws = { refresh, refreshTasks };
 })();
