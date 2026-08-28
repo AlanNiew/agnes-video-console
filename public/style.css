@@ -181,9 +181,18 @@ body {
 .act.red:hover { color: var(--red); border-color: var(--red); }
 .video-preview {
   margin-top: 9px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
-  background: #000; line-height: 0;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  min-height: 92px; /* 加载元数据前预留空间，避免卡片跳动 */
 }
-.video-preview video { width: 100%; max-height: 150px; }
+.video-preview video {
+  /* 保持视频原始宽高比：自适应缩放（不拉伸、不裁切）并居中 */
+  max-width: 100%;
+  max-height: 150px;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
 
 /* ---------- 空状态 ---------- */
 .empty-tip { display: grid; place-items: center; padding: 60px 20px; }
@@ -280,8 +289,19 @@ body {
 .detail-dl dt { color: var(--text-dim); }
 .detail-dl dd { word-break: break-all; }
 .detail-dl dd.url { color: var(--blue); }
-.detail-body-play { margin-top: 8px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border); background: #000; }
-.detail-body-play video { width: 100%; max-height: 380px; display: block; }
+.detail-body-play {
+  margin-top: 8px; border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--border); background: #000;
+  display: flex; justify-content: center;
+}
+.detail-body-play video {
+  /* 详情播放器同样保持原始比例，最大高度限制视窗高度，居中显示 */
+  max-width: 100%;
+  max-height: 55vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+}
 .jsonbox {
   background: #0b0e15; border: 1px solid var(--border); border-radius: 9px;
   padding: 11px; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 260px;
