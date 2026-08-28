@@ -2,9 +2,12 @@
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
+![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
 ![Tests](https://img.shields.io/badge/tests-18%20passed-brightgreen)
 
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，用**任务队列看板 + 后台自动轮询 + SQLite 本地持久化**一站式管理视频生成任务。
+
+[English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
 
 支持三个模型（异步任务 API，`POST /v1/videos` 创建、`GET /agnesapi` 轮询）：
 

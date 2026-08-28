@@ -7,6 +7,14 @@
   "private": false,
   "license": "MIT",
   "author": "AlanNiew",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/AlanNiew/agnes-video-console.git"
+  },
+  "bugs": {
+    "url": "https://github.com/AlanNiew/agnes-video-console/issues"
+  },
+  "homepage": "https://github.com/AlanNiew/agnes-video-console#readme",
   "keywords": [
     "agnes-ai",
     "video-generation",

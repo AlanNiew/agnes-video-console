@@ -2,10 +2,13 @@
 
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
+![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
 ![Tests](https://img.shields.io/badge/tests-18%20passed-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
 **task-queue board + background polling + SQLite persistence**.
+
+[中文 README](README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
 Supports three models (async task API — `POST /v1/videos` to create, `GET /agnesapi` to poll):
 
