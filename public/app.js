@@ -106,8 +106,10 @@
     }
     if (t.status === 'completed' && t.metadata_url) {
       extra = `
-        <div class="video-preview">
-          <video controls preload="metadata" muted playsinline src="${esc(t.metadata_url)}"></video>
+        <div class="video-preview" title="点击查看详情播放">
+          <video muted playsinline preload="metadata" data-src="${esc(t.metadata_url)}"></video>
+          <div class="vp-overlay"><span class="vp-play">▶</span></div>
+          ${t.seconds ? `<span class="vp-dur">${esc(t.seconds)}s</span>` : ''}
         </div>`;
     }
     if (t.status === 'failed' || t.status === 'submit_error') {
@@ -182,6 +184,37 @@
     }
     $('#board').classList.toggle('focus', Boolean(filter));
     $('#emptyTip').hidden = state.tasks.length > 0;
+    observeVideos();
+  }
+
+  /* ---------------- 视频懒加载（IntersectionObserver） ---------------- */
+  let videoObserver = null;
+  function observeVideos() {
+    const videos = document.querySelectorAll('#board video[data-src]');
+    if (!videos.length) return;
+    if ('IntersectionObserver' in window) {
+      if (!videoObserver) {
+        videoObserver = new IntersectionObserver((entries) => {
+          for (const en of entries) {
+            if (!en.isIntersecting) continue;
+            const v = en.target;
+            if (!v.src) {
+              v.src = v.dataset.src;
+              // 元数据加载成功后，用真实时长替换角标（如 5.04s → 5s）
+              v.addEventListener('loadedmetadata', () => {
+                const dur = v.closest('.video-preview')?.querySelector('.vp-dur');
+                if (dur && Number.isFinite(v.duration) && v.duration > 0) dur.textContent = `${Math.round(v.duration)}s`;
+              }, { once: true });
+            }
+            videoObserver.unobserve(v);
+          }
+        }, { rootMargin: '180px' });
+      }
+      videos.forEach((v) => { if (!v.src) videoObserver.observe(v); });
+    } else {
+      // 不支持 IntersectionObserver 的浏览器：直接加载
+      videos.forEach((v) => { if (!v.src) v.src = v.dataset.src; });
+    }
   }
 
   /* ---------------- 数据加载 ---------------- */
@@ -237,8 +270,16 @@
 
   function bindCardEvents() {
     $('#board').addEventListener('click', async (ev) => {
+      const vp = ev.target.closest('.video-preview');
       const btn = ev.target.closest('[data-act]');
-      if (!btn) return;
+      if (!btn) {
+        // 点击视频预览（或卡片其余区域仅当点击预览）→ 打开详情播放
+        if (vp) {
+          const card = vp.closest('.card');
+          if (card) openDetail(Number(card.dataset.id));
+        }
+        return;
+      }
       const card = ev.target.closest('.card');
       if (!card) return;
       const id = Number(card.dataset.id);
@@ -734,6 +775,18 @@
     });
 
     bindCardEvents();
+    // 悬停视频预览 → 静音自动播放；移出 → 暂停并回到开头
+    $('#board').addEventListener('mouseover', (e) => {
+      const v = e.target.closest('#board .video-preview video');
+      if (v && v.src && v.readyState >= 1) v.play().catch(() => {});
+    });
+    $('#board').addEventListener('mouseout', (e) => {
+      const v = e.target.closest('#board .video-preview video');
+      if (v) {
+        v.pause();
+        if (v.currentTime > 0.4) v.currentTime = 0;
+      }
+    });
     bindModals();
 
     // 模板下拉
