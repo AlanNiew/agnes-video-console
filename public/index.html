@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Agnes Video 任务控制台</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- 顶部导航 -->
+  <header class="topbar">
+    <div class="brand">
+      <div class="logo">▶</div>
+      <div>
+        <h1>Agnes Video 任务控制台</h1>
+        <p class="brand-sub" id="brandSub">未连接 · 请先在设置中填写 API Key</p>
+      </div>
+    </div>
+    <div class="stats" id="statsBar">
+      <div class="stat"><span class="num" id="statTotal">0</span><span class="lbl">全部</span></div>
+      <div class="stat"><span class="num amber" id="statQueued">0</span><span class="lbl">队列中</span></div>
+      <div class="stat"><span class="num blue" id="statActive">0</span><span class="lbl">生成中</span></div>
+      <div class="stat"><span class="num green" id="statDone">0</span><span class="lbl">已完成</span></div>
+      <div class="stat"><span class="num red" id="statFailed">0</span><span class="lbl">失败</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
+      <button class="btn primary" id="btnNewTask">＋ 新建任务</button>
+      <button class="btn ghost icon-btn" id="btnSettings" title="设置">⚙</button>
+    </div>
+  </header>
+
+  <!-- 工具栏 -->
+  <div class="toolbar">
+    <input type="search" id="searchInput" class="search" placeholder="🔍 按 prompt 搜索任务…" />
+    <div class="chips" id="statusChips">
+      <button class="chip active" data-status="">全部</button>
+      <button class="chip" data-status="queued">队列中</button>
+      <button class="chip" data-status="in_progress">生成中</button>
+      <button class="chip" data-status="completed">已完成</button>
+      <button class="chip" data-status="failed">失败</button>
+    </div>
+    <div class="toolbar-right">
+      <button class="btn ghost sm" id="btnClearDone" title="删除全部已完成任务">清空已完成</button>
+      <button class="btn ghost sm" id="btnClearFailed" title="删除全部失败任务">清空失败</button>
+    </div>
+  </div>
+
+  <!-- 看板 -->
+  <main class="board" id="board">
+    <section class="col" data-col="queued">
+      <header class="col-head amber"><span class="dot"></span>队列中 <span class="cnt" id="cntQueued">0</span></header>
+      <div class="col-body" id="colQueued"></div>
+    </section>
+    <section class="col" data-col="in_progress">
+      <header class="col-head blue"><span class="dot"></span>生成中 <span class="cnt" id="cntActive">0</span></header>
+      <div class="col-body" id="colActive"></div>
+    </section>
+    <section class="col" data-col="completed">
+      <header class="col-head green"><span class="dot"></span>已完成 <span class="cnt" id="cntDone">0</span></header>
+      <div class="col-body" id="colDone"></div>
+    </section>
+    <section class="col" data-col="failed">
+      <header class="col-head red"><span class="dot"></span>失败 <span class="cnt" id="cntFailed">0</span></header>
+      <div class="col-body" id="colFailed"></div>
+    </section>
+  </main>
+
+  <!-- 空状态提示 -->
+  <div class="empty-tip" id="emptyTip" hidden>
+    <div class="empty-box">
+      <h3>还没有任务</h3>
+      <p>点击右上角「新建任务」，选择生成模式并填写描述，任务会出现在看板中并自动轮询进度。</p>
+    </div>
+  </div>
+
+  <!-- ================= 新建任务弹窗 ================= -->
+  <div class="modal-overlay" id="newTaskModal" hidden>
+    <div class="modal wide">
+      <div class="modal-head">
+        <h2>新建视频生成任务</h2>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="v25Form">
+        <div class="tabs" id="modeTabs">
+          <button class="tab active" data-mode="text">文生视频</button>
+          <button class="tab" data-mode="keyframe">首尾帧控制</button>
+          <button class="tab" data-mode="reference">多模态参考</button>
+        </div>
+
+        <div class="field">
+          <label>模型 <span class="hint" id="modelHint"></span></label>
+          <select id="fModel">
+            <option value="agnes-video-2.5-flash">Agnes Video 2.5 Flash（免费 · 720P）</option>
+            <option value="agnes-video-2.5">Agnes Video 2.5（720P/960P/2K · 付费）</option>
+            <option value="agnes-video-v2.0">Agnes Video V2.0（免费 · 文生/图生/关键帧）</option>
+          </select>
+        </div>
+
+        <div class="field">
+          <label>提示词 prompt <span class="hint">建议：主体与场景 → 动作变化 → 镜头语言 → 风格 → 声音节奏</span></label>
+          <textarea id="fPrompt" rows="4" placeholder="例：雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声"></textarea>
+          <div class="media-hint" id="mediaHint"></div>
+          <div class="tmpl-row">
+            <span class="hint">示例模板：</span>
+            <select id="fTemplate" onchange="window.__app?.applyTemplate(this.value)">
+              <option value="">— 选择示例 —</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- keyframe 模式 -->
+        <div class="field hidden" id="grpKeyframe">
+          <label>首帧图片 URL</label>
+          <input type="text" id="fFirstFrame" placeholder="https://example.com/first.png" />
+          <label class="mt">尾帧图片 URL</label>
+          <input type="text" id="fLastFrame" placeholder="https://example.com/last.png" />
+          <p class="hint">至少提供一个；图片需可公开访问且任务完成前保持有效。</p>
+        </div>
+
+        <!-- reference 模式 -->
+        <div class="field hidden" id="grpReference">
+          <label>参考图片 images（最多 5 张）</label>
+          <div id="refImages" class="list"></div>
+          <button type="button" class="btn ghost sm" data-add="images">＋ 添加图片 URL</button>
+
+          <label class="mt">参考音频 audios</label>
+          <div id="refAudios" class="list"></div>
+          <button type="button" class="btn ghost sm" data-add="audios">＋ 添加音频 URL</button>
+
+          <div id="grpVideos">
+            <label class="mt">参考视频 videos（仅 2.5 付费版支持）</label>
+            <div id="refVideos" class="list"></div>
+            <button type="button" class="btn ghost sm" data-add="videos">＋ 添加视频 URL</button>
+          </div>
+          <p class="hint">提示词中可用 &lt;Picture 1&gt; / &lt;Audio 1&gt; / &lt;Video 1&gt; 指代素材（从 1 编号）。</p>
+        </div>
+
+        <div class="grid2">
+          <div class="field"><label>时长 seconds</label>
+            <select id="fSeconds"><option>5</option><option>4</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option><option>11</option><option>12</option></select>
+          </div>
+          <div class="field"><label>画幅 aspect_ratio</label>
+            <select id="fAspect">
+              <option value="16:9">16:9 横屏 1280×720</option>
+              <option value="21:9">21:9 超宽 1680×720</option>
+              <option value="4:3">4:3 960×720</option>
+              <option value="1:1">1:1 方形 720×720</option>
+              <option value="3:4">3:4 竖版 720×960</option>
+              <option value="9:16">9:16 竖屏 720×1280</option>
+            </select>
+          </div>
+          <div class="field"><label>size 分辨率</label>
+            <select id="fSize"><option value="720P">720P</option></select>
+          </div>
+          <div class="field"><label>seed 种子（可选）</label>
+            <input type="number" id="fSeed" min="0" placeholder="留空=随机" /></div>
+        </div>
+        </div><!-- /v25Form -->
+
+        <!-- ========== V2.0 表单（text/image/keyframes） ========== -->
+        <div id="v2Form" class="hidden">
+          <div class="tabs" id="modeTabsV2">
+            <button class="tab active" data-mode="text">文生视频</button>
+            <button class="tab" data-mode="image">图生视频</button>
+            <button class="tab" data-mode="keyframes">关键帧动画</button>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>帧数 num_frames</label>
+              <select id="fNumFrames">
+                <option value="81">81 帧（约 3 秒）</option>
+                <option value="121" selected>121 帧（约 5 秒）</option>
+                <option value="241">241 帧（约 10 秒）</option>
+                <option value="441">441 帧（约 18 秒）</option>
+              </select>
+            </div>
+            <div class="field"><label>帧率 frame_rate</label>
+              <select id="fFrameRate">
+                <option value="24" selected>24 fps</option>
+                <option value="30">30 fps</option>
+                <option value="12">12 fps</option>
+              </select>
+            </div>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>画幅</label>
+              <select id="fV2Aspect">
+                <option value="16:9" selected>16:9 横屏</option>
+                <option value="9:16">9:16 竖屏</option>
+                <option value="1:1">1:1 方形</option>
+                <option value="4:3">4:3</option>
+                <option value="3:4">3:4 竖版</option>
+              </select>
+            </div>
+            <div class="field"><label>分辨率档位（服务端会就近标准化）</label>
+              <select id="fV2Res">
+                <option value="480p">480p</option>
+                <option value="720p" selected>720p</option>
+                <option value="1080p">1080p</option>
+              </select>
+            </div>
+          </div>
+          <div class="field hidden" id="grpV2Image">
+            <label>图片 URL（图生视频，需可公开访问）</label>
+            <input type="text" id="fV2Image" placeholder="https://example.com/image.png" />
+          </div>
+          <div class="field hidden" id="grpV2Keyframes">
+            <label>关键帧图片 URL 列表（至少 2 张）</label>
+            <div id="refV2Keyframes" class="list"></div>
+            <button type="button" class="btn ghost sm" data-add-v2="keyframes">＋ 添加关键帧 URL</button>
+          </div>
+          <div class="field">
+            <label>反向提示词 negative_prompt（可选）</label>
+            <textarea id="fNegative" rows="2" placeholder="描述需要避免的内容，如：模糊、变形、水印"></textarea>
+          </div>
+          <div class="grid2">
+            <div class="field"><label>seed 种子（可选）</label>
+              <input type="number" id="fV2Seed" min="0" placeholder="留空=随机" /></div>
+          </div>
+          <p class="hint">时长 = num_frames ÷ frame_rate（如 121 ÷ 24 ≈ 5 秒）；num_frames 需满足 8n+1 且 ≤ 441。</p>
+        </div><!-- /v2Form -->
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="btnSubmitTask">提交任务</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 设置弹窗 ================= -->
+  <div class="modal-overlay" id="settingsModal" hidden>
+    <div class="modal">
+      <div class="modal-head">
+        <h2>设置</h2>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="field">
+          <label>Agnes API Key <span class="hint" id="keyStatus"></span></label>
+          <input type="password" id="setApiKey" placeholder="sk-..." autocomplete="off" />
+          <p class="hint">密钥只保存在本地 SQLite 中，仅服务端使用，不会下发到浏览器。</p>
+        </div>
+        <div class="field">
+          <label>Base URL</label>
+          <input type="text" id="setBaseUrl" placeholder="https://apihub.agnes-ai.com" />
+        </div>
+        <div class="field">
+          <label>默认模型</label>
+          <select id="setModel">
+            <option value="agnes-video-2.5-flash">Agnes Video 2.5 Flash（免费）</option>
+            <option value="agnes-video-2.5">Agnes Video 2.5（付费）</option>
+          </select>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>轮询间隔 (ms)</label><input type="number" id="setPollMs" min="500" step="100" /></div>
+          <div class="field"><label>任务超时 (分钟)</label><input type="number" id="setMaxMin" min="1" step="1" /></div>
+        </div>
+        <p class="hint">轮询间隔建议 1000–2000ms（官方建议 1–2 秒查询一次）。超过超时仍未完成的任务将被标记为失败。</p>
+      </div>
+      <div class="modal-foot">
+        <button class="btn ghost" data-close>取消</button>
+        <button class="btn primary" id="btnSaveSettings">保存设置</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ================= 任务详情弹窗 ================= -->
+  <div class="modal-overlay" id="detailModal" hidden>
+    <div class="modal wide">
+      <div class="modal-head">
+        <h2>任务详情 <span class="chip-mini" id="dStatus"></span></h2>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body" id="detailBody"></div>
+      <div class="modal-foot" id="detailActions"></div>
+    </div>
+  </div>
+
+  <!-- ================= 日志弹窗 ================= -->
+  <div class="modal-overlay" id="logModal" hidden>
+    <div class="modal wide">
+      <div class="modal-head">
+        <h2>运行日志</h2>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body"><pre id="logBox" class="logbox"></pre></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toasts" class="toasts"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>

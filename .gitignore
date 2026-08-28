@@ -1,0 +1,29 @@
+# 依赖
+node_modules/
+
+# 本地数据（含 API Key，严禁入库）
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# npm 本地缓存（Windows 沙箱场景）
+.npm-cache/
+
+# 日志
+*.log
+npm-debug.log*
+
+# 环境变量与密钥
+.env
+.env.*
+!.env.example
+
+# 编辑器 / 系统
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# 测试产物
+coverage/

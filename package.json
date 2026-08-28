@@ -1,0 +1,33 @@
+{
+  "name": "agnes-video-console",
+  "version": "1.0.0",
+  "description": "本地 Web 化的 Agnes AI 视频生成任务控制台：接入 agnes-video-2.5(-flash) / agnes-video-v2.0 异步任务 API，任务队列看板 + 后台轮询 + SQLite 持久化",
+  "main": "server.js",
+  "type": "commonjs",
+  "private": false,
+  "license": "MIT",
+  "author": "AlanNiew",
+  "keywords": [
+    "agnes-ai",
+    "video-generation",
+    "text-to-video",
+    "image-to-video",
+    "keyframes",
+    "task-queue",
+    "sqlite",
+    "express",
+    "web-console"
+  ],
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js",
+    "test": "npm run test:mock",
+    "test:mock": "node test/mock-e2e.js"
+  },
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "dependencies": {
+    "express": "^4.21.2"
+  }
+}

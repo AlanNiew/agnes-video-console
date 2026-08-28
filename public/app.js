@@ -1,0 +1,760 @@
+/* Agnes Video 任务控制台 —— 前端逻辑（原生 JS，无依赖） */
+(() => {
+  'use strict';
+
+  const $ = (sel, root = document) => root.querySelector(sel);
+  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+  const esc = (s) =>
+    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+  const STATUS_LABEL = {
+    queued: '队列中',
+    in_progress: '生成中',
+    completed: '已完成',
+    failed: '失败',
+    submit_error: '提交失败',
+  };
+  const MODE_LABEL = { text: '文生', keyframe: '首尾帧', reference: '参考', image: '图生', keyframes: '关键帧' };
+  const MODEL_NAME = {
+    'agnes-video-2.5-flash': 'Flash',
+    'agnes-video-2.5': '2.5',
+    'agnes-video-v2.0': 'V2.0',
+  };
+  const IS_V2 = (model) => model === 'agnes-video-v2.0';
+
+  const state = {
+    tasks: [],
+    stats: null,
+    settings: null,
+    search: '',
+    statusFilter: '',
+    lastColSig: {}, // 列签名，避免无谓重建（防止视频播放被打断）
+    detailSig: null,
+  };
+
+  /* ---------------- 工具 ---------------- */
+  function fmtTime(ts) {
+    if (!ts) return '-';
+    const d = new Date(ts);
+    const p = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+  }
+  function relTime(ts) {
+    if (!ts) return '-';
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 10) return '刚刚';
+    if (s < 60) return `${s}秒前`;
+    if (s < 3600) return `${Math.floor(s / 60)}分钟前`;
+    if (s < 86400) return `${Math.floor(s / 3600)}小时前`;
+    return `${Math.floor(s / 86400)}天前`;
+  }
+
+  function toast(msg, type = '') {
+    const box = $('#toasts');
+    const el = document.createElement('div');
+    el.className = `toast ${type}`;
+    el.textContent = msg;
+    box.appendChild(el);
+    setTimeout(() => el.remove(), 3800);
+  }
+
+  async function api(path, opts = {}) {
+    const res = await fetch(path, {
+      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
+      ...opts,
+      body: opts.body ? JSON.stringify(opts.body) : undefined,
+    });
+    let data = null;
+    try { data = await res.json(); } catch { /* ignore */ }
+    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
+    return data;
+  }
+
+  /* ---------------- 统计栏 ---------------- */
+  function renderStats(s) {
+    if (!s) return;
+    const b = s.byStatus || {};
+    $('#statTotal').textContent = s.total;
+    $('#statQueued').textContent = b.queued || 0;
+    $('#statActive').textContent = b.in_progress || 0;
+    $('#statDone').textContent = b.completed || 0;
+    $('#statFailed').textContent = (b.failed || 0) + (b.submit_error || 0);
+    $('#cntQueued').textContent = b.queued || 0;
+    $('#cntActive').textContent = b.in_progress || 0;
+    $('#cntDone').textContent = b.completed || 0;
+    $('#cntFailed').textContent = (b.failed || 0) + (b.submit_error || 0);
+  }
+
+  /* ---------------- 卡片 ---------------- */
+  function cardHTML(t) {
+    const isFlash = t.model.includes('flash');
+    const metas = [
+      MODE_LABEL[t.mode] || t.mode,
+      t.seconds ? `${t.seconds}s` : null,
+      t.aspect_ratio,
+      t.size,
+      MODEL_NAME[t.model] || t.model.replace('agnes-video-', ''),
+      t.seed !== null && t.seed !== undefined ? `seed ${t.seed}` : null,
+      t.video_id ? t.video_id.slice(-10) : null,
+    ].filter(Boolean);
+    const metaHtml = metas.map((m) => `<span class="meta-tag">${esc(m)}</span>`).join('');
+    const mediaN = (t.images?.length || 0) + (t.audios?.length || 0) + (t.videos?.length || 0);
+
+    let extra = '';
+    if (t.status === 'in_progress') {
+      extra = `<div class="pbar"><div style="width:${Math.max(2, t.progress || 0)}%"></div></div>`;
+    }
+    if (t.status === 'completed' && t.metadata_url) {
+      extra = `
+        <div class="video-preview">
+          <video controls preload="metadata" muted playsinline src="${esc(t.metadata_url)}"></video>
+        </div>`;
+    }
+    if (t.status === 'failed' || t.status === 'submit_error') {
+      extra = `
+        <details class="card-error"><summary>错误详情</summary><div>${esc(t.error_message || '未知错误')}</div></details>`;
+    }
+
+    const actions = [];
+    actions.push(`<button class="act" data-act="detail">详情</button>`);
+    if (t.video_id) actions.push(`<button class="act" data-act="poll">立即查询</button>`);
+    if (t.status === 'completed' && t.metadata_url) {
+      actions.push(`<a class="act green" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">下载</a>`);
+    }
+    if (t.status === 'failed' || t.status === 'submit_error') {
+      actions.push(`<button class="act" data-act="retry">重试</button>`);
+    }
+    actions.push(`<button class="act red" data-act="del">删除</button>`);
+
+    return `
+      <article class="card status-${t.status}" data-id="${t.id}">
+        <div class="card-top">
+          <span class="badge">${esc(MODE_LABEL[t.mode] || t.mode)}</span>
+          <span class="badge">${esc(t.size || '-')}</span>
+          <span class="card-id">#${t.id}</span>
+          ${mediaN ? `<span class="badge" title="参考素材数">素材×${mediaN}</span>` : ''}
+          <span class="card-time" title="${fmtTime(t.created_at)}">${relTime(t.created_at)}</span>
+        </div>
+        <div class="card-prompt" title="${esc(t.prompt)}">${esc(t.prompt)}</div>
+        <div class="card-meta">${metaHtml}</div>
+        ${extra}
+        <div class="card-actions">${actions.join('')}</div>
+      </article>`;
+  }
+
+  function columnSig(status, tasks) {
+    // 已完成列只对“任务集合 + 结果”敏感，忽略轮询计数，避免打断播放
+    return JSON.stringify(
+      tasks.map((t) =>
+        t.status === 'completed'
+          ? [t.id, t.status, t.metadata_url]
+          : [t.id, t.status, t.progress, t.video_id, t.error_message]
+      )
+    );
+  }
+
+  function renderBoard() {
+    const byCol = { queued: [], in_progress: [], completed: [], failed: [] };
+    for (const t of state.tasks) {
+      if (t.status === 'failed' || t.status === 'submit_error') byCol.failed.push(t);
+      else if (byCol[t.status]) byCol[t.status].push(t);
+      else byCol.failed.push(t); // 未知状态兜底
+    }
+    const map = {
+      queued: '#colQueued',
+      in_progress: '#colActive',
+      completed: '#colDone',
+      failed: '#colFailed',
+    };
+    let emptyAll = true;
+    for (const col of Object.keys(byCol)) {
+      const sig = columnSig(col, byCol[col]);
+      if (state.lastColSig[col] === sig) continue;
+      state.lastColSig[col] = sig;
+      const el = $(map[col]);
+      el.innerHTML = byCol[col].length ? byCol[col].map(cardHTML).join('') : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
+      if (byCol[col].length) emptyAll = false;
+    }
+    $('#emptyTip').hidden = !(emptyAll && state.tasks.length === 0);
+  }
+
+  /* ---------------- 数据加载 ---------------- */
+  async function loadTasks() {
+    try {
+      const params = new URLSearchParams({ limit: '200' });
+      if (state.statusFilter) params.set('status', state.statusFilter);
+      if (state.search) params.set('q', state.search);
+      const data = await api(`/api/tasks?${params}`);
+      state.tasks = data.items;
+      renderStats(data.stats);
+      renderBoard();
+    } catch (e) {
+      console.warn('加载任务失败:', e.message);
+    }
+  }
+
+  async function loadSettings() {
+    try {
+      state.settings = await api('/api/settings');
+      const sub = $('#brandSub');
+      if (state.settings.api_key_set) {
+        sub.textContent = `已连接 · ${state.settings.base_url} · 轮询 ${state.settings.poll_interval_ms}ms · Key ${state.settings.api_key_masked}`;
+        sub.className = 'brand-sub online';
+      } else {
+        sub.textContent = '未连接 · 请先在设置中填写 API Key';
+        sub.className = 'brand-sub offline';
+      }
+      $('#fModel').value = state.settings.model;
+      $('#setModel').value = state.settings.model;
+      $('#setBaseUrl').value = state.settings.base_url;
+      $('#setPollMs').value = state.settings.poll_interval_ms;
+      $('#setMaxMin').value = state.settings.max_active_minutes;
+      $('#keyStatus').textContent = state.settings.api_key_set
+        ? `（已保存 ${state.settings.api_key_masked}，留空则不修改）`
+        : '（未配置）';
+      onModelChange();
+    } catch (e) {
+      toast('加载设置失败：' + e.message, 'err');
+    }
+  }
+
+  /* ---------------- 任务操作 ---------------- */
+  async function act(id, name, fn) {
+    try {
+      const r = await fn();
+      toast(r && typeof r === 'string' ? `${name}成功：${r}` : `${name}成功`, 'ok');
+      await loadTasks();
+    } catch (e) {
+      toast(`${name}失败：${e.message}`, 'err');
+    }
+  }
+
+  function bindCardEvents() {
+    $('#board').addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('[data-act]');
+      if (!btn) return;
+      const card = ev.target.closest('.card');
+      if (!card) return;
+      const id = Number(card.dataset.id);
+      const actName = btn.dataset.act;
+      if (actName === 'detail') return openDetail(id);
+      if (actName === 'poll') return act(id, '查询', async () => (await api(`/api/tasks/${id}/poll`, { method: 'POST' })).status);
+      if (actName === 'retry') {
+        if (confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) {
+          await act(id, '重试', async () => {
+            const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
+            return `新任务 #${r.task.id}`;
+          });
+        }
+        return;
+      }
+      if (actName === 'del') {
+        if (confirm(`确认删除任务 #${id}？`)) {
+          await act(id, '删除', () => api(`/api/tasks/${id}`, { method: 'DELETE' }));
+          if (state.detailId === id) closeDetail();
+        }
+        return;
+      }
+      if (actName === 'video') return; // 视频本身可点击播放
+    });
+  }
+
+  /* ---------------- 卡片点击 → 详情 ---------------- */
+  function openDetail(id) {
+    state.detailId = id;
+    $('#detailModal').hidden = false;
+    refreshDetail();
+  }
+  function closeDetail() {
+    state.detailId = null;
+    state.detailSig = null;
+    $('#detailModal').hidden = true;
+  }
+
+  function jsonBox(obj) {
+    return `<pre class="jsonbox">${esc(JSON.stringify(obj, null, 2))}</pre>`;
+  }
+  function dlRow(k, v, cls = '') {
+    return `<dt>${esc(k)}</dt><dd class="${cls}">${v === null || v === undefined || v === '' ? '<span class="muted">-</span>' : esc(v)}</dd>`;
+  }
+
+  async function refreshDetail() {
+    const id = state.detailId;
+    if (!id) return;
+    let t;
+    try { t = await api(`/api/tasks/${id}`); } catch { return; }
+    const body = $('#detailBody');
+    const sig = JSON.stringify([id, t.status, t.progress, t.metadata_url, t.error_message]);
+    if (state.detailSig === sig && body.dataset.rendered === '1') {
+      // 内容未变化，不重建（避免打断视频）
+    } else {
+      state.detailSig = sig;
+
+      let play = '';
+      if (t.status === 'completed' && t.metadata_url) {
+        play = `<div class="detail-body-play"><video controls preload="metadata" src="${esc(t.metadata_url)}"></video></div>`;
+      }
+
+      const req = t.request_json || {};
+      const mediaRows = [];
+      ['images', 'audios', 'videos'].forEach((k) => {
+        const arr = t[k] || [];
+        arr.forEach((v, i) => {
+          const label = { images: 'Picture', audios: 'Audio', videos: 'Video' }[k];
+          const url = typeof v === 'string' ? v : v?.url;
+          mediaRows.push(dlRow(`<${label} ${i + 1}>`, url, 'url'));
+        });
+      });
+
+      body.innerHTML = `
+        <div class="detail-section">
+          <div class="progress-big">
+            <b>${t.status === 'in_progress' ? t.progress + '%' : STATUS_LABEL[t.status] || t.status}</b>
+            ${t.status === 'in_progress' ? `<div class="pbar"><div style="width:${Math.max(2, t.progress || 0)}%"></div></div>` : ''}
+          </div>
+          ${play}
+          <div class="detail-dl">
+            ${dlRow('ID', '#' + t.id)}
+            ${dlRow('状态', STATUS_LABEL[t.status] || t.status)}
+            ${dlRow('模式', (MODE_LABEL[t.mode] || t.mode) + '（' + t.mode + '）')}
+            ${dlRow('模型', t.model)}
+            ${dlRow('提示词', t.prompt)}
+            ${dlRow('时长', t.seconds + 's')}
+            ${dlRow('画幅', t.aspect_ratio)}
+            ${dlRow('分辨率', t.size)}
+            ${t.num_frames !== null ? dlRow('帧数 num_frames', t.num_frames) : ''}
+            ${t.frame_rate !== null ? dlRow('帧率 frame_rate', t.frame_rate) : ''}
+            ${t.image ? dlRow('图生图片 image', t.image, 'url') : ''}
+            ${t.negative_prompt ? dlRow('反向提示词 negative_prompt', t.negative_prompt) : ''}
+            ${dlRow('seed', t.seed === null ? '' : t.seed)}
+            ${dlRow('task_id', t.task_id)}
+            ${dlRow('video_id', t.video_id)}
+            ${dlRow('创建时间', fmtTime(t.created_at) + '（' + relTime(t.created_at) + '）')}
+            ${dlRow('完成时间', fmtTime(t.completed_at))}
+            ${dlRow('轮询次数', t.poll_count + ' 次' + (t.last_polled_at ? `（最后 ${relTime(t.last_polled_at)}）` : ''))}
+            ${dlRow('视频地址', t.metadata_url, 'url')}
+            ${t.error_message ? dlRow('错误信息', t.error_message) : ''}
+            ${mediaRows.join('')}
+          </div>
+        </div>
+        <div class="detail-section"><h4>提交请求（request_json）</h4>${jsonBox(req)}</div>
+        <div class="detail-section"><h4>最近一次查询响应</h4>${jsonBox(t.last_poll_response)}</div>
+        ${t.submit_response ? `<div class="detail-section"><h4>创建任务响应</h4>${jsonBox(t.submit_response)}</div>` : ''}
+      `;
+      body.dataset.rendered = '1';
+    }
+
+    // 操作栏
+    const acts = [];
+    if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
+    if (t.status === 'failed' || t.status === 'submit_error') acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
+    if (t.status === 'completed' && t.metadata_url) acts.push(`<a class="btn primary" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">下载视频</a>`);
+    acts.push(`<button class="btn ghost danger" id="dDel">删除任务</button>`);
+    $('#detailActions').innerHTML = acts.join('') + `<button class="btn ghost" data-close>关闭</button>`;
+
+    $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
+    $('#dStatus').className = `chip-mini ${t.status}`;
+
+    const bind = (idBtn, fn) => { const el = $('#' + idBtn); if (el) el.onclick = fn; };
+    bind('dPoll', async () => { try { const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' }); toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok'); closeDetail(); openDetail(id); await loadTasks(); } catch (e) { toast(e.message, 'err'); } });
+    bind('dRetry', async () => {
+      if (!confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) return;
+      try { const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' }); toast(`已创建新任务 #${r.task.id}`, 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+    });
+    bind('dDel', async () => {
+      if (!confirm(`确认删除任务 #${id}？`)) return;
+      try { await api(`/api/tasks/${id}`, { method: 'DELETE' }); toast('已删除', 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+    });
+  }
+
+  /* ---------------- 新建任务 ---------------- */
+  const refState = { images: [], audios: [], videos: [] };
+  const v2RefState = { keyframes: [] };
+
+  function switchModeV2(mode) {
+    $$('#modeTabsV2 .tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
+    $('#grpV2Image').classList.toggle('hidden', mode !== 'image');
+    $('#grpV2Keyframes').classList.toggle('hidden', mode !== 'keyframes');
+    const hint = $('#mediaHint');
+    if (mode === 'text') hint.textContent = '文生视频：纯文本生成（不携带图片）。';
+    if (mode === 'image') hint.textContent = '图生视频：提供 1 张可公开访问的图片 URL，描述哪些内容应运动、哪些应保持稳定。';
+    if (mode === 'keyframes') hint.textContent = '关键帧动画：提供至少 2 张关键帧图片 URL，描述帧间的过渡关系。';
+  }
+
+  function renderV2Keyframes() {
+    $('#refV2Keyframes').innerHTML = v2RefState.keyframes
+      .map((u, i) => `<div class="list-row">
+        <input type="text" data-i="${i}" value="${esc(u)}" placeholder="https://.../keyframe${i + 1}.png" />
+        <button class="rm" type="button" data-i="${i}" data-v2k>✕</button>
+      </div>`)
+      .join('');
+  }
+
+  function syncV2KeyframesFromDom() {
+    $$('#refV2Keyframes .list-row').forEach((row) => {
+      const i = Number(row.querySelector('.rm').dataset.i);
+      v2RefState.keyframes[i] = row.querySelector('input[type=text]').value.trim();
+    });
+  }
+
+  function openNewTask(initial) {
+    $('#newTaskModal').hidden = false;
+    if (initial) applyTemplate(initial);
+  }
+
+  function switchMode(mode) {
+    $$('#modeTabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === mode));
+    $('#grpKeyframe').classList.toggle('hidden', mode !== 'keyframe');
+    $('#grpReference').classList.toggle('hidden', mode !== 'reference');
+    const hint = $('#mediaHint');
+    if (mode === 'text') hint.textContent = '纯文本模式：不携带任何媒体素材。';
+    if (mode === 'keyframe') hint.textContent = '首帧/尾帧控制：至少提供一个图片 URL，生成结果会尽量保持为成片的真实首/尾帧。';
+    if (mode === 'reference') hint.textContent = '多模态参考：素材作为内容/风格/节奏参考，提示词中用 <Picture 1>、<Audio 1>、<Video 1> 指代（从 1 编号）。';
+  }
+
+  function renderRefList(key) {
+    const el = $('#ref' + key.charAt(0).toUpperCase() + key.slice(1));
+    el.innerHTML = refState[key]
+      .map((v, i) => {
+        const extra = key === 'videos' && typeof v === 'object'
+          ? `<input type="number" data-i="${i}" data-f="start" placeholder="start_seconds" value="${v.start_seconds}" style="max-width:90px" />`
+          : '';
+        const url = typeof v === 'string' ? v : v.url;
+        return `<div class="list-row">
+          <input type="text" data-i="${i}" value="${esc(url)}" placeholder="https://... ${key === 'videos' ? '(支持字符串或对象)' : ''}" />
+          ${extra}
+          <button class="rm" type="button" data-i="${i}" data-key="${key}">✕</button>
+        </div>`;
+      })
+      .join('');
+  }
+
+  function syncRefsFromDom() {
+    $$('#grpReference .list-row').forEach((row) => {
+      const key = row.querySelector('.rm').dataset.key;
+      const i = Number(row.querySelector('.rm').dataset.i);
+      const url = row.querySelector('input[type=text]').value.trim();
+      const start = row.querySelector('input[data-f=start]')?.value;
+      if (key === 'videos') {
+        refState.videos[i] = start !== undefined && start !== ''
+          ? { url, start_seconds: Number(start) || 0, require_audio: false }
+          : url;
+      } else {
+        refState[key][i] = url;
+      }
+    });
+  }
+
+  async function submitTask() {
+    const model = $('#fModel').value;
+    const btn = $('#btnSubmitTask');
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    try {
+      if (IS_V2(model)) {
+        const body = await collectV2Body();
+        const t = await api('/api/tasks', { method: 'POST', body });
+        toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
+      } else {
+        const body = collectV25Body();
+        const t = await api('/api/tasks', { method: 'POST', body });
+        toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
+      }
+      $('#newTaskModal').hidden = true;
+      resetNewTaskForm();
+      await loadTasks();
+    } catch (e) {
+      toast('提交失败：' + e.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '提交任务';
+    }
+  }
+
+  function collectV25Body() {
+    const mode = $('#modeTabs .tab.active').dataset.mode;
+    syncRefsFromDom();
+    const body = {
+      model: $('#fModel').value,
+      prompt: $('#fPrompt').value.trim(),
+      mode,
+      seconds: $('#fSeconds').value,
+      size: $('#fSize').value,
+      aspect_ratio: $('#fAspect').value,
+      seed: $('#fSeed').value === '' ? null : Number($('#fSeed').value),
+    };
+    if (mode === 'keyframe') {
+      body.first_frame = $('#fFirstFrame').value.trim() || undefined;
+      body.last_frame = $('#fLastFrame').value.trim() || undefined;
+    }
+    if (mode === 'reference') {
+      body.images = refState.images.filter(Boolean);
+      body.audios = refState.audios.filter(Boolean);
+      body.videos = refState.videos.filter(Boolean);
+    }
+    return body;
+  }
+
+  const V2_SIZES = {
+    '16:9': { '480p': { w: 854, h: 480 }, '720p': { w: 1280, h: 720 }, '1080p': { w: 1920, h: 1080 } },
+    '9:16': { '480p': { w: 480, h: 854 }, '720p': { w: 720, h: 1280 }, '1080p': { w: 1080, h: 1920 } },
+    '1:1':  { '480p': { w: 480, h: 480 }, '720p': { w: 720, h: 720 }, '1080p': { w: 1080, h: 1080 } },
+    '4:3':  { '480p': { w: 640, h: 480 }, '720p': { w: 960, h: 720 }, '1080p': { w: 1440, h: 1080 } },
+    '3:4':  { '480p': { w: 480, h: 640 }, '720p': { w: 720, h: 960 }, '1080p': { w: 1080, h: 1440 } },
+  };
+
+  function collectV2Body() {
+    const mode = $('#modeTabsV2 .tab.active').dataset.mode;
+    syncV2KeyframesFromDom();
+    const size = V2_SIZES[$('#fV2Aspect').value][$('#fV2Res').value];
+    const body = {
+      model: 'agnes-video-v2.0',
+      prompt: $('#fPrompt').value.trim(),
+      mode,
+      num_frames: Number($('#fNumFrames').value),
+      frame_rate: Number($('#fFrameRate').value),
+      width: size.w,
+      height: size.h,
+      seed: $('#fV2Seed').value === '' ? null : Number($('#fV2Seed').value),
+      negative_prompt: $('#fNegative').value.trim() || undefined,
+    };
+    if (mode === 'image') body.image = $('#fV2Image').value.trim();
+    if (mode === 'keyframes') body.images = v2RefState.keyframes.filter(Boolean);
+    return body;
+  }
+
+  function resetNewTaskForm() {
+    $('#fPrompt').value = '';
+    $('#fSeed').value = '';
+    $('#fV2Seed').value = '';
+    $('#fNegative').value = '';
+    $('#fV2Image').value = '';
+    $('#fFirstFrame').value = '';
+    $('#fLastFrame').value = '';
+    $('#fTemplate').value = '';
+    refState.images = []; refState.audios = []; refState.videos = [];
+    v2RefState.keyframes = [];
+    renderRefList('images'); renderRefList('audios'); renderRefList('videos');
+    renderV2Keyframes();
+  }
+
+  /* ---------------- 模板 ---------------- */
+  const TEMPLATES = {
+    'text-city': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声' },
+    'text-cats': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '夜晚森林中三只猫组成微型铜管乐队向前行进，镜头平稳后退，月光穿过树叶，自然脚步声与乐器声' },
+    'text-ocean': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '航拍镜头缓缓掠过翡翠色海面，白色浪花在礁石上翻卷，阳光透过云层洒下，海鸥鸣叫，写实风格' },
+    'keyframe-walk': { model: 'agnes-video-2.5-flash', mode: 'keyframe', prompt: '人物从首帧姿态自然转身走向窗边，衣物和头发运动真实，镜头缓慢推进，平滑过渡到尾帧构图' },
+    'ref-character': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 中的角色和美术风格为参考，角色在花田中自然奔跑，保持外观一致，低机位跟拍' },
+    'ref-audio': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 为视觉主体，根据 <Audio 1> 的节奏设计动作和镜头切换，保持自然连贯' },
+    'ref-video': { model: 'agnes-video-2.5', mode: 'reference', prompt: '参考 <Video 1> 的主体动作和镜头节奏，将场景改为月光下的卧室，同时保持时序连贯' },
+    'v2-beach': { model: 'agnes-video-v2.0', mode: 'text', prompt: 'A cinematic shot of a cat walking on the beach at sunset, soft ocean waves, warm golden lighting, realistic motion' },
+    'v2-astronaut': { model: 'agnes-video-v2.0', mode: 'text', prompt: 'A young astronaut walking across a red desert planet, dust blowing in the wind, slow cinematic tracking shot, dramatic sunset lighting, realistic sci-fi style' },
+    'v2-image': { model: 'agnes-video-v2.0', mode: 'image', prompt: 'Animate the character with subtle breathing motion, hair moving gently in the wind, background lights flickering softly, while keeping the face and outfit consistent' },
+    'v2-keyframes': { model: 'agnes-video-v2.0', mode: 'keyframes', prompt: 'Create a smooth transition from the first keyframe to the second keyframe, maintaining character identity, consistent camera angle, and natural motion between scenes' },
+  };
+
+  function applyTemplate(key) {
+    const t = TEMPLATES[key];
+    if (!t) return;
+    if (t.model) {
+      $('#fModel').value = t.model;
+      onModelChange();
+    }
+    if (IS_V2(t.model)) {
+      switchModeV2(t.mode);
+      $$('#modeTabsV2 .tab').forEach((el) => el.classList.toggle('active', el.dataset.mode === t.mode));
+    } else {
+      switchMode(t.mode);
+      $$('#modeTabs .tab').forEach((el) => el.classList.toggle('active', el.dataset.mode === t.mode));
+    }
+    $('#fPrompt').value = t.prompt;
+  }
+
+  function onModelChange() {
+    const m = $('#fModel').value;
+    const v2 = IS_V2(m);
+    $('#v25Form').classList.toggle('hidden', v2);
+    $('#v2Form').classList.toggle('hidden', !v2);
+    const hint = $('#modelHint');
+    if (v2) {
+      hint.textContent = '（限时免费 · 文生/图生/关键帧 · num_frames 8n+1≤441）';
+    } else if (m === 'agnes-video-2.5-flash') {
+      hint.textContent = '（限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考）';
+    } else {
+      hint.textContent = '（付费 · 720P/960P/2K · 支持视频参考）';
+    }
+    if (!v2) {
+      $('#fSize').innerHTML = m === 'agnes-video-2.5-flash'
+        ? '<option value="720P">720P</option>'
+        : '<option value="720P">720P</option><option value="960P">960P</option><option value="2K">2K</option>';
+    }
+  }
+
+  /* ---------------- 设置 ---------------- */
+  async function saveSettings() {
+    const body = {
+      base_url: $('#setBaseUrl').value.trim(),
+      model: $('#setModel').value,
+      poll_interval_ms: Number($('#setPollMs').value),
+      max_active_minutes: Number($('#setMaxMin').value),
+    };
+    const key = $('#setApiKey').value.trim();
+    if (key) body.api_key = key;
+    try {
+      await api('/api/settings', { method: 'PUT', body });
+      toast('设置已保存', 'ok');
+      $('#settingsModal').hidden = true;
+      $('#setApiKey').value = '';
+      await loadSettings();
+    } catch (e) {
+      toast('保存失败：' + e.message, 'err');
+    }
+  }
+
+  /* ---------------- 日志 ---------------- */
+  async function refreshLogs() {
+    try {
+      const { items } = await api('/api/logs');
+      $('#logBox').textContent = items
+        .map((l) => `[${fmtTime(l.ts)}] [${l.level}] ${l.msg}`)
+        .join('\n');
+    } catch { /* ignore */ }
+  }
+
+  /* ---------------- 弹窗通用 ---------------- */
+  function bindModals() {
+    $$('.modal-overlay').forEach((ov) => {
+      ov.addEventListener('click', (e) => {
+        if (e.target === ov) ov.hidden = true; // 点遮罩关闭
+      });
+      ov.addEventListener('click', (e) => {
+        if (e.target.closest('[data-close]')) ov.hidden = true;
+      });
+    });
+  }
+
+  /* ---------------- 刷新循环 ---------------- */
+  let logTimer = null;
+  function startLoop() {
+    setInterval(async () => {
+      if (document.hidden) return; // 后台标签页不刷新
+      try { await loadTasks(); } catch { /* ignore */ }
+      if (state.detailId) await refreshDetail();
+      if (!$('#logModal').hidden) await refreshLogs();
+    }, 2000);
+  }
+
+  /* ---------------- 初始化 ---------------- */
+  async function init() {
+    // 选项卡
+    $('#modeTabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (tab) switchMode(tab.dataset.mode);
+    });
+    $('#modeTabsV2').addEventListener('click', (e) => {
+      const tab = e.target.closest('.tab');
+      if (tab) switchModeV2(tab.dataset.mode);
+    });
+    // V2.0 关键帧列表
+    $('#grpV2Keyframes').addEventListener('click', (e) => {
+      const addBtn = e.target.closest('[data-add-v2]');
+      if (addBtn) {
+        v2RefState.keyframes.push('');
+        renderV2Keyframes();
+        return;
+      }
+      const rm = e.target.closest('.rm');
+      if (rm) {
+        v2RefState.keyframes.splice(Number(rm.dataset.i), 1);
+        renderV2Keyframes();
+      }
+    });
+    $('#grpV2Keyframes').addEventListener('input', () => syncV2KeyframesFromDom());
+    // 参考素材行
+    $('#grpReference').addEventListener('click', (e) => {
+      const addBtn = e.target.closest('[data-add]');
+      if (addBtn) {
+        const key = addBtn.dataset.add;
+        refState[key].push(key === 'videos' ? { url: '', start_seconds: 0, require_audio: false } : '');
+        renderRefList(key);
+        return;
+      }
+      const rm = e.target.closest('.rm');
+      if (rm) {
+        const key = rm.dataset.key;
+        refState[key].splice(Number(rm.dataset.i), 1);
+        renderRefList(key);
+      }
+    });
+    $('#grpReference').addEventListener('input', (e) => {
+      const inp = e.target.closest('.list-row input');
+      if (inp) syncRefsFromDom();
+    });
+    ['images', 'audios', 'videos'].forEach(renderRefList);
+
+    // 模型切换
+    $('#fModel').addEventListener('change', onModelChange);
+
+    // 提交与按钮
+    $('#btnSubmitTask').addEventListener('click', submitTask);
+    $('#btnNewTask').addEventListener('click', () => openNewTask(null));
+    $('#btnSettings').addEventListener('click', () => { loadSettings(); $('#settingsModal').hidden = false; });
+    $('#btnSaveSettings').addEventListener('click', saveSettings);
+    $('#btnLogs').addEventListener('click', () => { $('#logModal').hidden = false; refreshLogs(); });
+
+    $('#btnClearDone').addEventListener('click', async () => {
+      if (!confirm('确认删除全部已完成任务？')) return;
+      try { const r = await api('/api/tasks/bulk/clear-completed', { method: 'POST' }); toast(`已清理 ${r.removed} 条`, 'ok'); loadTasks(); } catch (e) { toast(e.message, 'err'); }
+    });
+    $('#btnClearFailed').addEventListener('click', async () => {
+      if (!confirm('确认删除全部失败/提交失败任务？')) return;
+      try { const r = await api('/api/tasks/bulk/clear-failed', { method: 'POST' }); toast(`已清理 ${r.removed} 条`, 'ok'); loadTasks(); } catch (e) { toast(e.message, 'err'); }
+    });
+
+    // 搜索 + 状态过滤
+    let searchTimer = null;
+    $('#searchInput').addEventListener('input', (e) => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(() => { state.search = e.target.value.trim(); loadTasks(); }, 350);
+    });
+    $('#statusChips').addEventListener('click', (e) => {
+      const chip = e.target.closest('.chip');
+      if (!chip) return;
+      $$('#statusChips .chip').forEach((c) => c.classList.remove('active'));
+      chip.classList.add('active');
+      state.statusFilter = chip.dataset.status;
+      loadTasks();
+    });
+
+    bindCardEvents();
+    bindModals();
+
+    // 模板下拉
+    $('#fTemplate').innerHTML =
+      '<option value="">— 选择示例 —</option>' +
+      '<optgroup label="2.5 系列 · 文生视频">' +
+      '<option value="text-city">未来城市雨夜（跑车）</option>' +
+      '<option value="text-cats">猫咪铜管乐队</option>' +
+      '<option value="text-ocean">翡翠海面航拍</option></optgroup>' +
+      '<optgroup label="2.5 系列 · 首尾帧">' +
+      '<option value="keyframe-walk">人物转身走向窗边</option></optgroup>' +
+      '<optgroup label="2.5 系列 · 多模态参考">' +
+      '<option value="ref-character">角色花田奔跑 &lt;Picture 1&gt;</option>' +
+      '<option value="ref-audio">音画协同 &lt;Picture 1&gt;+&lt;Audio 1&gt;</option>' +
+      '<option value="ref-video">视频参考 &lt;Video 1&gt;（2.5 付费）</option></optgroup>' +
+      '<optgroup label="V2.0 · 文生视频">' +
+      '<option value="v2-beach">Cat on the beach（官方示例）</option>' +
+      '<option value="v2-astronaut">Astronaut on red desert</option></optgroup>' +
+      '<optgroup label="V2.0 · 图生 / 关键帧">' +
+      '<option value="v2-image">图生：角色细微呼吸动画</option>' +
+      '<option value="v2-keyframes">关键帧：两帧平滑过渡</option></optgroup>';
+
+    // 初始加载
+    window.__app = { applyTemplate };
+    await loadSettings();
+    await loadTasks();
+    startLoop();
+  }
+
+  document.addEventListener('DOMContentLoaded', init);
+})();
