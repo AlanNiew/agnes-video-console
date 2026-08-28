@@ -180,8 +180,12 @@ body {
 .act.green:hover { color: var(--green); border-color: var(--green); }
 .act.red:hover { color: var(--red); border-color: var(--red); }
 .video-preview {
-  margin-top: 9px; border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
-  background: #000;
+  /* 宽度贴合视频内容并居中，而不是撑满整列（避免大面积黑色幕布） */
+  width: fit-content;
+  max-width: 100%;
+  margin: 9px auto 0;
+  border-radius: 8px; overflow: hidden; border: 1px solid var(--border);
+  background: #0d1117; /* 柔和深底色，替代纯黑 */
   display: flex; align-items: center; justify-content: center;
   min-height: 92px; /* 加载元数据前预留空间，避免卡片跳动 */
   position: relative;
@@ -324,8 +328,12 @@ body {
 .detail-dl dd { word-break: break-all; }
 .detail-dl dd.url { color: var(--blue); }
 .detail-body-play {
-  margin-top: 8px; border-radius: 10px; overflow: hidden;
-  border: 1px solid var(--border); background: #000;
+  /* 详情播放器同样贴合视频宽度居中，背景用柔和深色 */
+  width: fit-content;
+  max-width: 100%;
+  margin: 8px auto 0;
+  border-radius: 10px; overflow: hidden;
+  border: 1px solid var(--border); background: #0d1117;
   display: flex; justify-content: center;
 }
 .detail-body-play video {
