@@ -9,6 +9,7 @@ const express = require('express');
 const { settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
 const poller = require('./poller');
+const { createPipelineService } = require('./pipeline');
 const { log, recent: recentLogs } = require('./logger');
 
 const app = express();
@@ -39,6 +40,9 @@ const V2_MODES = ['text', 'image', 'keyframes'];
 const ASPECT_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 const SECONDS_OK = Array.from({ length: 9 }, (_, i) => String(i + 4)); // '4'..'12'
 const PROJECT_STATUSES = ['draft', 'copy_done', 'character_done', 'video_submitted'];
+const SHOT_COUNTS = ['auto', '3', '5', '8'];   // 分镜生成可选镜头数
+const SHOT_MODES = ['reference', 'text'];      // 镜头模式（keyframe 为 M2+ 预留）
+const MAX_SHOTS = 20;                          // 每项目镜头数上限
 
 /* 流水线模型（最新免费三件套，M1 固定值） */
 const LLM_MODEL = 'agnes-2.5-flash';        // 文本：提示词优化/文案
@@ -288,7 +292,11 @@ async function submitTask(payload, meta, opts = {}) {
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
 
   const id = tasks.insert({
-    status: 'queued', ...meta, request_json: payload, project_id: opts.project_id || null,
+    status: 'queued', ...meta, request_json: payload,
+    project_id: opts.project_id || null,
+    shot_id: opts.shot_id || null,
+    text_id: opts.text_id || null,
+    image_id: opts.image_id || null,
   });
 
   let r;
@@ -319,6 +327,9 @@ async function submitTask(payload, meta, opts = {}) {
   log('info', `任务 #${id} 创建成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
   return tasks.get(id);
 }
+
+/* 流水线服务层（镜头/项目视频提交编排，M2） */
+const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log });
 
 /* ---------------- API 路由 ---------------- */
 
@@ -358,6 +369,7 @@ app.get('/api/settings', (req, res) => {
     model: settings.get('model', DEFAULT_SETTINGS.model),
     poll_interval_ms: Number(settings.get('poll_interval_ms', DEFAULT_SETTINGS.poll_interval_ms)),
     max_active_minutes: Number(settings.get('max_active_minutes', DEFAULT_SETTINGS.max_active_minutes)),
+    submit_interval_ms: Number(settings.get('submit_interval_ms', DEFAULT_SETTINGS.submit_interval_ms)),
   });
 });
 
@@ -393,6 +405,12 @@ app.put('/api/settings', (req, res) => {
     if (!Number.isFinite(m) || m < 1 || m > 1440) throw new ApiError(400, 'max_active_minutes 需在 1–1440 之间');
     settings.set('max_active_minutes', String(Math.round(m)));
     changed.push('max_active_minutes');
+  }
+  if (b.submit_interval_ms !== undefined) {
+    const ms = Number(b.submit_interval_ms);
+    if (!Number.isInteger(ms) || ms < 0 || ms > 300000) throw new ApiError(400, 'submit_interval_ms 需为 0–300000 的整数（0 = 连续提交）');
+    settings.set('submit_interval_ms', String(ms));
+    changed.push('submit_interval_ms');
   }
   if (b.clear_api_key === true) settings.set('api_key', '');
   if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
@@ -527,6 +545,21 @@ const SCRIPT_SYSTEM_PROMPT = `你是资深影视创作者助理。根据用户�
   "scene_desc": "主要场景描述：环境类型、时间光线、色调氛围，80 字内"
 }`;
 
+/** 分镜生成系统提示词：输出 shots 数组的结构化 JSON（mock 测试按 "shots" 契约标记识别） */
+const STORYBOARD_SYSTEM_PROMPT = `你是资深影视分镜师。根据用户的一句话创意，把影片拆解为多个连续镜头的分镜脚本。
+只输出一个 JSON 对象（不要 markdown 代码块、不要注释），字段如下：
+{
+  "shots": [
+    {
+      "seq": 1,
+      "title": "镜头标题，10 字内，概括本镜头画面",
+      "video_prompt": "该镜头的视频生成提示词，中文 80~150 字，按顺序描述：主体与场景→动作与变化→镜头语言→视觉风格→声音与节奏；必须以\\"以 <Picture 1> 中的角色为参考，保持其外观一致\\"开头以保持角色一致",
+      "seconds": "5"
+    }
+  ]
+}
+要求：镜头之间动作与镜头语言连贯，覆盖从开场到收尾的完整叙事；seconds 只能是 "4"~"12" 的字符串；镜头数量遵循用户指定数量（未指定则按叙事需要 3~8 个）。`;
+
 /** 下载远程图片到本地 artifacts 做永久备份（失败不阻塞） */
 async function downloadArtifact(remoteUrl) {
   try {
@@ -588,6 +621,24 @@ function buildImagePayload(b) {
   if (b.ratio !== undefined) payload.ratio = ratio;
   if (inputImages.length) payload.extra_body.image = inputImages;
   return { payload, prompt, size, ratio: b.ratio !== undefined ? ratio : null, inputImages };
+}
+
+/** 规范化分镜数组（LLM 输出 / 历史 storyboard 版本通用）：重编 seq、裁剪长度、seconds 白名单兜底 */
+function normalizeStoryboardShots(rawShots, fallbackSeconds = '5') {
+  const fb = SECONDS_OK.includes(String(fallbackSeconds)) ? String(fallbackSeconds) : '5';
+  const out = [];
+  for (const s of (rawShots || []).slice(0, MAX_SHOTS)) {
+    const vp = String(s?.video_prompt || '').trim();
+    if (!vp) continue; // 空提示词镜头直接丢弃
+    out.push({
+      seq: out.length + 1,
+      title: String(s?.title || '').trim().slice(0, 100) || null,
+      video_prompt: vp.slice(0, MAX_TEXT_LEN),
+      seconds: SECONDS_OK.includes(String(s?.seconds)) ? String(s.seconds) : fb,
+      mode: 'reference',
+    });
+  }
+  return out;
 }
 
 /* ---------- 文本 / LLM ---------- */
@@ -712,6 +763,73 @@ app.post('/api/llm/script', ah(async (req, res) => {
   res.json({ parsed: true, result, texts, model: r.data?.model || LLM_MODEL });
 }));
 
+// 创意 → 分镜脚本（M2：多镜头 storyboard；整体版本落 project_texts.kind=storyboard，工作副本落 shots）
+app.post('/api/llm/storyboard', ah(async (req, res) => {
+  const b = req.body || {};
+  const idea = String(b.idea || '').trim();
+  if (!idea) throw new ApiError(400, '请先输入创意想法 idea');
+  if (idea.length > MAX_TEXT_LEN) throw new ApiError(400, `idea 长度需 ≤ ${MAX_TEXT_LEN}`);
+  const style = b.style ? String(b.style).trim().slice(0, 200) : '';
+  const shotCount = SHOT_COUNTS.includes(String(b.shot_count)) ? String(b.shot_count) : 'auto';
+  if (b.aspect_ratio !== undefined && !ASPECT_RATIOS.includes(b.aspect_ratio)) {
+    throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+  }
+  if (b.seconds !== undefined && !SECONDS_OK.includes(String(b.seconds))) {
+    throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  }
+  if (b.project_id !== undefined && b.project_id !== null && !projects.get(b.project_id)) {
+    throw new ApiError(404, '项目不存在');
+  }
+  const countText = shotCount === 'auto' ? '未指定（按叙事需要 3~8 个）' : `恰好 ${shotCount} 个`;
+  const userMessage = `一句话创意：${idea}\n风格偏好：${style || '不限制'}\n画幅：${b.aspect_ratio || '16:9'}\n单镜头目标时长：${b.seconds || '5'} 秒\n镜头数量：${countText}`;
+  const apiKey = settings.get('api_key', '');
+  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  let r;
+  try {
+    r = await agnes.chatComplete({
+      apiKey,
+      baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
+      model: LLM_MODEL,
+      messages: [{ role: 'system', content: STORYBOARD_SYSTEM_PROMPT }, { role: 'user', content: userMessage }],
+      temperature: 0.8,
+      max_tokens: 4000,
+    });
+  } catch (e) {
+    throw new ApiError(502, `分镜生成网络异常：${e.message}`);
+  }
+  if (!r.ok) {
+    const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
+    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `分镜生成失败（${r.status}）：${String(detail).slice(0, 400)}`);
+  }
+  const raw = r.data?.choices?.[0]?.message?.content || '';
+  const parsed = parseLLMJson(raw);
+  const rawShots = parsed && typeof parsed === 'object' && Array.isArray(parsed.shots) ? parsed.shots : null;
+  if (!rawShots) {
+    // 降级：模型没按 JSON 输出，返回原文由前端展示
+    return res.json({ parsed: false, content: raw, shots: null, texts: null });
+  }
+  // 规范化镜头：重编 seq、裁剪长度、seconds 白名单兜底（与历史版本选用共用同一规范化）
+  const normalized = normalizeStoryboardShots(rawShots, SECONDS_OK.includes(String(b.seconds)) ? String(b.seconds) : '5');
+  if (!normalized.length) {
+    return res.json({ parsed: false, content: raw, shots: null, texts: null });
+  }
+  let shotsOut = null;
+  let texts = null;
+  if (b.project_id) {
+    // storyboard 整体版本落库（可回溯/选用历史），shots 工作副本整体重建
+    const content = JSON.stringify({ shots: normalized });
+    const tid = projects.addText({ project_id: b.project_id, kind: 'storyboard', content, model: LLM_MODEL });
+    projects.selectText(tid, 'storyboard', b.project_id);
+    projects.replaceShots(b.project_id, normalized);
+    shotsOut = projects.shots(b.project_id);
+    texts = projects.texts(b.project_id);
+    log('info', `项目 #${b.project_id} 分镜生成完成（${normalized.length} 个镜头）`);
+  } else {
+    shotsOut = normalized;
+  }
+  res.json({ parsed: true, shots: shotsOut, texts, model: r.data?.model || LLM_MODEL });
+}));
+
 /* ---------- 图片 ---------- */
 
 // 图片生成（文生图 / 图生图，同步）
@@ -788,6 +906,7 @@ app.get('/api/projects/:id', (req, res) => {
     project: p,
     texts: projects.texts(p.id),
     images: projects.images(p.id),
+    shots: projects.shots(p.id),
     tasks: projects.tasks(p.id),
   });
 });
@@ -854,15 +973,124 @@ app.post('/api/projects/:id/select-image', (req, res) => {
   res.json({ ok: true });
 });
 
-// 从项目发起视频任务：角色定稿图 + 选定分镜提示词 → 2.5-flash reference 模式
+/* ---------- 镜头（M2 分镜工作副本） ---------- */
+
+// 选用历史 storyboard 版本 → 重建镜头工作副本（选中该版本 + 整体替换 shots）
+app.post('/api/projects/:id/storyboard/apply', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const textId = Number(req.body?.text_id);
+  const target = projects.texts(p.id).find((t) => t.id === textId && t.kind === 'storyboard');
+  if (!target) throw new ApiError(404, 'storyboard 版本不存在');
+  let parsedContent;
+  try {
+    parsedContent = JSON.parse(target.content || '{}');
+  } catch {
+    throw new ApiError(400, '该 storyboard 版本内容不是合法 JSON');
+  }
+  const shots = normalizeStoryboardShots(parsedContent.shots, p.seconds || '5');
+  if (!shots.length) throw new ApiError(400, '该 storyboard 版本没有有效镜头');
+  projects.selectText(target.id, 'storyboard', p.id);
+  projects.replaceShots(p.id, shots);
+  log('info', `项目 #${p.id} 选用 storyboard 版本 #${target.id}（${shots.length} 个镜头）`);
+  res.json({ ok: true, shots: projects.shots(p.id) });
+});
+
+// 手动添加镜头（追加到末尾）
+app.post('/api/projects/:id/shots', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const existing = projects.shots(p.id);
+  if (existing.length >= MAX_SHOTS) throw new ApiError(400, `每个项目最多 ${MAX_SHOTS} 个镜头`);
+  const b = req.body || {};
+  const vp = String(b.video_prompt || '').trim();
+  if (!vp) throw new ApiError(400, 'video_prompt 不能为空');
+  if (vp.length > MAX_TEXT_LEN) throw new ApiError(400, `video_prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
+  if (b.seconds !== undefined && b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) {
+    throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+  }
+  const mode = SHOT_MODES.includes(b.mode) ? b.mode : 'reference';
+  const maxSeq = existing.reduce((m, s) => Math.max(m, s.seq), 0);
+  const id = projects.addShot({
+    project_id: p.id, seq: maxSeq + 1,
+    title: String(b.title || '').trim().slice(0, 100) || null,
+    video_prompt: vp, seconds: b.seconds || null, mode,
+  });
+  res.status(201).json(projects.shots(p.id).find((s) => s.id === id));
+});
+
+// 编辑镜头（标题/提示词/时长；归属校验防跨项目越权）
+app.patch('/api/projects/:id/shots/:shotId', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+  if (!shot) throw new ApiError(404, '镜头不存在');
+  const b = req.body || {};
+  const patch = {};
+  if (b.title !== undefined) patch.title = String(b.title).trim().slice(0, 100) || null;
+  if (b.video_prompt !== undefined) {
+    const vp = String(b.video_prompt).trim();
+    if (!vp) throw new ApiError(400, 'video_prompt 不能为空');
+    if (vp.length > MAX_TEXT_LEN) throw new ApiError(400, `video_prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
+    patch.video_prompt = vp;
+  }
+  if (b.seconds !== undefined) {
+    if (b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+    patch.seconds = b.seconds;
+  }
+  projects.updateShot(shot.id, patch);
+  res.json(projects.shots(p.id).find((s) => s.id === shot.id));
+});
+
+// 删除镜头（关联视频任务保留，shot_id 成为历史引用）
+app.delete('/api/projects/:id/shots/:shotId', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+  if (!shot) throw new ApiError(404, '镜头不存在');
+  projects.removeShot(shot.id);
+  res.json({ ok: true });
+});
+
+// 镜头排序：ids 按新顺序给出，必须与现有镜头一一对应（不重不漏）
+app.post('/api/projects/:id/shots/reorder', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const ids = req.body?.ids;
+  if (!Array.isArray(ids) || !ids.length) throw new ApiError(400, 'ids 必须是非空数组');
+  const current = projects.shots(p.id);
+  const idSet = new Set(current.map((s) => s.id));
+  const reqIds = ids.map(Number);
+  if (reqIds.length !== current.length || reqIds.some((id) => !idSet.has(id)) || new Set(reqIds).size !== reqIds.length) {
+    throw new ApiError(400, 'ids 必须与项目现有镜头一一对应（不重不漏）');
+  }
+  projects.reorderShots(p.id, reqIds);
+  res.json({ ok: true, shots: projects.shots(p.id) });
+});
+
+// 单镜头提交视频任务（M2 主入口；复用 pipeline 服务层组装与溯源）
+app.post('/api/projects/:id/shots/:shotId/videos', ah(async (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+  if (!shot) throw new ApiError(404, '镜头不存在');
+  const b = req.body || {};
+  const task = await pipeline.submitVideoTask({
+    projectId: p.id,
+    prompt: shot.video_prompt,
+    seconds: b.seconds || shot.seconds,
+    aspectRatio: b.aspect_ratio,
+    shotId: shot.id,
+  });
+  res.status(201).json(task);
+}));
+
+// 从项目发起视频任务（旧入口，保留原语义）：角色定稿图 + 选定分镜提示词 → 2.5-flash reference 模式。
+// 组装与溯源逻辑在 pipeline.js 服务层；M2 起新流程走 /api/projects/:id/shots/:shotId/videos
 app.post('/api/projects/:id/videos', ah(async (req, res) => {
   const p = projects.get(req.params.id);
   if (!p) throw new ApiError(404, '项目不存在');
   const b = req.body || {};
-  const charImg = projects.selectedImage(p.id, 'character');
-  if (!charImg || !charImg.remote_url) {
-    throw new ApiError(400, '请先完成「角色设定」并定稿一张角色图');
-  }
   let prompt = String(b.prompt || '').trim();
   if (!prompt) {
     const selectedVideo = projects.selectedText(p.id, 'video_prompt');
@@ -872,25 +1100,12 @@ app.post('/api/projects/:id/videos', ah(async (req, res) => {
     const latest = projects.texts(p.id).find((t) => t.kind === 'video_prompt');
     prompt = latest?.content || '';
   }
-  if (!prompt) throw new ApiError(400, '缺少分镜提示词（请在文案步骤生成或手动输入）');
-  // 提示词中必须引用角色图，显式保持外观一致
-  if (!prompt.includes('<Picture 1>')) {
-    prompt = `以 <Picture 1> 中的角色为参考，保持其外观一致。${prompt}`;
-  }
-  const seconds = String(b.seconds || p.seconds || '5');
-  const aspectRatio = String(b.aspect_ratio || p.aspect_ratio || '16:9');
-  const { payload, meta } = buildPayload({
-    model: 'agnes-video-2.5-flash',
+  const task = await pipeline.submitVideoTask({
+    projectId: p.id,
     prompt,
-    mode: 'reference',
-    seconds,
-    size: '720P',
-    aspect_ratio: aspectRatio,
-    images: [charImg.remote_url],
+    seconds: b.seconds,
+    aspectRatio: b.aspect_ratio,
   });
-  const task = await submitTask(payload, meta, { project_id: p.id });
-  projects.update(p.id, { status: 'video_submitted' });
-  log('info', `项目 #${p.id} 发起视频任务 #${task.id}（引用角色图 #${charImg.id}）`);
   res.status(201).json(task);
 }));
 

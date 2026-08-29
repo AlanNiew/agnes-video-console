@@ -377,6 +377,12 @@ body {
 @keyframes slidein { from { transform: translateX(30px); opacity: 0; } }
 
 .hidden { display: none !important; }
+
+/* ---------- 分镜卡片（M2） ---------- */
+.shot-card { border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; margin-top: 10px; background: var(--bg-3); }
+.shot-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.shot-title { flex: 1; min-width: 140px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
+.shot-card textarea { margin-top: 8px; }
 .mt { margin-top: 10px; }
 .muted { color: var(--text-dim); }
 

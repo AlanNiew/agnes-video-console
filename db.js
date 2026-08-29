@@ -89,6 +89,19 @@ CREATE TABLE IF NOT EXISTS project_images (
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_pimgs_project ON project_images(project_id);
+
+CREATE TABLE IF NOT EXISTS shots (       -- M2：分镜工作副本（逐镜头编辑/排序/任务溯源）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  seq INTEGER NOT NULL DEFAULT 0,        -- 镜头顺序（从 1 起）
+  title TEXT,
+  video_prompt TEXT NOT NULL DEFAULT '',
+  seconds TEXT,
+  mode TEXT DEFAULT 'reference',         -- 预留 reference|text|keyframe
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_shots_project ON shots(project_id);
 `);
 
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
@@ -101,10 +114,16 @@ const MIGRATE_COLS = [
   ['height', 'INTEGER'],        // v2.0 高
   ['negative_prompt', 'TEXT'],  // v2.0 反向提示词
   ['project_id', 'INTEGER'],    // 流水线项目关联（M1）
+  ['shot_id', 'INTEGER'],       // 镜头溯源（M2）
+  ['text_id', 'INTEGER'],       // 提示词文本版本溯源（M2）
+  ['image_id', 'INTEGER'],      // 引用图片溯源（M2）
 ];
 for (const [name, type] of MIGRATE_COLS) {
   if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
 }
+// M2 溯源索引（列由上方迁移补齐后再建，避免旧库启动失败）
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_shot ON tasks(shot_id)');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -115,8 +134,9 @@ const stmts = {
     INSERT INTO tasks (status, mode, model, prompt, seconds, size, aspect_ratio, seed,
                        first_frame, last_frame, images, audios, videos, request_json,
                        image, num_frames, frame_rate, width, height, negative_prompt, project_id,
+                       shot_id, text_id, image_id,
                        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   getTask: db.prepare('SELECT * FROM tasks WHERE id = ?'),
   listTasks: db.prepare(`
@@ -146,7 +166,7 @@ const stmts = {
       submit_response = ?, last_poll_response = ?, metadata_url = ?, error_message = ?,
       poll_count = ?, last_polled_at = ?,
       image = ?, num_frames = ?, frame_rate = ?, width = ?, height = ?, negative_prompt = ?,
-      project_id = ?
+      project_id = ?, shot_id = ?, text_id = ?, image_id = ?
     WHERE id = ?
   `),
   insertProject: db.prepare(`
@@ -196,6 +216,18 @@ const stmts = {
   `),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
   clearCompleted: db.prepare("DELETE FROM tasks WHERE status = 'completed'"),
+
+  /* M2：镜头 */
+  insertShot: db.prepare(`
+    INSERT INTO shots (project_id, seq, title, video_prompt, seconds, mode, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  getShot: db.prepare('SELECT * FROM shots WHERE id = ?'),
+  listShots: db.prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY seq ASC, id ASC'),
+  updateShotFull: db.prepare('UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, updated_at = ? WHERE id = ?'),
+  updateShotSeq: db.prepare('UPDATE shots SET seq = ?, updated_at = ? WHERE id = ? AND project_id = ?'),
+  deleteShot: db.prepare('DELETE FROM shots WHERE id = ?'),
+  deleteShotsByProject: db.prepare('DELETE FROM shots WHERE project_id = ?'),
 };
 
 /** 安全解析 JSON 列 */
@@ -259,6 +291,9 @@ function toTaskRow(row) {
     height: row.height === null ? null : Number(row.height),
     negative_prompt: row.negative_prompt,
     project_id: row.project_id === null ? null : Number(row.project_id),
+    shot_id: row.shot_id === null ? null : Number(row.shot_id),
+    text_id: row.text_id === null ? null : Number(row.text_id),
+    image_id: row.image_id === null ? null : Number(row.image_id),
   };
 }
 
@@ -275,7 +310,8 @@ const settings = {
 const tasks = {
   insert({ status, mode, model, prompt, seconds, size, aspect_ratio, seed, first_frame,
            last_frame, images, audios, videos, request_json,
-           image, num_frames, frame_rate, width, height, negative_prompt, project_id }) {
+           image, num_frames, frame_rate, width, height, negative_prompt, project_id,
+           shot_id, text_id, image_id }) {
     const now = Date.now();
     const r = stmts.insertTask.run(
       status, mode, model, prompt, seconds, size, aspect_ratio,
@@ -290,6 +326,9 @@ const tasks = {
       height === null || height === undefined ? null : Number(height),
       negative_prompt || null,
       project_id || null,
+      shot_id || null,
+      text_id || null,
+      image_id || null,
       now, now
     );
     return Number(r.lastInsertRowid);
@@ -377,6 +416,9 @@ const tasks = {
       p.height !== undefined ? p.height : cur.height,
       p.negative_prompt !== undefined ? p.negative_prompt : cur.negative_prompt,
       p.project_id !== undefined ? p.project_id : cur.project_id,
+      p.shot_id !== undefined ? p.shot_id : cur.shot_id,
+      p.text_id !== undefined ? p.text_id : cur.text_id,
+      p.image_id !== undefined ? p.image_id : cur.image_id,
       Number(id)
     );
     return true;
@@ -415,6 +457,7 @@ const DEFAULT_SETTINGS = {
   model: 'agnes-video-2.5-flash',
   poll_interval_ms: '2000',
   max_active_minutes: '20',
+  submit_interval_ms: '60000', // M2：批量分镜提交间隔（0 = 连续提交）
 };
 
 /* ---------------- 创作流水线（projects / texts / images） ---------------- */
@@ -429,6 +472,21 @@ function projectRowToApi(row) {
     aspect_ratio: row.aspect_ratio,
     seconds: row.seconds,
     status: row.status,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+function shotRowToApi(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    project_id: Number(row.project_id),
+    seq: Number(row.seq || 0),
+    title: row.title,
+    video_prompt: row.video_prompt,
+    seconds: row.seconds,
+    mode: row.mode || 'reference',
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -468,10 +526,11 @@ const projects = {
   },
 
   remove(id) {
-    // 级联清理：文案、图片；视频任务保留但解除关联（事务保证四步原子完成）
+    // 级联清理：文案、图片、镜头；视频任务保留但解除关联（事务保证原子完成）
     return tx(() => {
       stmts.deleteProjectTexts.run(Number(id));
       stmts.deleteProjectImages.run(Number(id));
+      stmts.deleteShotsByProject.run(Number(id));
       stmts.detachProjectTasks.run(Number(id));
       return stmts.deleteProject.run(Number(id)).changes > 0;
     });
@@ -549,6 +608,66 @@ const projects = {
 
   tasks(projectId) {
     return stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
+  },
+
+  /* ---------------- M2：镜头（分镜工作副本） ---------------- */
+
+  shots(projectId) {
+    return stmts.listShots.all(Number(projectId)).map(shotRowToApi);
+  },
+
+  addShot({ project_id, seq, title, video_prompt, seconds, mode }) {
+    const now = Date.now();
+    const r = stmts.insertShot.run(
+      Number(project_id), Number(seq) || 0, title || null, video_prompt || '',
+      seconds || null, mode || 'reference', now, now
+    );
+    return Number(r.lastInsertRowid);
+  },
+
+  updateShot(id, patch = {}) {
+    const cur = stmts.getShot.get(Number(id));
+    if (!cur) return false;
+    stmts.updateShotFull.run(
+      patch.seq !== undefined ? Number(patch.seq) : cur.seq,
+      patch.title !== undefined ? patch.title : cur.title,
+      patch.video_prompt !== undefined ? patch.video_prompt : cur.video_prompt,
+      patch.seconds !== undefined ? patch.seconds : cur.seconds,
+      patch.mode !== undefined ? patch.mode : cur.mode,
+      Date.now(),
+      Number(id)
+    );
+    return true;
+  },
+
+  removeShot(id) {
+    return stmts.deleteShot.run(Number(id)).changes > 0;
+  },
+
+  /** 用分镜脚本整体替换项目的镜头工作副本（事务：先清后插），返回新镜头 id 列表 */
+  replaceShots(projectId, shotsArr) {
+    const pid = Number(projectId);
+    return tx(() => {
+      stmts.deleteShotsByProject.run(pid);
+      const now = Date.now();
+      return shotsArr.map((s, i) =>
+        Number(stmts.insertShot.run(
+          pid, Number(s.seq ?? (i + 1)) || (i + 1), s.title || null, s.video_prompt || '',
+          s.seconds || null, s.mode || 'reference', now, now
+        ).lastInsertRowid)
+      );
+    });
+  },
+
+  /** 按 ids 顺序重排镜头 seq（事务；调用方需先校验 ids 合法性） */
+  reorderShots(projectId, ids) {
+    const pid = Number(projectId);
+    return tx(() => {
+      ids.forEach((id, i) => {
+        stmts.updateShotSeq.run(i + 1, Date.now(), Number(id), pid);
+      });
+      return true;
+    });
   },
 };
 

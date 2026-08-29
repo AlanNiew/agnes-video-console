@@ -307,6 +307,7 @@
       $('#setBaseUrl').value = state.settings.base_url;
       $('#setPollMs').value = state.settings.poll_interval_ms;
       $('#setMaxMin').value = state.settings.max_active_minutes;
+      $('#setSubmitMs').value = state.settings.submit_interval_ms ?? 60000;
     } catch (e) {
       toast('加载设置失败：' + e.message, 'err');
     }
@@ -629,6 +630,7 @@
       model: $('#setModel').value,
       poll_interval_ms: Number($('#setPollMs').value),
       max_active_minutes: Number($('#setMaxMin').value),
+      submit_interval_ms: Number($('#setSubmitMs').value),
     };
     const key = $('#setApiKey').value.trim();
     if (key) body.api_key = key;
@@ -832,7 +834,7 @@
     $('#navTasks').addEventListener('click', () => switchView('tasks'));
 
     // 初始加载
-    window.__app = { applyTemplate, loadTasks };
+    window.__app = { applyTemplate, loadTasks, getSettings: () => state.settings };
     await loadMeta();
     await loadSettings();
     await loadTasks();

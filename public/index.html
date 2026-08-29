@@ -188,8 +188,9 @@
         <div class="grid2">
           <div class="field"><label>轮询间隔 (ms)</label><input type="number" id="setPollMs" min="500" step="100" /></div>
           <div class="field"><label>任务超时 (分钟)</label><input type="number" id="setMaxMin" min="1" step="1" /></div>
+          <div class="field"><label>批量提交间隔 (ms)</label><input type="number" id="setSubmitMs" min="0" step="1000" /></div>
         </div>
-        <p class="hint">轮询间隔建议 1000–2000ms（官方建议 1–2 秒查询一次）。超过超时仍未完成的任务将被标记为失败。</p>
+        <p class="hint">轮询间隔建议 1000–2000ms（官方建议 1–2 秒查询一次）。超过超时仍未完成的任务将被标记为失败。批量提交间隔用于分镜批量出片（0 = 连续提交）。</p>
       </div>
       <div class="modal-foot">
         <button class="btn ghost" data-close>取消</button>
