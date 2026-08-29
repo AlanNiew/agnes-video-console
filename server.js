@@ -470,10 +470,21 @@ app.get('/api/tasks', (req, res) => {
   });
 });
 
-// 创建任务
+// 创建任务（v1.7.1：可选 project_id / shot_id 关联，供自动化工作流[如图生视频产线]溯源；校验归属）
 app.post('/api/tasks', ah(async (req, res) => {
   const { payload, meta } = buildPayload(req.body);
-  const task = await submitTask(payload, meta);
+  const b = req.body || {};
+  let projectId = null;
+  let shotId = null;
+  if (b.project_id !== undefined && b.project_id !== null && b.project_id !== '') {
+    projectId = Number(b.project_id);
+    if (!projects.get(projectId)) throw new ApiError(404, '项目不存在');
+    if (b.shot_id !== undefined && b.shot_id !== null && b.shot_id !== '') {
+      shotId = Number(b.shot_id);
+      if (!projects.shots(projectId).some((s) => s.id === shotId)) throw new ApiError(404, '镜头不存在（或不属于该项目）');
+    }
+  }
+  const task = await submitTask(payload, meta, { project_id: projectId, shot_id: shotId });
   res.status(201).json(task);
 }));
 

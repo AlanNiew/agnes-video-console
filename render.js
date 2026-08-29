@@ -443,7 +443,30 @@ class Renderer {
 
       const outDur = probeDuration(outPath) || total;
 
-      /* ---- 5) 封面候选（v1.8：3 张关键帧，第一张叠片名；best-effort 不影响成片） ---- */
+      /* ---- 5.5) 响度补偿（v1.8.1）：单遍 loudnorm 在稀疏人声内容上会欠校准，
+       * 实测综合响度与 -16 LUFS 目标偏差 >1.5dB 时，音轨直补（视频流免重编码），至多两轮 ---- */
+      try {
+        for (let pass = 0; pass < 2; pass++) {
+          const probe = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', outPath, '-af', 'ebur128', '-f', 'null', '-'],
+            { encoding: 'utf8', timeout: 180_000, windowsHide: true });
+          const m = /Integrated loudness:\s*I:\s*(-?\d+\.?\d*)\s*LUFS/.exec(probe.stderr || '');
+          if (!m) break;
+          const delta = -16 - Number(m[1]);
+          if (Math.abs(delta) <= 1.5) { log('info', `渲染任务 #${job.id} 响度达标：${Number(m[1])} LUFS`); break; }
+          const tmpA = outPath + '.loud.mp4';
+          const r2 = await runFfmpeg(['-i', outPath, '-c:v', 'copy',
+            '-af', `volume=${delta.toFixed(1)}dB,alimiter=limit=0.95`,
+            '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', tmpA]);
+          if (!r2.ok) { log('warn', `响度补偿失败：${r2.err.slice(0, 120)}`); break; }
+          fs.rmSync(outPath, { force: true });
+          fs.renameSync(tmpA, outPath);
+          log('info', `渲染任务 #${job.id} 响度补偿 ${delta > 0 ? '+' : ''}${delta.toFixed(1)}dB（实测 ${Number(m[1])} LUFS → 目标 -16）`);
+        }
+      } catch (e) {
+        log('warn', `响度补偿异常（不影响成片）：${e.message}`);
+      }
+
+      /* ---- 6) 封面候选（v1.8：3 张关键帧，第一张叠片名；best-effort 不影响成片） ---- */
       const covers = [];
       try {
         const pickTimes = [0.18, 0.5, 0.82].map((r) => Math.min(Math.max(total * r, 0.5), Math.max(total - 0.4, 0.5)));
