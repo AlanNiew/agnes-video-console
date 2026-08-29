@@ -96,7 +96,15 @@ const mockServer = http.createServer(async (req, res) => {
     const body = JSON.parse(raw || '{}');
     const sys = (body.messages || []).find((m) => m.role === 'system')?.content || '';
     let content;
-    if (sys.includes('JSON 对象')) {
+    if (sys.includes('"shots"')) {
+      // M2 分镜生成契约（system 中要求输出 shots 数组）
+      content = JSON.stringify({
+        shots: [
+          { seq: 1, title: '开场：麦田远景', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声', seconds: '5' },
+          { seq: 2, title: '近景：脚步与麦浪', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头，暖金色逆光，脚步声与麦浪沙沙声', seconds: '6' },
+        ],
+      });
+    } else if (sys.includes('JSON 对象')) {
       content = JSON.stringify({
         script: '测试梗概：夏日黄昏，穿黄胶鞋的少年沿着麦田土路走向远方，镜头跟随他的背影，暖金色逆光，宁静而怀念。',
         video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。少年沿麦田土路走向远方，麦浪随风起伏，暖金色逆光，镜头缓慢横摇，电影写实风格，自然环境声',
@@ -440,6 +448,96 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (pBad4.status !== 400) err('空名称 PATCH 未被拦截');
   ok('项目 PATCH：正常更新生效，非法 status / 空 name 被 400 拒绝');
 
+  // 17.6 分镜生成（M2）：storyboard 文本版本落库 + shots 工作副本重建
+  const sb = await api('POST', '/api/llm/storyboard', {
+    idea: '黄昏麦田少年走向远方', style: '电影写实', shot_count: '2',
+    aspect_ratio: '16:9', seconds: '5', project_id: pid,
+  });
+  if (sb.status !== 200 || !sb.data.parsed) err(`分镜生成失败: ${JSON.stringify(sb.data).slice(0, 300)}`);
+  if (!Array.isArray(sb.data.shots) || sb.data.shots.length !== 2) err(`分镜镜头数异常: ${JSON.stringify(sb.data.shots)?.length}`);
+  if (!sb.data.shots[0].video_prompt.includes('<Picture 1>')) err('分镜提示词未包含 <Picture 1> 角色引用');
+  const sbDetail = await api('GET', `/api/projects/${pid}`);
+  const shotsPid = sbDetail.data.shots;
+  if (shotsPid.length !== 2 || shotsPid.map((s) => s.seq).join(',') !== '1,2') err(`shots 工作副本异常: ${JSON.stringify(shotsPid)}`);
+  const sbText = sbDetail.data.texts.find((t) => t.kind === 'storyboard');
+  if (!sbText?.selected) err('storyboard 文本版本未落库或未选中');
+  ok('分镜生成：storyboard 版本落库 + 2 个镜头工作副本按 seq 重建');
+
+  // 17.7 镜头 CRUD / 排序 / 校验 / 跨项目越权
+  const addShot = await api('POST', `/api/projects/${pid}/shots`, {
+    title: '手动补充镜头', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。手动补充的第三个镜头', seconds: '6',
+  });
+  if (addShot.status !== 201 || addShot.data.seq !== 3) err(`手动加镜头失败: ${JSON.stringify(addShot.data)}`);
+  const patchShot = await api('PATCH', `/api/projects/${pid}/shots/${addShot.data.id}`, { title: '手动镜头（改）', seconds: '7' });
+  if (patchShot.status !== 200 || patchShot.data.title !== '手动镜头（改）' || patchShot.data.seconds !== '7') {
+    err(`镜头 PATCH 异常: ${JSON.stringify(patchShot.data)}`);
+  }
+  const shotEmpty = await api('POST', `/api/projects/${pid}/shots`, { video_prompt: '   ' });
+  if (shotEmpty.status !== 400) err('空提示词镜头未被 400 拦截');
+  const reorder = await api('POST', `/api/projects/${pid}/shots/reorder`, {
+    ids: [addShot.data.id, shotsPid[1].id, shotsPid[0].id],
+  });
+  if (reorder.status !== 200 || reorder.data.shots.map((s) => s.seq).join(',') !== '1,2,3') {
+    err(`镜头排序异常: ${JSON.stringify(reorder.data)}`);
+  }
+  const reorderBad = await api('POST', `/api/projects/${pid}/shots/reorder`, { ids: [addShot.data.id] });
+  if (reorderBad.status !== 400) err('不完整的 ids 排序未被 400 拦截');
+  const shotIdor = await api('PATCH', `/api/projects/${proj2.data.id}/shots/${addShot.data.id}`, { title: 'x' });
+  if (shotIdor.status !== 404) err('跨项目镜头编辑未被 404 拦截');
+  const delShot = await api('DELETE', `/api/projects/${pid}/shots/${addShot.data.id}`);
+  if (delShot.status !== 200) err(`删除镜头失败: ${JSON.stringify(delShot.data)}`);
+  const delShotAgain = await api('DELETE', `/api/projects/${pid}/shots/${addShot.data.id}`);
+  if (delShotAgain.status !== 404) err('重复删除镜头未被 404 拒绝');
+  ok('镜头 CRUD：新增/PATCH/排序/删除正常，空提示词与跨项目越权被拦截');
+
+  // 17.8 分镜重新生成：覆盖工作副本（新镜头 id），storyboard 版本累计
+  const oldShotIds = shotsPid.map((s) => s.id);
+  const sb2 = await api('POST', '/api/llm/storyboard', {
+    idea: '黄昏麦田少年走向远方（改）', project_id: pid,
+  });
+  if (sb2.status !== 200 || !sb2.data.parsed || sb2.data.shots.length !== 2) {
+    err(`分镜重新生成异常: ${JSON.stringify(sb2.data).slice(0, 200)}`);
+  }
+  const sbDetail2 = await api('GET', `/api/projects/${pid}`);
+  const sbVersions = sbDetail2.data.texts.filter((t) => t.kind === 'storyboard');
+  if (sbVersions.length !== 2) err(`storyboard 版本数异常: ${sbVersions.length}`);
+  if (sbDetail2.data.shots.length !== 2) err('重新生成后镜头数未更新');
+  if (sbDetail2.data.shots.some((s) => oldShotIds.includes(s.id))) err('重新生成后镜头 id 未更换（工作副本未重建）');
+  ok('分镜重新生成：工作副本重建（新镜头 id），storyboard 版本累计 2 版');
+
+  // 17.9 选用历史 storyboard 版本 → 重建镜头工作副本
+  const v1 = sbVersions.find((t) => !t.selected) || sbVersions[0];
+  const applySb = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: v1.id });
+  if (applySb.status !== 200 || !applySb.data.ok || !Array.isArray(applySb.data.shots) || applySb.data.shots.length !== 2) {
+    err(`选用历史版本异常: ${JSON.stringify(applySb.data).slice(0, 200)}`);
+  }
+  const apply404 = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: 999999 });
+  if (apply404.status !== 404) err('选用不存在的 storyboard 版本未被 404 拦截');
+  const applyIdor = await api('POST', `/api/projects/${proj2.data.id}/storyboard/apply`, { text_id: v1.id });
+  if (applyIdor.status !== 404) err('跨项目选用 storyboard 未被 404 拦截');
+  ok('选用历史分镜版本：镜头重建 + 404 拦截（不存在 / 跨项目）');
+
+  // 17.10 storyboard 参数校验：空 idea / 项目不存在
+  const sbBad1 = await api('POST', '/api/llm/storyboard', { idea: '' });
+  if (sbBad1.status !== 400) err('storyboard 空 idea 未被 400 拦截');
+  const sbBad2 = await api('POST', '/api/llm/storyboard', { idea: 'x', project_id: 999999 });
+  if (sbBad2.status !== 404) err('storyboard 项目不存在未被 404 拦截');
+  ok('校验：storyboard 空 idea 400 / 项目不存在 404');
+
+  // 17.11 批量提交间隔设置：默认值、修改、非法值
+  const st0 = await api('GET', '/api/settings');
+  if (st0.data.submit_interval_ms !== 60000) err(`submit_interval_ms 默认值异常: ${st0.data.submit_interval_ms}`);
+  const st1 = await api('PUT', '/api/settings', { submit_interval_ms: 5000 });
+  if (st1.status !== 200) err('保存 submit_interval_ms 失败');
+  const st2 = await api('GET', '/api/settings');
+  if (st2.data.submit_interval_ms !== 5000) err('submit_interval_ms 修改未生效');
+  const stBad1 = await api('PUT', '/api/settings', { submit_interval_ms: -1 });
+  if (stBad1.status !== 400) err('submit_interval_ms 负数未被 400 拦截');
+  const stBad2 = await api('PUT', '/api/settings', { submit_interval_ms: 999999 });
+  if (stBad2.status !== 400) err('submit_interval_ms 超上限未被 400 拦截');
+  await api('PUT', '/api/settings', { submit_interval_ms: 60000 }); // 还原默认，避免影响后续
+  ok('设置：submit_interval_ms 默认 60000，修改生效，越界被 400 拦截');
+
   // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
   const img = await api('POST', '/api/images/generate', {
     prompt: '角色立绘：银发少年', size: '1K', ratio: '1:1', project_id: pid, kind: 'character',
@@ -490,6 +588,20 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   const projDetail = await api('GET', `/api/projects/${pid}`);
   if (!projDetail.data.tasks.some((t) => t.id === pv.data.id)) err('项目详情未聚合视频任务');
   ok('项目详情聚合视频任务');
+
+  // 20.1 单镜头提交视频任务（M2）：payload 用该镜头提示词 + shot_id/image_id 溯源
+  const shot1 = projDetail.data.shots[0];
+  const sv = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  if (sv.status !== 201) err(`单镜头提交失败: ${JSON.stringify(sv.data)}`);
+  if (sv.data.shot_id !== shot1.id) err(`任务未关联镜头: ${sv.data.shot_id}`);
+  if (!sv.data.image_id) err('任务未记录角色图溯源 image_id');
+  if (sv.data.project_id !== pid) err('任务未关联项目');
+  if (!sv.data.request_json.prompt.includes(shot1.video_prompt.slice(0, 30))) err('镜头提示词未用于任务 payload');
+  if (!sv.data.request_json.prompt.includes('<Picture 1>')) err('单镜头任务提示词缺 <Picture 1>');
+  if (sv.data.request_json.model !== 'agnes-video-2.5-flash' || sv.data.request_json.mode !== 'reference') {
+    err(`单镜头任务模型/模式异常: ${JSON.stringify(sv.data.request_json)}`);
+  }
+  ok(`单镜头提交视频任务 #${sv.data.id}（shot_id=${sv.data.shot_id}，提示词与溯源正确）`);
 
   // 21. 删除项目（级联清理 + 任务解绑）
   const delR = await api('DELETE', `/api/projects/${pid}`);
