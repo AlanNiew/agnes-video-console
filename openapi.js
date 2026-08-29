@@ -80,9 +80,15 @@ const paths = {
     delete: '清除项目 BGM 选择（本地缓存文件保留）',
   },
   '/api/tts/generate': {
-    post: 'Fish Audio 配音合成 {text, project_id?, shot_id?(提供时 kind 自动为 shot，成片渲染按镜头取用), kind?(narration|shot), voice?, speed?, model?} → mp3 落地 artifacts',
+    post: 'Fish Audio 配音合成 {text, project_id?, shot_id?(提供时 kind 自动为 shot，成片渲染按镜头取用), kind?(narration|shot), voice?(预设 id 或备选池音色 id), speed?, model?} → mp3 落地 artifacts',
   },
-  '/api/tts/voices': { get: '音色清单与可用模型' },
+  '/api/tts/voices': { get: '音色清单（默认预设 + 声音广场备选池合并）与可用模型' },
+  '/api/tts/market': { get: '声音广场浏览 ?sort_by=(trending|task_count|created_at)&language=zh&tag=male&tag=young&page_number=&page_size= → {items:[{id,title,author,tags,like_count,task_count,sample,in_pool}]}（需设置 fish_web_token）' },
+  '/api/tts/pool': {
+    get: '音色备选池列表',
+    post: '加入备选池 {id(32位模型id), title, author?, like_count?, task_count?, tags?}（去重）',
+  },
+  '/api/tts/pool/{id}': { delete: '从备选池移除' },
   '/api/tts/{id}/select': { post: '选用配音记录' },
   '/api/tts/{id}/bind': { post: '绑定/解绑旁白到镜头 {project_id?, shot_id(数字=绑定并转 shot kind；null=解绑为 narration)}；同镜头互斥自动让位，成片渲染按镜头对齐混入' },
   '/api/tts/{id}': { delete: '删除配音记录（本地文件一并清理）' },

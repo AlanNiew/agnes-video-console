@@ -382,6 +382,26 @@
             </div>
           </div>
           <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [], shots)}</div>
+          <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
+            <b>🎤 声音广场</b> <span class="hint">浏览 Fish 社区真实音色（按热度排行），试听后「＋备选」加入音色池，即出现在上方「默认音色」下拉</span>
+            <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+              <select id="wsMkSort" class="meta-tag" style="background:var(--bg)">
+                <option value="trending" selected>🔥 热门趋势</option>
+                <option value="task_count">📈 最多使用</option>
+                <option value="created_at">🆕 最新收录</option>
+              </select>
+              <select id="wsMkGender" class="meta-tag" style="background:var(--bg)">
+                <option value="">性别不限</option><option value="male" selected>男声</option><option value="female">女声</option>
+              </select>
+              <select id="wsMkAge" class="meta-tag" style="background:var(--bg)">
+                <option value="">年龄不限</option><option value="young">青年</option><option value="middle">中年</option><option value="old">成熟</option>
+              </select>
+              <button class="btn ghost sm" id="wsMkSearch">🔍 浏览声音</button>
+            </div>
+            <div id="wsMkPool" class="mt">${renderVoicePool(d.project)}</div>
+            <div id="wsMkResults" class="mt"></div>
+            <audio id="wsMkAudio" preload="none" style="display:none"></audio>
+          </div>
         </div>
 
         <!-- ⑥ 成片渲染（v1.3） -->
@@ -631,6 +651,90 @@
       narrRange.oninput = () => {
         const l = $('#wsRNarrVolV');
         if (l) l.textContent = narrRange.value + '%';
+      };
+    }
+    // v1.9 声音广场：备选池展示 + 浏览/试听/入池
+    bindVoiceMarket(p.id);
+  }
+
+  async function refreshVoicePool() {
+    const box = $('#wsMkPool');
+    if (!box) return;
+    try {
+      const r = await api('/api/tts/pool');
+      const items = r.items || [];
+      box.innerHTML = items.length
+        ? `<span class="hint">⭐ 备选池（${items.length}）：</span>` + items.map((v) => `
+          <span class="meta-tag" style="border-color:#2b8a5a;color:#2b8a5a">⭐ ${esc(v.title)}${v.author ? ' · ' + esc(v.author) : ''}</span>
+          <button class="btn ghost sm" data-pool-del="${esc(v.id)}" title="移出备选池">✕</button>`).join(' ')
+        : '<span class="hint">备选池为空——从下方声音广场收录喜欢的音色。</span>';
+      box.querySelectorAll('[data-pool-del]').forEach((b) => {
+        b.onclick = async () => {
+          try {
+            await api(`/api/tts/pool/${b.dataset.poolDel}`, { method: 'DELETE' });
+            toast('已移出备选池', 'ok');
+            await refreshVoicePool();
+          } catch (e) { toast(e.message, 'err'); }
+        };
+      });
+    } catch { box.innerHTML = '<span class="hint">备选池加载失败</span>'; }
+  }
+
+  function bindVoiceMarket(projectId) {
+    refreshVoicePool();
+    let mkAudio = null;
+    let mkUrl = '';
+    const searchBtn = $('#wsMkSearch');
+    if (searchBtn) {
+      searchBtn.onclick = async () => {
+        searchBtn.disabled = true;
+        try {
+          const tags = [$('#wsMkGender')?.value, $('#wsMkAge')?.value].filter(Boolean)
+            .map((t) => '&tag=' + encodeURIComponent(t)).join('');
+          const r = await api(`/api/tts/market?sort_by=${$('#wsMkSort')?.value || 'trending'}&page_size=12&language=zh${tags}`);
+          const box = $('#wsMkResults');
+          const items = r.items || [];
+          box.innerHTML = items.length ? items.map((m) => `
+            <div class="ver-item" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span><b>${esc(m.title)}</b> <span class="muted">${esc(m.author || '')}</span></span>
+              ${m.like_count ? `<span class="meta-tag" title="点赞数">♥${m.like_count}</span>` : ''}
+              ${m.task_count ? `<span class="meta-tag" title="被使用次数">▶${m.task_count}</span>` : ''}
+              <span class="hint" style="max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc((m.tags || []).slice(0, 4).join(' · '))}</span>
+              <span class="spacer" style="flex:1"></span>
+              ${m.sample ? `<button class="btn ghost sm" data-mk-play="${esc(m.sample)}">▶ 试听</button>` : ''}
+              <button class="btn ghost sm" ${m.in_pool ? 'disabled' : ''} data-mk-add="${esc(m.id)}" data-title="${esc(m.title)}" data-author="${esc(m.author || '')}" data-likes="${m.like_count || 0}" data-tasks="${m.task_count || 0}" data-tags="${esc((m.tags || []).join(','))}">${m.in_pool ? '✓ 已在池' : '＋备选'}</button>
+            </div>`).join('') : '<span class="hint">没有找到结果</span>';
+          box.querySelectorAll('[data-mk-play]').forEach((b) => {
+            b.onclick = () => {
+              if (!mkAudio) mkAudio = new Audio();
+              const url = b.dataset.mkPlay;
+              if (mkUrl === url) { mkAudio.paused ? mkAudio.play().catch(() => {}) : mkAudio.pause(); return; }
+              mkUrl = url;
+              mkAudio.src = url;
+              mkAudio.play().catch(() => toast('试听加载失败', 'err'));
+            };
+          });
+          box.querySelectorAll('[data-mk-add]').forEach((b) => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                await api('/api/tts/pool', { method: 'POST', body: {
+                  id: b.dataset.mkAdd, title: b.dataset.title, author: b.dataset.author,
+                  like_count: Number(b.dataset.likes) || 0, task_count: Number(b.dataset.tasks) || 0,
+                  tags: (b.dataset.tags || '').split(',').filter(Boolean),
+                } });
+                toast('已加入备选池，可在「默认音色」下拉中选用', 'ok');
+                await refreshVoicePool();
+                const inPool = box.querySelector(`[data-mk-add="${b.dataset.mkAdd}"]`);
+                if (inPool) { inPool.disabled = true; inPool.textContent = '✓ 已在池'; }
+              } catch (e) { toast('加入失败：' + e.message, 'err'); b.disabled = false; }
+            };
+          });
+        } catch (e) {
+          toast('浏览失败：' + e.message, 'err');
+        } finally {
+          searchBtn.disabled = false;
+        }
       };
     }
   }
@@ -1255,6 +1359,12 @@
     return `<span class="meta-tag">🎵 ${esc(bgm.name)}${bgm.artist ? ' - ' + esc(bgm.artist) : ''}</span>
       <span class="meta-tag">${esc(bgm.level || '')}</span>
       <button class="btn ghost sm" id="wsBgmClear" title="清除 BGM 选择（本地缓存保留）">✕ 清除</button>`;
+  }
+
+  /* ---------------- v1.9 声音广场（音色备选池） ---------------- */
+  function renderVoicePool() {
+    // 项目详情不含池，使用接口懒加载（见 bindVoiceMarket）
+    return '<span class="hint" id="wsMkPoolHint">备选池加载中…</span>';
   }
 
   function fmtSecs(s) {

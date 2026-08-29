@@ -369,6 +369,9 @@ app.get('/api/settings', (req, res) => {
     music_api_base: settings.get('music_api_base', DEFAULT_SETTINGS.music_api_base),
     music_api_token_set: Boolean(settings.get('music_api_token', '')),
     music_level: settings.get('music_level', DEFAULT_SETTINGS.music_level),
+    // v1.9 声音广场
+    fish_web_token_set: Boolean(settings.get('fish_web_token', '')),
+    voice_pool_count: getVoicePool().length,
   });
 });
 
@@ -447,6 +450,13 @@ app.put('/api/settings', (req, res) => {
     settings.set('music_level', lv);
     changed.push('music_level');
   }
+  // v1.9 声音广场 Token
+  if (b.fish_web_token !== undefined) {
+    const t = String(b.fish_web_token).trim();
+    if (t) { settings.set('fish_web_token', t); changed.push('fish_web_token'); }
+    else if (b.fish_web_token === '') { settings.set('fish_web_token', ''); changed.push('fish_web_token'); }
+  }
+  if (b.clear_fish_web_token === true) { settings.set('fish_web_token', ''); changed.push('fish_web_token'); }
   if (b.clear_api_key === true) settings.set('api_key', '');
   if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
   log('info', `设置已更新: ${changed.join(', ') || '无'}`);
@@ -964,20 +974,96 @@ app.delete('/api/images/:id', (req, res) => {
 /* ---------- TTS 配音（Fish Audio） ---------- */
 
 // 常用音色快捷清单（缺省 default = 平台默认音色；其余为 Fish 音色库公开模型 id，供前端下拉）
+// 支持自定义音色：从 Fish 平台挑选音色后，将 {id, title, desc} 加入此处即可在前端选用
 const TTS_VOICES = [
   { id: 'default', title: '平台默认音色', desc: '不指定音色，用 Fish 平台默认声线（免费档推荐）' },
   { id: '6fc59d2b56cf402eb572934114c8d8aa', title: '仿真人·故事男声', desc: '成熟男声、情绪平稳，适合故事旁白（小满同款）' },
   { id: '59cb5986671546eaa6ca8ae6f29f6d22', title: '央视配音·男声', desc: '专业中年男声、权威清晰，适合纪录片式旁白' },
   { id: '918a8277663d476b95e2c4867da0f6a6', title: '沉稳男声·广播', desc: '有分量感的中低音，适合人生感悟类口播' },
   { id: 'bc9e47fd83a04010ad6617ed54b92ee3', title: '活力男声·解说', desc: '快节奏、有说服力，适合干货口播' },
+  { id: '7f92f8afb8ec43bf81429cc1c9199cb1', title: 'AD学姐·御姐女声', desc: '年轻御姐感、舒缓深沉，适合文艺旁白与情感叙事（用户自选）' },
 ];
 const TTS_MODELS = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1'];
 const TTS_MAX_TEXT = 8000;
 
-// 音色清单
+// 音色清单（v1.9：默认预设 + 声音广场备选池合并）
 app.get('/api/tts/voices', (req, res) => {
-  res.json({ voices: TTS_VOICES, models: TTS_MODELS });
+  const pool = getVoicePool().map((v) => ({
+    id: v.id,
+    title: '⭐ ' + v.title,
+    desc: `声音广场 · ${v.author || '社区'} · ♥${v.like_count || 0} · 用量${v.task_count || 0}`,
+  }));
+  res.json({ voices: [...TTS_VOICES, ...pool], models: TTS_MODELS, pool });
 });
+
+// v1.9 备选池读写
+function getVoicePool() {
+  try {
+    const arr = JSON.parse(settings.get('tts_voice_pool') || '[]');
+    return Array.isArray(arr) ? arr : [];
+  } catch {
+    return [];
+  }
+}
+app.get('/api/tts/pool', (req, res) => res.json({ items: getVoicePool() }));
+app.post('/api/tts/pool', (req, res) => {
+  const b = req.body || {};
+  const id = String(b.id || '').trim();
+  if (!/^[0-9a-f]{16,}$/i.test(id)) throw new ApiError(400, 'id 需为音色模型 id（32 位十六进制）');
+  const pool = getVoicePool();
+  if (pool.some((v) => v.id === id)) return res.json({ ok: true, pool, dedup: true });
+  pool.push({
+    id,
+    title: String(b.title || '').trim().slice(0, 80) || '未命名音色',
+    author: String(b.author || '').trim().slice(0, 60) || '',
+    like_count: Number(b.like_count) || 0,
+    task_count: Number(b.task_count) || 0,
+    tags: Array.isArray(b.tags) ? b.tags.slice(0, 8).map((t) => String(t).slice(0, 20)) : [],
+    added_at: Date.now(),
+  });
+  settings.set('tts_voice_pool', JSON.stringify(pool));
+  log('info', `音色备选池 +1：${pool[pool.length - 1].title}（共 ${pool.length} 条）`);
+  res.json({ ok: true, pool });
+});
+app.delete('/api/tts/pool/:id', (req, res) => {
+  const pool = getVoicePool();
+  const next = pool.filter((v) => v.id !== String(req.params.id));
+  if (next.length === pool.length) throw new ApiError(404, '备选池中无此音色');
+  settings.set('tts_voice_pool', JSON.stringify(next));
+  res.json({ ok: true, pool: next });
+});
+
+// v1.9 声音广场：浏览社区音色（代理 fish.audio /model/web，需 fish_web_token）
+const MARKET_SORTS = ['trending', 'task_count', 'created_at', 'title'];
+app.get('/api/tts/market', ah(async (req, res) => {
+  const token = settings.get('fish_web_token', '');
+  if (!token) throw new ApiError(400, '尚未配置声音广场 Token（fish_web_token）');
+  const sortBy = MARKET_SORTS.includes(String(req.query.sort_by)) ? String(req.query.sort_by) : 'trending';
+  const language = String(req.query.language || 'zh');
+  let tags = req.query.tag || [];
+  if (!Array.isArray(tags)) tags = [tags];
+  tags = tags.map((t) => String(t).trim()).filter(Boolean).slice(0, 4);
+  const r = await fishTts.listWebModels({
+    token, sortBy, language, tags,
+    pageNumber: Number(req.query.page_number) || 1,
+    pageSize: Math.min(Math.max(Number(req.query.page_size) || 12, 1), 30),
+  });
+  if (!r.ok) throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `声音广场请求失败（${r.status}）：${r.error}`);
+  const items = r.items
+    .filter((m) => m.type === 'tts' && m.state === 'trained')
+    .map((m) => ({
+      id: m._id,
+      title: m.title,
+      description: m.description || '',
+      author: m.author || '',
+      tags: Array.isArray(m.tags) ? m.tags : [],
+      like_count: Number(m.like_count) || 0,
+      task_count: Number(m.task_count) || 0,
+      sample: Array.isArray(m.samples) && m.samples[0] ? m.samples[0].audio : null,
+      in_pool: getVoicePool().some((v) => v.id === m._id),
+    }));
+  res.json({ items, has_more: r.has_more });
+}));
 
 // 音频时长探测（ffprobe 不存在时返回 null 不阻塞）
 function probeDuration(filePath) {
@@ -1010,7 +1096,7 @@ app.post('/api/tts/generate', ah(async (req, res) => {
     if (!projects.shots(projectId).some((s) => s.id === shotId)) throw new ApiError(404, '镜头不存在（或不属于该项目）');
   }
   const effKind = b.kind === undefined && shotId !== null ? 'shot' : kind;
-  const voice = TTS_VOICES.some((v) => v.id === String(b.voice || ''))
+  const voice = TTS_VOICES.some((v) => v.id === String(b.voice || '')) || getVoicePool().some((v) => v.id === String(b.voice || ''))
     ? String(b.voice) : settings.get('fish_voice', 'default');
   const speed = b.speed !== undefined ? Number(b.speed) : Number(settings.get('fish_speed', '1'));
   if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) throw new ApiError(400, 'speed 需在 0.5–2.0 之间');

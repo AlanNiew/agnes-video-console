@@ -579,6 +579,8 @@ const DEFAULT_SETTINGS = {
   music_api_base: '',          // v1.4 BGM：音乐接口地址（如 http://60.204.147.98:15001；留空则 BGM 功能不可用）
   music_api_token: '',         // v1.4 BGM：音乐接口 Token（Authorization 头，仅服务端使用）
   music_level: 'exhigh',       // v1.4 BGM：默认音质 standard/exhigh/lossless/hires
+  fish_web_token: '',          // v1.9 声音广场：fish.audio 网页端 Token（浏览社区音色；仅服务端使用）
+  tts_voice_pool: '[]',        // v1.9 音色备选池（JSON 数组：从声音广场收录的真实音色）
 };
 
 /* ---------------- 创作流水线（projects / texts / images） ---------------- */

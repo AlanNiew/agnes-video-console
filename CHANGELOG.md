@@ -2,6 +2,27 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.0] - 2026-08-30
+
+### Added
+
+- **声音广场（音色备选池）**：接入 fish.audio 社区音色市场——`GET /api/tts/market` 代理浏览（`sort_by` 热门趋势/最多使用/最新收录，语言/性别/年龄标签过滤），返回音色 id、点赞数、使用量与试听样例；工作台第⑤步新增「🎤 声音广场」面板：浏览 → ▶ 试听 → 「＋备选」加入**音色备选池**（`tts_voice_pool` 落库，池内音色自动合并进所有音色下拉，`POST/DELETE /api/tts/pool` 管理）。替代原 5 个固定预设音色。
+- **设置**：新增 `fish_web_token`（fish.audio 网页端 Token，仅服务端使用，浏览器只读 `fish_web_token_set` 布尔）。
+- mock e2e：备选池 CRUD、音色清单合并断言。
+
+## [1.8.2] - 2026-08-30
+
+### Fixed
+
+- **字幕换行**：libass 对无空格 CJK 长句不做自动换行（WrapStyle 0 亦无效），长台词字幕横向溢出画面。改为生成器主动预换行——按字号×可用宽度计算每行字数显式 `\N` 换行，行首标点自动回收到上一行行尾。《墨白》E01 实测发现。
+
+## [1.8.1] - 2026-08-30
+
+### Added
+
+- **响度测差补偿**：单遍 loudnorm 在稀疏人声内容上会欠校准（实测 -19 LUFS）。渲染完成后 ebur128 探测综合响度，偏差 >1.5dB 时音轨直补（视频流免重编码），至多两轮至 -16±1.5。
+- **任务关联**：`POST /api/tasks` 支持可选 `project_id/shot_id`（校验归属）——图生视频产线（keyframe 直提任务）保留镜头溯源。
+
 ## [1.8.0] - 2026-08-29
 
 ### Added

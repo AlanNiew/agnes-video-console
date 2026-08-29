@@ -145,4 +145,28 @@ function collect(res) {
   });
 }
 
-module.exports = { synthesize, BASE_HOST, proxyConfig };
+/**
+ * 声音广场：浏览社区音色模型（v1.9）
+ * GET https://api.fish.audio/model/web?page_size=&page_number=&sort_by=trending|task_count|created_at&language=zh&tag=male&tag=young
+ * 认证：Authorization: Bearer <web token>（与 TTS API Key 不同，来自 fish.audio 网页端会话）
+ */
+async function listWebModels({ token, sortBy = 'trending', language = 'zh', tags = [], pageNumber = 1, pageSize = 20 }) {
+  const url = new URL('https://api.fish.audio/model/web');
+  url.searchParams.set('page_size', String(Math.min(Math.max(Number(pageSize) || 20, 1), 30)));
+  url.searchParams.set('page_number', String(Math.max(Number(pageNumber) || 1, 1)));
+  if (sortBy) url.searchParams.set('sort_by', String(sortBy));
+  if (language) url.searchParams.set('language', String(language));
+  for (const t of tags || []) if (t) url.searchParams.append('tag', String(t));
+  const res = await fetch(url, {
+    headers: { accept: 'application/json', authorization: 'Bearer ' + String(token || '') },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const j = await res.json().catch(() => null);
+  if (!res.ok || !j || !Array.isArray(j.items)) {
+    const detail = j && j.message ? j.message : `HTTP ${res.status}`;
+    return { ok: false, status: res.status, items: [], error: detail };
+  }
+  return { ok: true, items: j.items, has_more: Boolean(j.has_more) };
+}
+
+module.exports = { synthesize, listWebModels, BASE_HOST, proxyConfig };
