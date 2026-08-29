@@ -383,6 +383,28 @@ body {
 .shot-head { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .shot-title { flex: 1; min-width: 140px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; font-size: 13px; }
 .shot-card textarea { margin-top: 8px; }
+
+/* ---------- 新旧版本对比弹窗 ---------- */
+.compare-body { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.compare-col { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; display: flex; flex-direction: column; min-height: 220px; }
+.compare-col-new { border-color: var(--accent); }
+.compare-col-head { padding: 8px 12px; font-weight: 600; font-size: 13px; background: var(--bg-3); border-bottom: 1px solid var(--border); }
+.compare-text { padding: 10px 12px; overflow: auto; max-height: 46vh; font-size: 13px; line-height: 1.7; }
+.compare-text p { margin: 0 0 8px; }
+.compare-text .cmp-field { margin-bottom: 12px; }
+.compare-text .cmp-field b { display: block; margin-bottom: 4px; color: var(--accent); font-size: 12px; }
+.compare-text .cmp-field p { margin: 0; }
+
+/* ---------- 工作台步骤引导 ---------- */
+.ws-guide {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  margin: 12px 0 4px; padding: 10px 14px;
+  background: var(--bg-3); border: 1px solid var(--border); border-left: 3px solid var(--accent);
+  border-radius: 10px; font-size: 13px;
+}
+.ws-guide .spacer { flex: 1; }
+.steps .step { cursor: pointer; transition: border-color .15s, background .15s; }
+.steps .step:hover { border-color: var(--accent); }
 .mt { margin-top: 10px; }
 .muted { color: var(--text-dim); }
 

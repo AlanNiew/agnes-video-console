@@ -8,6 +8,7 @@ const fs = require('node:fs');
 const express = require('express');
 const { settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
+const fishTts = require('./fish-tts');
 const poller = require('./poller');
 const { createPipelineService } = require('./pipeline');
 const { log, recent: recentLogs } = require('./logger');
@@ -40,6 +41,7 @@ const V2_MODES = ['text', 'image', 'keyframes'];
 const ASPECT_RATIOS = ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16'];
 const SECONDS_OK = Array.from({ length: 9 }, (_, i) => String(i + 4)); // '4'..'12'
 const PROJECT_STATUSES = ['draft', 'copy_done', 'character_done', 'video_submitted'];
+const SCRIPT_KINDS = ['script', 'video_prompt', 'character_desc', 'scene_desc'];
 const SHOT_COUNTS = ['auto', '3', '5', '8'];   // 分镜生成可选镜头数
 const SHOT_MODES = ['reference', 'text'];      // 镜头模式（keyframe 为 M2+ 预留）
 const MAX_SHOTS = 20;                          // 每项目镜头数上限
@@ -362,6 +364,7 @@ app.get('/api/health', (req, res) => {
 // 获取设置（API Key 永远只返回掩码）
 app.get('/api/settings', (req, res) => {
   const key = settings.get('api_key', '');
+  const fish = settings.get('fish_api_key', '');
   res.json({
     api_key_set: Boolean(key),
     api_key_masked: key ? `${key.slice(0, 4)}****${key.slice(-4)}` : '',
@@ -370,6 +373,11 @@ app.get('/api/settings', (req, res) => {
     poll_interval_ms: Number(settings.get('poll_interval_ms', DEFAULT_SETTINGS.poll_interval_ms)),
     max_active_minutes: Number(settings.get('max_active_minutes', DEFAULT_SETTINGS.max_active_minutes)),
     submit_interval_ms: Number(settings.get('submit_interval_ms', DEFAULT_SETTINGS.submit_interval_ms)),
+    // TTS（Fish Audio）
+    fish_api_key_set: Boolean(fish),
+    fish_api_key_masked: fish ? `${fish.slice(0, 6)}****${fish.slice(-4)}` : '',
+    fish_voice: settings.get('fish_voice', DEFAULT_SETTINGS.fish_voice),
+    fish_speed: Number(settings.get('fish_speed', DEFAULT_SETTINGS.fish_speed)),
   });
 });
 
@@ -411,6 +419,23 @@ app.put('/api/settings', (req, res) => {
     if (!Number.isInteger(ms) || ms < 0 || ms > 300000) throw new ApiError(400, 'submit_interval_ms 需为 0–300000 的整数（0 = 连续提交）');
     settings.set('submit_interval_ms', String(ms));
     changed.push('submit_interval_ms');
+  }
+  // TTS 设置（Fish Audio）
+  if (b.fish_api_key !== undefined) {
+    const k = String(b.fish_api_key).trim();
+    if (k) { settings.set('fish_api_key', k); changed.push('fish_api_key'); }
+    else if (b.fish_api_key === '') { settings.set('fish_api_key', ''); changed.push('fish_api_key'); }
+  }
+  if (b.clear_fish_api_key === true) { settings.set('fish_api_key', ''); changed.push('fish_api_key'); }
+  if (b.fish_voice !== undefined) {
+    const v = String(b.fish_voice).trim().slice(0, 100);
+    if (v) { settings.set('fish_voice', v); changed.push('fish_voice'); }
+  }
+  if (b.fish_speed !== undefined) {
+    const sp = Number(b.fish_speed);
+    if (!Number.isFinite(sp) || sp < 0.5 || sp > 2) throw new ApiError(400, 'fish_speed 需在 0.5–2.0 之间');
+    settings.set('fish_speed', String(sp));
+    changed.push('fish_speed');
   }
   if (b.clear_api_key === true) settings.set('api_key', '');
   if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
@@ -535,30 +560,31 @@ function parseLLMJson(text) {
   return null;
 }
 
-/** 文案生成系统提示词：严格输出结构化 JSON */
-const SCRIPT_SYSTEM_PROMPT = `你是资深影视创作者助理。根据用户的一句话创意，输出一份可直接用于 AI 出片的结构化文案。
-只输出一个 JSON 对象（不要 markdown 代码块、不要注释），字段如下：
+/** 文案生成系统提示词：严格输出结构化 JSON（mock 测试按「JSON 对象」契约标记识别） */
+const SCRIPT_SYSTEM_PROMPT = `你是资深影视导演兼 AI 视频提示词工程师。根据用户创意，产出可直接驱动 AI 视频生成的专业文案。
+只输出一个 JSON 对象（不要 markdown 代码块、不要注释、不要任何解释），字段如下：
 {
-  "script": "故事梗概，80~150 字，交代人物、目标、冲突与氛围",
-  "video_prompt": "视频生成提示词，中文，按顺序描述：主体与场景→动作与变化→镜头语言→视觉风格→声音与节奏；若后续会引用角色图，请以\\"以 <Picture 1> 中的角色为参考，保持其外观一致\\"开头或包含该要求；长度 80~180 字",
-  "character_desc": "主角外观设定，适合生成角色立绘：性别年龄、发型发色、五官气质、服装配色、身材体型、有无配饰，100 字内",
-  "scene_desc": "主要场景描述：环境类型、时间光线、色调氛围，80 字内"
-}`;
+  "script": "故事梗概，100~150 字。结构：一句话交代主角与目标 → 两句冲突与转折 → 一句情绪落点。必须用具象画面与动作叙述，禁止「展现了」「体现了」这类抽象概括",
+  "video_prompt": "视频生成提示词，150~220 字，六段式按序书写：①主体与场景（谁、在哪、外观关键特征）②动作与变化（2~3 个有先后顺序的连续动作）③镜头语言（景别：特写/中景/全景 + 运镜：推/拉/摇/移/跟 + 转场方式）④光线与色调（时段、光源方向、色温冷暖）⑤视觉风格与画质（写实/胶片/动漫等 + 高细节、电影感等关键词）⑥声音与节奏（环境声、关键音效点、节奏快慢）。必须以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头。每句都要具体可拍摄，禁止堆砌抽象形容词",
+  "character_desc": "主角外观设定（供 AI 角色立绘生成），120 字内，必含：性别年龄、发型发色、五官特征、表情气质、服装款式与颜色、体型、有辨识度的配饰。不要写与场景、剧情相关的内容",
+  "scene_desc": "主场景描述，100 字内：地点类型、时段与光源、天气、色调氛围、一处标志性陈设或地物"
+}
+自洽性要求：character_desc 与 video_prompt 中的角色外观一致；scene_desc 与 script 的时空一致；video_prompt 的动作量与目标时长匹配（5 秒最多 2~3 个动作）。`;
 
 /** 分镜生成系统提示词：输出 shots 数组的结构化 JSON（mock 测试按 "shots" 契约标记识别） */
-const STORYBOARD_SYSTEM_PROMPT = `你是资深影视分镜师。根据用户的一句话创意，把影片拆解为多个连续镜头的分镜脚本。
-只输出一个 JSON 对象（不要 markdown 代码块、不要注释），字段如下：
+const STORYBOARD_SYSTEM_PROMPT = `你是资深影视分镜师。把用户的创意拆解为节奏完整、镜头间可无缝衔接的分镜脚本。
+只输出一个 JSON 对象（不要 markdown 代码块、不要注释），结构如下：
 {
   "shots": [
     {
       "seq": 1,
-      "title": "镜头标题，10 字内，概括本镜头画面",
-      "video_prompt": "该镜头的视频生成提示词，中文 80~150 字，按顺序描述：主体与场景→动作与变化→镜头语言→视觉风格→声音与节奏；必须以\\"以 <Picture 1> 中的角色为参考，保持其外观一致\\"开头以保持角色一致",
+      "title": "镜头标题，8 字内，格式如「开场·麦田全景」「转折·回眸特写」",
+      "video_prompt": "该镜头的视频生成提示词，150~200 字，六段式按序书写：①景别与运镜（如：大全景，镜头缓慢推进）②主体与动作（角色在做什么，动作设计需能自然衔接下一镜）③环境与细节（具体可拍的地物、道具）④光线与色调（时段、光源方向、色温）⑤视觉风格（全片统一的关键词）⑥声音与节奏。必须以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头",
       "seconds": "5"
     }
   ]
 }
-要求：镜头之间动作与镜头语言连贯，覆盖从开场到收尾的完整叙事；seconds 只能是 "4"~"12" 的字符串；镜头数量遵循用户指定数量（未指定则按叙事需要 3~8 个）。`;
+分镜节奏要求：第一镜负责建立时空（交代环境与主角出场），中间镜头递进冲突或细节，最后一镜收束情绪；相邻镜头的动作与视线方向连贯（遵守 180° 轴线，不越轴）；全片视觉风格关键词完全一致；seconds 只能是 "4"~"12" 的字符串；动作量与该镜时长匹配（5 秒最多 2~3 个动作）；镜头数量遵循用户指定数量（未指定则按叙事需要 3~8 个）。`;
 
 /** 下载远程图片到本地 artifacts 做永久备份（失败不阻塞） */
 async function downloadArtifact(remoteUrl) {
@@ -748,19 +774,34 @@ app.post('/api/llm/script', ah(async (req, res) => {
     character_desc: String(parsed.character_desc || '').trim(),
     scene_desc: String(parsed.scene_desc || '').trim(),
   };
-  // 落库到项目（若指定），每个 kind 最新版本自动选中
+  // 落库到项目（若指定）。auto_select=false 时新版只落库不选中：
+  // 前端弹「新旧对比」窗，由用户决定采用（再调 select-text）还是保留当前版本
+  const autoSelect = b.auto_select === undefined ? true : Boolean(b.auto_select);
   let texts = null;
+  let newTextIds = null;
+  let previous = null;
   if (b.project_id) {
-    for (const kind of ['script', 'video_prompt', 'character_desc', 'scene_desc']) {
+    if (!autoSelect) {
+      previous = {};
+      newTextIds = {};
+      for (const kind of SCRIPT_KINDS) {
+        const cur = projects.selectedText(b.project_id, kind)
+          || projects.texts(b.project_id).find((t) => t.kind === kind)
+          || null;
+        if (cur) previous[kind] = { id: cur.id, content: cur.content };
+      }
+    }
+    for (const kind of SCRIPT_KINDS) {
       if (!result[kind]) continue;
       const tid = projects.addText({ project_id: b.project_id, kind, content: result[kind], model: LLM_MODEL });
-      projects.selectText(tid, kind, b.project_id);
+      if (autoSelect) projects.selectText(tid, kind, b.project_id);
+      else newTextIds[kind] = tid;
     }
-    projects.update(b.project_id, { status: 'copy_done' });
+    if (autoSelect) projects.update(b.project_id, { status: 'copy_done' });
     texts = projects.texts(b.project_id);
-    log('info', `项目 #${b.project_id} 文案生成完成`);
+    log('info', `项目 #${b.project_id} 文案生成完成${autoSelect ? '' : '（待用户确认采用）'}`);
   }
-  res.json({ parsed: true, result, texts, model: r.data?.model || LLM_MODEL });
+  res.json({ parsed: true, result, texts, new_text_ids: newTextIds, previous, model: r.data?.model || LLM_MODEL });
 }));
 
 // 创意 → 分镜脚本（M2：多镜头 storyboard；整体版本落 project_texts.kind=storyboard，工作副本落 shots）
@@ -815,71 +856,205 @@ app.post('/api/llm/storyboard', ah(async (req, res) => {
   }
   let shotsOut = null;
   let texts = null;
+  // auto_select=false：仅落 storyboard 版本，不选中、不重建 shots —— 前端弹对比窗，
+  // 用户「采用新版」时调 /storyboard/apply（选中 + 重建），「保留当前」则无副作用
+  const autoSelect = b.auto_select === undefined ? true : Boolean(b.auto_select);
   if (b.project_id) {
-    // storyboard 整体版本落库（可回溯/选用历史），shots 工作副本整体重建
     const content = JSON.stringify({ shots: normalized });
     const tid = projects.addText({ project_id: b.project_id, kind: 'storyboard', content, model: LLM_MODEL });
-    projects.selectText(tid, 'storyboard', b.project_id);
-    projects.replaceShots(b.project_id, normalized);
-    shotsOut = projects.shots(b.project_id);
-    texts = projects.texts(b.project_id);
-    log('info', `项目 #${b.project_id} 分镜生成完成（${normalized.length} 个镜头）`);
+    if (autoSelect) {
+      projects.selectText(tid, 'storyboard', b.project_id);
+      projects.replaceShots(b.project_id, normalized);
+      shotsOut = projects.shots(b.project_id);
+      texts = projects.texts(b.project_id);
+      log('info', `项目 #${b.project_id} 分镜生成完成（${normalized.length} 个镜头）`);
+    } else {
+      shotsOut = normalized;
+      texts = projects.texts(b.project_id);
+      log('info', `项目 #${b.project_id} 分镜生成待确认（新版本 #${tid}，${normalized.length} 个镜头）`);
+      return res.json({ parsed: true, shots: shotsOut, current_shots: projects.shots(b.project_id), text_id: tid, auto_selected: false, texts, model: r.data?.model || LLM_MODEL });
+    }
   } else {
     shotsOut = normalized;
   }
-  res.json({ parsed: true, shots: shotsOut, texts, model: r.data?.model || LLM_MODEL });
+  res.json({ parsed: true, shots: shotsOut, auto_selected: true, texts, model: r.data?.model || LLM_MODEL });
 }));
 
 /* ---------- 图片 ---------- */
 
-// 图片生成（文生图 / 图生图，同步）
+// 图片生成（文生图 / 图生图，同步；count 支持 1/2/4 张并行，供挑选种子图）
 app.post('/api/images/generate', ah(async (req, res) => {
-  const { payload, prompt, size, ratio, inputImages } = buildImagePayload(req.body);
+  const { payload, prompt, size, ratio } = buildImagePayload(req.body);
   const b = req.body || {};
   const kind = ['character', 'scene'].includes(b.kind) ? b.kind : 'character';
+  const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
   if (b.project_id !== undefined && !projects.get(b.project_id)) throw new ApiError(404, '项目不存在');
   const apiKey = settings.get('api_key', '');
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
-  let r;
-  try {
-    r = await agnes.generateImage({
+  // 并行生成 count 张；多张时部分失败不阻塞成功者
+  const settled = await Promise.allSettled(
+    Array.from({ length: count }, () => agnes.generateImage({
       apiKey,
       baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
       payload,
-    });
-  } catch (e) {
-    throw new ApiError(504, `图片生成超时或网络异常（${e.message}）`);
+    }))
+  );
+  const remoteUrls = [];
+  for (const s of settled) {
+    if (s.status !== 'fulfilled' || !s.value.ok) continue;
+    const u = safeUrl(s.value.data?.data?.[0]?.url);
+    if (u) remoteUrls.push(u);
   }
-  if (!r.ok) {
-    const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `图片生成失败（${r.status}）：${String(detail).slice(0, 400)}`);
+  if (!remoteUrls.length) {
+    const detail = settled.find((s) => s.status === 'rejected')?.reason?.message
+      || (settled[0].status === 'fulfilled'
+        ? (settled[0].value.data?.error?.message || settled[0].value.raw || `HTTP ${settled[0].value.status}`)
+        : '未知错误');
+    throw new ApiError(502, `图片生成失败：${String(detail).slice(0, 300)}`);
   }
-  const remoteUrl = r.data?.data?.[0]?.url;
-  if (!remoteUrl) throw new ApiError(502, '图片生成响应中未找到 url（请在 extra_body.response_format 指定 url）');
-  // 本地备份（不阻塞）
-  const backup = await downloadArtifact(remoteUrl);
-  let image = null;
-  if (b.project_id) {
-    const imgId = projects.addImage({
-      project_id: b.project_id, kind, prompt, remote_url: remoteUrl,
-      local_path: backup?.local_path || null, size, ratio, model: IMAGE_MODEL,
-    });
-    projects.selectImage(imgId, kind, b.project_id);
-    if (kind === 'character') projects.update(b.project_id, { status: 'character_done' });
-    image = projects.images(b.project_id).find((x) => x.id === imgId) || null;
-    log('info', `项目 #${b.project_id} ${kind === 'character' ? '角色图' : '场景图'}生成完成 #${imgId}`);
+  // 逐张落库（含本地备份下载），第一张成功图自动定稿
+  const results = [];
+  let first = null;
+  for (let i = 0; i < remoteUrls.length; i++) {
+    const remoteUrl = remoteUrls[i];
+    const backup = await downloadArtifact(remoteUrl);
+    let image = null;
+    if (b.project_id) {
+      const imgId = projects.addImage({
+        project_id: b.project_id, kind, prompt, remote_url: remoteUrl,
+        local_path: backup?.local_path || null, size, ratio, model: IMAGE_MODEL,
+      });
+      if (i === 0) {
+        projects.selectImage(imgId, kind, b.project_id);
+        if (kind === 'character') projects.update(b.project_id, { status: 'character_done' });
+      }
+      image = projects.images(b.project_id).find((x) => x.id === imgId) || null;
+    }
+    const item = { remote_url: remoteUrl, local_url: backup?.local_url || null, size, ratio, image };
+    results.push(item);
+    if (i === 0) first = item;
   }
+  const failed = count - remoteUrls.length;
+  log('info', `图片生成：成功 ${remoteUrls.length}/${count} 张${b.project_id ? `（项目 #${b.project_id} ${kind === 'character' ? '角色图' : '场景图'}）` : ''}${failed ? `，失败 ${failed} 张` : ''}`);
   res.json({
-    remote_url: remoteUrl,
-    local_url: backup?.local_url || null,
+    remote_url: first.remote_url,
+    local_url: first.local_url,
     size, ratio,
-    image,
+    image: first.image,
+    results,
+    failed,
   });
 }));
 
 // 删除项目图片记录
 app.delete('/api/images/:id', (req, res) => {
   if (!projects.removeImage(req.params.id)) throw new ApiError(404, '图片记录不存在');
+  res.json({ ok: true });
+});
+
+/* ---------- TTS 配音（Fish Audio） ---------- */
+
+// 常用音色快捷清单（缺省 default = 平台默认音色；其余为 Fish 音色库公开模型 id，供前端下拉）
+const TTS_VOICES = [
+  { id: 'default', title: '平台默认音色', desc: '不指定音色，用 Fish 平台默认声线（免费档推荐）' },
+  { id: '6fc59d2b56cf402eb572934114c8d8aa', title: '仿真人·故事男声', desc: '成熟男声、情绪平稳，适合故事旁白（小满同款）' },
+  { id: '59cb5986671546eaa6ca8ae6f29f6d22', title: '央视配音·男声', desc: '专业中年男声、权威清晰，适合纪录片式旁白' },
+  { id: '918a8277663d476b95e2c4867da0f6a6', title: '沉稳男声·广播', desc: '有分量感的中低音，适合人生感悟类口播' },
+  { id: 'bc9e47fd83a04010ad6617ed54b92ee3', title: '活力男声·解说', desc: '快节奏、有说服力，适合干货口播' },
+];
+const TTS_MODELS = ['s2.1-pro-free', 's2.1-pro', 's2-pro', 's1'];
+const TTS_MAX_TEXT = 8000;
+
+// 音色清单
+app.get('/api/tts/voices', (req, res) => {
+  res.json({ voices: TTS_VOICES, models: TTS_MODELS });
+});
+
+// 音频时长探测（ffprobe 不存在时返回 null 不阻塞）
+function probeDuration(filePath) {
+  try {
+    const { spawnSync } = require('node:child_process');
+    const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath], { encoding: 'utf8', timeout: 10000 });
+    if (r.status === 0 && r.stdout) {
+      const d = Number(r.stdout.trim());
+      return Number.isFinite(d) ? Math.round(d * 100) / 100 : null;
+    }
+    return null;
+  } catch { return null; }
+}
+
+// TTS 合成：{text, kind?, project_id?, voice?, speed?, model?} → mp3 落库
+app.post('/api/tts/generate', ah(async (req, res) => {
+  const b = req.body || {};
+  const text = String(b.text || '').trim();
+  if (!text) throw new ApiError(400, '请先输入配音文本 text');
+  if (text.length > TTS_MAX_TEXT) throw new ApiError(400, `text 长度需 ≤ ${TTS_MAX_TEXT}`);
+  const apiKey = settings.get('fish_api_key', '');
+  if (!apiKey) throw new ApiError(400, '尚未配置 Fish Audio API Key，请先在「设置」中填写（TTS 配音）');
+  const kind = ['narration', 'shot'].includes(b.kind) ? b.kind : 'narration';
+  const projectId = b.project_id === undefined || b.project_id === null ? null : Number(b.project_id);
+  if (projectId !== null && !projects.get(projectId)) throw new ApiError(404, '项目不存在');
+  const voice = TTS_VOICES.some((v) => v.id === String(b.voice || ''))
+    ? String(b.voice) : settings.get('fish_voice', 'default');
+  const speed = b.speed !== undefined ? Number(b.speed) : Number(settings.get('fish_speed', '1'));
+  if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) throw new ApiError(400, 'speed 需在 0.5–2.0 之间');
+  const model = TTS_MODELS.includes(String(b.model)) ? String(b.model) : 's2.1-pro-free';
+  const referenceId = voice === 'default' ? null : voice;
+  const voiceTitle = TTS_VOICES.find((v) => v.id === voice)?.title || (referenceId ? voice : '平台默认音色');
+
+  const r = await fishTts.synthesize({ apiKey, text, referenceId, model, speed, format: 'mp3' });
+  if (!r.ok) {
+    const detail = r.raw || `HTTP ${r.status}`;
+    if (projectId !== null) {
+      projects.addTts({ project_id: projectId, kind, text, model, reference_id: referenceId, voice_title: voiceTitle, error_message: String(detail).slice(0, 300) });
+    }
+    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `配音生成失败（${r.status}）：${String(detail).slice(0, 300)}`);
+  }
+  // 保存本地 artifacts
+  let localPath = null;
+  try {
+    fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+    const name = `tts${Date.now()}-${Math.random().toString(36).slice(2, 7)}.mp3`;
+    localPath = path.join(ARTIFACTS_DIR, name);
+    fs.writeFileSync(localPath, r.buf);
+  } catch {
+    localPath = null;
+  }
+  const duration = localPath ? probeDuration(localPath) : null;
+  let ttsRow = null;
+  if (projectId !== null) {
+    const tid = projects.addTts({
+      project_id: projectId, kind, text, model, reference_id: referenceId,
+      voice_title: voiceTitle, format: 'mp3', local_path: localPath,
+      duration, size: r.buf ? r.buf.length : null,
+    });
+    // 第一次生成成功自动选用（与角色图首张自动定稿一致）
+    projects.selectTts(tid, projectId);
+    ttsRow = projects.getTts(tid);
+  }
+  log('info', `TTS 配音生成成功 ${projectId ? `（项目 #${projectId} ${kind}）` : ''} 音色=${voiceTitle} 时长=${duration || '?'}s${localPath ? ' 已存本地' : ''}`);
+  res.json({
+    ok: true,
+    text, voice: referenceId, voice_title: voiceTitle, model,
+    duration, size: r.buf ? r.buf.length : null,
+    local_url: localPath ? '/artifacts/' + path.basename(localPath) : null,
+    tts: ttsRow,
+  });
+}));
+
+// 选用配音记录（同项目内 selected 互斥）
+app.post('/api/tts/:id/select', (req, res) => {
+  const t = projects.getTts(req.params.id);
+  if (!t) throw new ApiError(404, '配音记录不存在');
+  const projectId = Number(req.body?.project_id ?? t.project_id);
+  if (!projects.get(projectId)) throw new ApiError(404, '项目不存在');
+  projects.selectTts(t.id, projectId);
+  res.json({ ok: true, tts: projects.getTts(t.id) });
+});
+
+// 删除配音记录
+app.delete('/api/tts/:id', (req, res) => {
+  if (!projects.removeTts(req.params.id)) throw new ApiError(404, '配音记录不存在');
   res.json({ ok: true });
 });
 
@@ -908,6 +1083,7 @@ app.get('/api/projects/:id', (req, res) => {
     images: projects.images(p.id),
     shots: projects.shots(p.id),
     tasks: projects.tasks(p.id),
+    tts: projects.tts(p.id),   // TTS 配音记录
   });
 });
 

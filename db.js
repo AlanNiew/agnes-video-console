@@ -102,6 +102,24 @@ CREATE TABLE IF NOT EXISTS shots (       -- M2：分镜工作副本（逐镜头�
   updated_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_shots_project ON shots(project_id);
+
+CREATE TABLE IF NOT EXISTS project_tts (      -- TTS 配音记录（Fish Audio）
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  kind TEXT DEFAULT 'narration',              -- narration=整片旁白 | shot=单镜头台词
+  text TEXT NOT NULL,                          -- 合成原文
+  model TEXT,                                  -- tts 模型（s2.1-pro-free 等）
+  reference_id TEXT,                           -- 音色模型 id（Fish voice id，缺省=平台默认音色）
+  voice_title TEXT,                            -- 音色名（展示用）
+  format TEXT DEFAULT 'mp3',
+  local_path TEXT,                             -- 本地音频文件
+  duration REAL,                               -- 音频时长（秒）
+  size INTEGER,                                -- 字节数
+  error_message TEXT,                          -- 生成失败信息
+  selected INTEGER DEFAULT 0,                  -- 选用标记
+  created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ptts_project ON project_tts(project_id);
 `);
 
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
@@ -228,6 +246,19 @@ const stmts = {
   updateShotSeq: db.prepare('UPDATE shots SET seq = ?, updated_at = ? WHERE id = ? AND project_id = ?'),
   deleteShot: db.prepare('DELETE FROM shots WHERE id = ?'),
   deleteShotsByProject: db.prepare('DELETE FROM shots WHERE project_id = ?'),
+
+  /* TTS：配音记录 */
+  insertTts: db.prepare(`
+    INSERT INTO project_tts (project_id, kind, text, model, reference_id, voice_title, format,
+                             local_path, duration, size, error_message, selected, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `),
+  listProjectTts: db.prepare('SELECT * FROM project_tts WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
+  getTts: db.prepare('SELECT * FROM project_tts WHERE id = ?'),
+  unselectProjectTts: db.prepare('UPDATE project_tts SET selected = 0 WHERE project_id = ? AND id != ?'),
+  selectTts: db.prepare('UPDATE project_tts SET selected = 1 WHERE id = ?'),
+  deleteTts: db.prepare('DELETE FROM project_tts WHERE id = ?'),
+  deleteTtsByProject: db.prepare('DELETE FROM project_tts WHERE project_id = ?'),
 };
 
 /** 安全解析 JSON 列 */
@@ -458,6 +489,9 @@ const DEFAULT_SETTINGS = {
   poll_interval_ms: '2000',
   max_active_minutes: '20',
   submit_interval_ms: '60000', // M2：批量分镜提交间隔（0 = 连续提交）
+  fish_api_key: '',            // TTS：Fish Audio API Key（可选；不配置则配音功能不可用）
+  fish_voice: 'default',       // TTS：默认音色（default = 平台默认；或 Fish 音色库模型 id）
+  fish_speed: '1',             // TTS：默认语速 0.5–2.0
 };
 
 /* ---------------- 创作流水线（projects / texts / images） ---------------- */
@@ -526,10 +560,11 @@ const projects = {
   },
 
   remove(id) {
-    // 级联清理：文案、图片、镜头；视频任务保留但解除关联（事务保证原子完成）
+    // 级联清理：文案、图片、镜头、配音；视频任务保留但解除关联（事务保证原子完成）
     return tx(() => {
       stmts.deleteProjectTexts.run(Number(id));
       stmts.deleteProjectImages.run(Number(id));
+      stmts.deleteTtsByProject.run(Number(id));
       stmts.deleteShotsByProject.run(Number(id));
       stmts.detachProjectTasks.run(Number(id));
       return stmts.deleteProject.run(Number(id)).changes > 0;
@@ -669,6 +704,68 @@ const projects = {
       return true;
     });
   },
+
+  /* ---------------- TTS：配音记录 ---------------- */
+
+  tts(projectId) {
+    return stmts.listProjectTts.all(Number(projectId)).map(ttsRowToApi);
+  },
+
+  addTts({ project_id, kind, text, model, reference_id, voice_title, format, local_path, duration, size, error_message, selected }) {
+    const r = stmts.insertTts.run(
+      Number(project_id), kind || 'narration', String(text || ''), model || 's2.1-pro-free',
+      reference_id || null, voice_title || null, format || 'mp3',
+      local_path || null, duration === undefined || duration === null ? null : Number(duration),
+      size === undefined || size === null ? null : Number(size),
+      error_message || null,
+      selected ? 1 : 0,
+      Date.now()
+    );
+    return Number(r.lastInsertRowid);
+  },
+
+  getTts(id) {
+    return ttsRowToApi(stmts.getTts.get(Number(id)));
+  },
+
+  selectTts(id, projectId) {
+    tx(() => {
+      stmts.unselectProjectTts.run(Number(projectId), Number(id));
+      stmts.selectTts.run(Number(id));
+    });
+  },
+
+  removeTts(id) {
+    const row = stmts.getTts.get(Number(id));
+    if (!row) return false;
+    const removed = stmts.deleteTts.run(Number(id)).changes > 0;
+    // 尽力删除本地音频文件（失败不阻塞）
+    if (removed && row.local_path) {
+      try { fs.rmSync(row.local_path, { force: true }); } catch { /* ignore */ }
+    }
+    return removed;
+  },
 };
+
+function ttsRowToApi(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    project_id: Number(row.project_id),
+    kind: row.kind || 'narration',
+    text: row.text,
+    model: row.model,
+    reference_id: row.reference_id,
+    voice_title: row.voice_title,
+    format: row.format || 'mp3',
+    local_path: row.local_path,
+    local_url: row.local_path ? '/artifacts/' + path.basename(row.local_path) : null,
+    duration: row.duration === null || row.duration === undefined ? null : Number(row.duration),
+    size: row.size === null || row.size === undefined ? null : Number(row.size),
+    error_message: row.error_message,
+    selected: Boolean(row.selected),
+    created_at: Number(row.created_at),
+  };
+}
 
 module.exports = { db, settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };

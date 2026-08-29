@@ -27,8 +27,57 @@
   let batchBusy = false;      // M2：批量提交进行中
   let batchStop = false;      // M2：批量提交停止标记
   let batchHint = '';         // M2：批量提交进度提示
+  let currentStep = 1;        // 当前视区所在步骤（步骤条高亮跟随）
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  /** 分阶段等待提示：每秒检查耗时，把 .ws-loading-text 换成对应阶段文案；返回停止函数 */
+  function stageHints(selectors, stages) {
+    const start = Date.now();
+    const timer = setInterval(() => {
+      const el = selectors.map((s) => document.querySelector(s)).find(Boolean);
+      if (!el) return;
+      const sec = (Date.now() - start) / 1000;
+      let text = stages[0][1];
+      for (const [from, msg] of stages) if (sec >= from) text = msg;
+      el.textContent = text;
+    }, 1000);
+    return () => clearInterval(timer);
+  }
+  const STAGES_SCRIPT = [[0, '正在分析创意，梳理故事结构…'], [8, '正在撰写梗概与角色设定…'], [18, '即将完成，正在润色提示词…']];
+  const STAGES_STORY = [[0, '正在拆解叙事节奏…'], [8, '正在设计镜头与运镜…'], [18, '即将完成，正在对齐镜头衔接…']];
+  const STAGES_IMG = [[0, '正在生成候选图（约 10–90 秒），完成后在下方挑选…'], [30, '模型仍在绘制，请稍候…'], [60, '复杂画风耗时较长，马上好…']];
+
+  /** 滚动时步骤条高亮跟随（只绑定一次；点击跳转后短暂抑制，避免覆盖用户选择） */
+  let wsScrollBound = false;
+  let stepFollowUntil = 0;
+  function bindStepScrollFollow() {
+    if (wsScrollBound) return;
+    wsScrollBound = true;
+    let timer = null;
+    window.addEventListener('scroll', () => {
+      if (timer) return;
+      timer = setTimeout(() => {
+        timer = null;
+        if (!currentProjectId || $('#workspaceView')?.hidden) return;
+        if (Date.now() < stepFollowUntil) return;
+        const marks = [['#wsVideoSection', 4], ['#wsCharSection', 3], ['#wsCopySections', 2]];
+        let cur = 1;
+        const doc = document.documentElement;
+        // 页面已滚到底 → 最后一步；否则取「顶部越过视口上沿 300px 内」的最近区块
+        if (window.innerHeight + window.scrollY >= doc.scrollHeight - 60) {
+          cur = 4;
+        } else {
+          for (const [sel, n] of marks) {
+            const el = document.querySelector(sel);
+            if (el && el.getBoundingClientRect().top <= 300) { cur = n; break; }
+          }
+        }
+        currentStep = cur;
+        document.querySelectorAll('.steps .step').forEach((s) => s.classList.toggle('active', s.dataset.step === String(cur)));
+      }, 150);
+    }, { passive: true });
+  }
   let META = null; // 模型/画幅/时长元数据（GET /api/meta，与任务中心同源）
   async function getMeta() {
     if (!META) META = await api('/api/meta');
@@ -121,6 +170,10 @@
               <select id="npSeconds">${meta.seconds.map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)} 秒</option>`).join('')}</select>
             </div>
           </div>
+          <div class="field" style="display:flex;align-items:center;gap:8px">
+            <input type="checkbox" id="npAutoStoryboard" checked style="width:auto" />
+            <label for="npAutoStoryboard" style="margin:0;cursor:pointer">生成文案后自动生成分镜（一键到分镜，失败即停）</label>
+          </div>
         </div>
         <div class="modal-foot">
           <button class="btn ghost">取消</button>
@@ -141,11 +194,22 @@
           method: 'POST',
           body: { name, idea, style: $('#npStyle', overlay).value.trim(), aspect_ratio: $('#npAspect', overlay).value, seconds: $('#npSeconds', overlay).value },
         });
+        const autoStoryboard = $('#npAutoStoryboard', overlay)?.checked !== false;
         close();
         currentProjectId = p.id;
         await renderProject(p.id);
         toast('项目已创建，正在生成文案…', 'ok');
-        genScript(p.id); // 后台生成文案
+        // 一键到分镜：文案成功且勾选时自动接续生成分镜（失败即停）
+        genScript(p.id).then(async (okScript) => {
+          if (!okScript) {
+            toast('文案生成失败，已停止自动分镜（可在第②步手动重试）', 'warn');
+            return;
+          }
+          if (autoStoryboard) {
+            toast('文案完成，自动生成分镜…', 'ok');
+            await genStoryboard(p.id);
+          }
+        });
       } catch (e) {
         toast('创建失败：' + e.message, 'err');
         btn.disabled = false; btn.textContent = '创建并生成文案';
@@ -180,6 +244,16 @@
       4: tasks.length > 0, // M2 起 projects.status 退役，纯聚合推导
     };
     const stepState = (n) => (stepsDone[n] ? 'done' : '');
+    // 下一步引导：按当前产物状态给出唯一建议动作
+    const guideInfo = (() => {
+      if (!SCRIPT_FIELDS.some(([k]) => texts.some((t) => t.kind === k)) && !shots.length) {
+        return { label: '生成文案与分镜', target: '#wsCopySections' };
+      }
+      if (!shots.length) return { label: '把创意拆解为分镜', target: '#wsCopySections' };
+      if (!selChar) return { label: '生成并定稿一张角色图（视频将引用它保持角色一致）', target: '#wsCharSection' };
+      if (!tasks.length) return { label: '提交第一个镜头的视频任务', target: '#wsVideoSection' };
+      return { label: '全部就绪：可继续提交其他镜头，或在任务中心跟踪进度', target: null };
+    })();
 
     const ws = $('#workspaceView');
     ws.innerHTML = `
@@ -192,30 +266,35 @@
           <button class="btn ghost danger" id="wsDel" title="删除项目（关联的视频任务保留）">删除</button>
         </div>
         <div class="steps">
-          <div class="step ${stepState(1)} active"><span class="n">①</span>创意</div>
-          <div class="step ${stepState(2)}"><span class="n">②</span>文案与提示词</div>
-          <div class="step ${stepState(3)}"><span class="n">③</span>角色设定图</div>
-          <div class="step ${stepState(4)}"><span class="n">④</span>视频生成</div>
+          <div class="step ${stepState(1)} ${currentStep === 1 ? 'active' : ''}" data-step="1"><span class="n">①</span>创意</div>
+          <div class="step ${stepState(2)} ${currentStep === 2 ? 'active' : ''}" data-step="2"><span class="n">②</span>文案与提示词</div>
+          <div class="step ${stepState(3)} ${currentStep === 3 ? 'active' : ''}" data-step="3"><span class="n">③</span>角色设定图</div>
+          <div class="step ${stepState(4)} ${currentStep === 4 ? 'active' : ''}" data-step="4"><span class="n">④</span>视频生成</div>
         </div>
+        ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b></span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
 
         <!-- ② 文案与分镜 -->
         <div class="copy-sect">
           <h4>📝 文案与提示词 <span class="badge-selected" hidden id="wsCopyDone">已生成</span></h4>
-          ${scriptBusy ? '<div class="ws-loading"><span class="spinner"></span> 文本模型正在创作文案…</div>' : `
+          ${scriptBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在分析创意，梳理故事结构…</span></div>' : `
           <button class="btn primary sm" id="wsGenScript">✨ 生成 / 重新生成文案</button>
           <div class="hint mt">梗概、角色描述、场景描述一次生成；分镜在下方独立生成与编辑。</div>`}
           <div id="wsCopySections" class="mt">
-            ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> 文本模型正在生成分镜…</div>' : renderStoryboardArea(texts, shots, p, meta)}
+            ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta)}
             ${renderTextSections(texts, ['script', 'character_desc', 'scene_desc'])}
           </div>
         </div>
 
         <!-- ③ 角色设定 -->
-        <div class="copy-sect">
+        <div class="copy-sect" id="wsCharSection">
           <h4>🧑‍🎨 角色设定图 <span class="muted" style="font-weight:400">（参考图用于视频，减少角色幻觉）</span></h4>
           <div class="grid2">
             <div class="field"><label>角色外观描述（可手动调整）</label>
               <textarea id="wsCharDesc" rows="3">${esc((texts.find((t) => t.kind === 'character_desc' && t.selected) || texts.find((t) => t.kind === 'character_desc') || {}).content || p.idea || '')}</textarea>
+              <div class="row" style="margin-top:6px;display:flex;gap:8px;align-items:center">
+                <button class="btn ghost sm" id="wsOptimizeChar" title="用文本模型优化角色描述，优化后可对比选择是否采用">✨ AI 优化描述</button>
+                <span class="hint">是否用 AI 优化由你决定，优化后会先对比再采用。</span>
+              </div>
             </div>
             <div class="field">
               <label>画幅 / 分辨率档位</label>
@@ -223,15 +302,22 @@
                 <select id="wsImgRatio">${meta.image.ratios.map((a) => `<option value="${esc(a)}" ${a === '1:1' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
                 <select id="wsImgSize">${meta.image.sizes.map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
               </div>
-              ${imgGenBusy ? '<div class="ws-loading mt"><span class="spinner"></span> 图片生成中（约 10–60 秒）…</div>' : '<button class="btn primary sm mt" id="wsGenChar">🎨 生成角色图</button>'}
-              <div class="hint mt">点击图片定稿（绿色边框）；不满意可再生成。</div>
+              ${imgGenBusy
+                ? '<div class="ws-loading mt"><span class="spinner"></span> <span class="ws-loading-text">正在生成候选图（约 10–90 秒），完成后在下方挑选…</span></div>'
+                : `<div class="row mt" style="display:flex;gap:8px;align-items:center">
+                    <select id="wsImgCount" class="meta-tag" style="background:var(--bg)" title="一次生成的候选图数量">
+                      <option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option>
+                    </select>
+                    <button class="btn primary sm" id="wsGenChar">🎨 生成角色图</button>
+                  </div>`}
+              <div class="hint mt">生成多张时点击其一作为种子图（绿色边框定稿）；不满意可再生成。</div>
             </div>
           </div>
           <div class="img-wall mt" id="wsCharWall">${images.filter((x) => x.kind === 'character').map(imgCell).join('')}</div>
         </div>
 
         <!-- ④ 视频 -->
-        <div class="copy-sect">
+        <div class="copy-sect" id="wsVideoSection">
           <h4>🎬 发起视频任务</h4>
           <div class="video-assemble">
             <div class="ref-row">
@@ -258,9 +344,53 @@
           </div>
           ${`<div id="wsTaskList">${renderTaskList(tasks, shots)}</div>`}
         </div>
+
+        <!-- ⑤ 配音（Fish Audio TTS） -->
+        <div class="copy-sect" id="wsTtsSection">
+          <h4>🎙️ 配音（旁白 · Fish Audio TTS） <span class="muted" style="font-weight:400">可选：把文案/分镜变成人声旁白，混入成片</span></h4>
+          <div class="grid2">
+            <div class="field">
+              <label>配音文稿（可手动编辑；支持多句分段，每句一行）</label>
+              <textarea id="wsTtsText" rows="4" placeholder="粘贴要配音的文稿…">${esc(defaultTtsText(texts, shots))}</textarea>
+              <div class="row" style="margin-top:6px;display:flex;gap:8px;align-items:center">
+                <button class="btn ghost sm" id="wsTtsFillNarration" title="用选定分镜的旁白行填充">📖 从分镜填充旁白</button>
+                <button class="btn ghost sm" id="wsTtsFillScript" title="用选定故事梗概填充">✍️ 从故事梗概填充</button>
+                <span class="hint">每行一句；生成后逐句合成，第一句自动选用。</span>
+              </div>
+            </div>
+            <div class="field">
+              <label>音色 / 语速</label>
+              <div class="grid2">
+                <select id="wsTtsVoice"></select>
+                <input type="number" id="wsTtsSpeed" min="0.5" max="2" step="0.05" value="${esc(String(wsDefaultSpeed()))}" title="语速 0.5–2.0（旁白建议 0.9–1.0）" />
+              </div>
+              <div class="row mt" style="display:flex;gap:8px;align-items:center">
+                <button class="btn primary sm" id="wsTtsGen">🗣️ 生成配音</button>
+                <span class="hint" id="wsTtsHint"></span>
+              </div>
+              <div class="hint mt">配音为本地 mp3（存 data/artifacts），可在浏览器试听、选用；「下载」可拿去做后期混音。</div>
+            </div>
+          </div>
+          <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [])}</div>
+        </div>
       </div>`;
 
     $('#wsBack').onclick = () => { currentProjectId = null; renderList(); };
+    // 步骤条点击跳转 + 下一步引导
+    const stepTargets = { 1: '#wsCopySections', 2: '#wsCopySections', 3: '#wsCharSection', 4: '#wsVideoSection' };
+    ws.querySelectorAll('.step[data-step]').forEach((el) => {
+      el.onclick = () => {
+        currentStep = Number(el.dataset.step);
+        stepFollowUntil = Date.now() + 1500; // 滚动途中不让跟随逻辑覆盖点击选择
+        document.querySelectorAll('.steps .step').forEach((s) => s.classList.toggle('active', s === el));
+        document.querySelector(stepTargets[currentStep])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      };
+    });
+    const guideBtn = ws.querySelector('[data-guide-goto]');
+    if (guideBtn) {
+      guideBtn.onclick = () => document.querySelector(guideBtn.dataset.guideGoto)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+    bindStepScrollFollow();
     $('#wsDel').onclick = async () => {
       if (!confirm(`确认删除项目「${p.name}」？文案与角色图将一并删除，视频任务保留。`)) return;
       try {
@@ -277,6 +407,8 @@
     if (genScriptBtn && !scriptBusy) genScriptBtn.onclick = () => genScript(p.id);
     const genCharBtn = $('#wsGenChar');
     if (genCharBtn) genCharBtn.onclick = () => genCharacterImage(p.id);
+    const optCharBtn = $('#wsOptimizeChar');
+    if (optCharBtn) optCharBtn.onclick = () => optimizeCharDesc(p.id);
     const submitVideoBtn = $('#wsSubmitVideo');
     if (submitVideoBtn) submitVideoBtn.onclick = () => submitVideo(p.id);
     bindTextSectionEvents(p.id);
@@ -297,6 +429,161 @@
     }
     // 跳转任务中心
     bindGotoTaskLinks();
+    // TTS 配音事件
+    bindTtsEvents(p.id);
+  }
+
+  /* ---------------- TTS 配音（Fish Audio） ---------------- */
+  let wsSettingsCache = null;
+  function wsDefaultSpeed() {
+    return wsSettingsCache?.fish_speed ?? 1;
+  }
+  function defaultTtsText(texts, shots) {
+    // 优先：分镜已有旁白行（video_prompt 首段）→ 故事梗概
+    if (shots.length) {
+      const lines = shots
+        .map((s) => (s.title || '') + '。' + (s.video_prompt || '').split(/[。\n]/)[0])
+        .filter(Boolean);
+      if (lines.length) return lines.join('\n');
+    }
+    const script = (texts.find((t) => t.kind === 'script' && t.selected) || texts.find((t) => t.kind === 'script'));
+    return script ? script.content : '';
+  }
+
+  async function loadMetaVoices() {
+    let meta = META;
+    let voices = [];
+    try {
+      const r = await fetch('/api/tts/voices');
+      if (r.ok) { const j = await r.json(); voices = j.voices || []; }
+    } catch { /* ignore */ }
+    return voices;
+  }
+
+  async function bindTtsEvents(projectId) {
+    const genBtn = $('#wsTtsGen');
+    const voiceSel = $('#wsTtsVoice');
+    if (!genBtn || !voiceSel) return;
+    // 加载音色清单（含设置里的默认音色）
+    const voices = await loadMetaVoices();
+    let curVoice = 'default';
+    try {
+      const s = await api('/api/settings');
+      wsSettingsCache = s;
+      curVoice = s.fish_voice || 'default';
+    } catch { /* ignore */ }
+    if (voiceSel) {
+      voiceSel.innerHTML = voices
+        .map((v) => `<option value="${esc(v.id)}" ${v.id === curVoice ? 'selected' : ''}>${esc(v.title)}</option>`)
+        .join('');
+    }
+    // TTS 墙内按钮（试听/选用/删除）——事件委托
+    const wall = $('#wsTtsWall');
+    if (wall) {
+      wall.onclick = async (ev) => {
+        const playBtn = ev.target.closest('[data-tts-play]');
+        if (playBtn) {
+          ev.stopPropagation();
+          const url = playBtn.dataset.ttsPlay;
+          if (window.__audio?.preview) return window.__audio.preview(url, playBtn);
+          const au = playBtn._au || (playBtn._au = new Audio(url));
+          if (au.paused && !au.ended) au.play(); else { au.currentTime = 0; au.play(); }
+          return;
+        }
+        const selBtn = ev.target.closest('[data-tts-select]');
+        if (selBtn) {
+          ev.stopPropagation();
+          const item = selBtn.closest('[data-tts-id]');
+          const id = Number(item?.dataset.ttsId);
+          if (!id) return;
+          try {
+            await api(`/api/tts/${id}/select`, { method: 'POST', body: { project_id: projectId } });
+            toast('已选用该配音', 'ok');
+            if (currentProjectId === projectId) await renderProject(projectId);
+          } catch (e) { toast('选用失败：' + e.message, 'err'); }
+          return;
+        }
+        const delBtn = ev.target.closest('[data-tts-del]');
+        if (delBtn) {
+          ev.stopPropagation();
+          const item = delBtn.closest('[data-tts-id]');
+          const id = Number(item?.dataset.ttsId);
+          if (!id) return;
+          if (!confirm('删除该配音记录与本地音频？')) return;
+          try {
+            await api(`/api/tts/${id}`, { method: 'DELETE' });
+            toast('已删除配音', 'ok');
+            if (currentProjectId === projectId) await renderProject(projectId);
+          } catch (e) { toast('删除失败：' + e.message, 'err'); }
+        }
+      };
+    }
+    const fillN = $('#wsTtsFillNarration');
+    if (fillN) fillN.onclick = async () => {
+      const d = await api(`/api/projects/${projectId}`);
+      const ta = $('#wsTtsText');
+      if (ta) ta.value = defaultTtsText(d.texts || [], d.shots || []);
+      toast('已用分镜填充旁白文稿，可再编辑', 'ok');
+    };
+    const fillS = $('#wsTtsFillScript');
+    if (fillS) fillS.onclick = async () => {
+      const d = await api(`/api/projects/${projectId}`);
+      const s = (d.texts || []).find((t) => t.kind === 'script' && t.selected) || (d.texts || []).find((t) => t.kind === 'script');
+      const ta = $('#wsTtsText');
+      if (ta && s) ta.value = s.content;
+      toast('已用故事梗概填充', 'ok');
+    };
+    genBtn.onclick = () => genTts(projectId);
+  }
+
+  async function genTts(projectId) {
+    const ta = $('#wsTtsText');
+    const text = ta ? ta.value.trim() : '';
+    if (!text) { toast('请先输入配音文稿', 'err'); return; }
+    const voice = $('#wsTtsVoice')?.value || 'default';
+    const speed = Number($('#wsTtsSpeed')?.value || 1);
+    const genBtn = $('#wsTtsGen');
+    const hint = $('#wsTtsHint');
+    if (genBtn) { genBtn.disabled = true; genBtn.textContent = '生成中…'; }
+    if (hint) hint.textContent = '正在合成，可能需要 10–60 秒…';
+    try {
+      const r = await api('/api/tts/generate', {
+        method: 'POST',
+        body: { text, voice, speed, kind: 'narration', project_id: projectId },
+      });
+      toast(`配音已生成（${r.duration ?? '?'}s · ${r.voice_title || ''}）`, 'ok');
+      if (currentProjectId === projectId) await renderProject(projectId);
+    } catch (e) {
+      toast('配音生成失败：' + e.message, 'err');
+      if (hint) hint.textContent = '';
+    } finally {
+      if (genBtn) { genBtn.disabled = false; genBtn.textContent = '🗣️ 生成配音'; }
+    }
+  }
+
+  function renderTtsWall(list) {
+    if (!list || !list.length) return '<div class="hint">还没有配音记录。填入文稿后点「🗣️ 生成配音」。</div>';
+    return `
+      <div class="tts-wall">
+        ${list.map((t) => `
+          <div class="tts-item ${t.selected ? 'selected' : ''}" data-tts-id="${t.id}" style="border:1px solid ${t.selected ? 'var(--accent,#2b8a5a)' : 'var(--line,#e3e3e3)'};border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${t.selected ? 'var(--bg-soft,#f2f8f4)' : 'transparent'}">
+            <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span class="meta-tag">${esc(t.voice_title || t.reference_id || '默认音色')}</span>
+              <span class="meta-tag">${esc(t.model || '')}</span>
+              <span class="meta-tag">${t.duration != null ? t.duration + 's' : '—'}</span>
+              <span class="meta-tag">${t.size != null ? Math.round(t.size / 1024) + 'KB' : '—'}</span>
+              ${t.selected ? '<span class="badge-selected">✓ 选用</span>' : ''}
+              <span class="spacer" style="flex:1"></span>
+              ${t.local_url ? `<button class="btn ghost sm" data-tts-play="${esc(t.local_url)}">▶ 试听</button>` : ''}
+              ${!t.selected && t.local_url ? '<button class="btn ghost sm" data-tts-select>选用</button>' : ''}
+              <button class="btn ghost sm danger" data-tts-del title="删除记录与本地音频">删除</button>
+            </div>
+            <div style="margin-top:6px;color:var(--muted,#888);font-size:12px">${esc(t.text || '')}</div>
+            ${t.error_message ? `<div style="margin-top:4px;color:var(--danger,#c0392b);font-size:12px">失败：${esc(t.error_message)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+      <div class="hint mt">选用标记用于成片后期混音识别（第一句自动选用；最多同步一段旁白）。</div>`;
   }
 
   /* 任务列表局部刷新：只更新 #wsTaskList，不打断文案/描述编辑 */
@@ -308,6 +595,45 @@
       box.innerHTML = renderTaskList(d.tasks || [], d.shots || []);
       bindGotoTaskLinks();
     } catch { /* 静默：下次轮询自愈 */ }
+  }
+
+  /* 角色描述 AI 优化（用户自主选择是否采用，优化后先对比） */
+  const CHAR_OPTIMIZE_PROMPT = '你是角色设定师。把用户的角色描述优化为适合 AI 角色立绘生成的设定文本，100 字内，必含要素：性别年龄、发型发色、五官特征、表情气质、服装款式与颜色、体型、有辨识度的配饰。规则：不添加用户未提及的职业、背景等设定；保持原描述的核心特征不变；只输出设定文本本身，不要任何解释或前缀。';
+
+  async function optimizeCharDesc(projectId) {
+    const ta = $('#wsCharDesc');
+    if (!ta) return;
+    const cur = ta.value.trim();
+    if (!cur) { toast('请先填写角色外观描述', 'err'); return; }
+    const btn = $('#wsOptimizeChar');
+    if (btn) { btn.disabled = true; btn.textContent = '优化中…'; }
+    try {
+      const r = await api('/api/llm/chat', {
+        method: 'POST',
+        body: { system: CHAR_OPTIMIZE_PROMPT, messages: [{ role: 'user', content: cur }], temperature: 0.7 },
+      });
+      const adopt = () => {
+        ta.value = r.content;
+        toast('已采用优化描述（需点「生成角色图」才会生效，或手动保存到文案）', 'ok');
+      };
+      if (window.__ui?.compare) {
+        window.__ui.compare({
+          title: '角色描述优化对比',
+          oldLabel: '当前描述',
+          newLabel: 'AI 优化后',
+          oldText: cur,
+          newText: r.content,
+          onAdopt: adopt,
+          onKeep: () => toast('已保留当前描述', 'ok'),
+        });
+      } else {
+        adopt();
+      }
+    } catch (e) {
+      toast('优化失败：' + e.message, 'err');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '✨ AI 优化描述'; }
+    }
   }
 
   /* ---------------- M2：第④步镜头提交与批量 ---------------- */
@@ -564,11 +890,16 @@
 
   async function genStoryboard(projectId) {
     if (storyBusy) return; // 防重入
-    if (currentShotCount > 0 && !confirm('重新生成分镜将覆盖当前镜头列表（历史版本保留，可选用恢复），继续？')) return;
+    if (currentShotCount > 0 && !confirm('重新生成分镜：将先与当前分镜对比，由你选择采用（历史版本保留），继续？')) return;
     storyBusy = true;
     await renderProject(projectId);
+    let stopHints = null;
     try {
-      const { project } = await api(`/api/projects/${projectId}`);
+      stopHints = stageHints(['#wsCopySections .ws-loading-text'], STAGES_STORY);
+      const d = await api(`/api/projects/${projectId}`);
+      const project = d.project;
+      const oldShots = d.shots || [];
+      const hasOld = oldShots.length > 0;
       const r = await api('/api/llm/storyboard', {
         method: 'POST',
         body: {
@@ -578,14 +909,45 @@
           seconds: project.seconds,
           shot_count: $('#wsShotCount')?.value || 'auto',
           project_id: projectId,
+          auto_select: !hasOld,
         },
       });
-      if (!r.parsed) toast('模型未按结构化输出分镜（原始输出已保存到脚本区供参考）', 'warn');
-      else toast(`分镜已生成（${r.shots?.length ?? 0} 个镜头）`, 'ok');
+      if (!r.parsed) {
+        toast('模型未按结构化输出分镜（原始输出已保存到脚本区供参考）', 'warn');
+        return;
+      }
+      if (!hasOld) {
+        toast(`分镜已生成（${r.shots?.length ?? 0} 个镜头）`, 'ok');
+        return;
+      }
+      // 新旧分镜对比：采用 = 选中新版本并重建镜头；保留 = 新版本仅入历史
+      const renderShots = (arr) => (arr || [])
+        .map((s, i) => `<div class="cmp-field"><b>镜头 ${esc(String(s.seq ?? i + 1))}${s.title ? ` · ${esc(s.title)}` : ''}</b><p>${esc(s.video_prompt || '')}</p></div>`)
+        .join('');
+      window.__ui.compare({
+        title: '新生成分镜与当前分镜对比',
+        oldLabel: `当前分镜（${oldShots.length} 镜）`,
+        newLabel: `新生成（${r.shots?.length ?? 0} 镜）`,
+        oldText: oldShots,
+        newText: r.shots,
+        renderText: renderShots,
+        onAdopt: async () => {
+          try {
+            await api(`/api/projects/${projectId}/storyboard/apply`, { method: 'POST', body: { text_id: r.text_id } });
+            toast('已采用新分镜', 'ok');
+          } catch (e) { toast(e.message, 'err'); }
+          if (currentProjectId === projectId) await renderProject(projectId);
+        },
+        onKeep: async () => {
+          toast('已保留当前分镜（新版本已存入历史，可随时选用）', 'ok');
+          if (currentProjectId === projectId) await renderProject(projectId);
+        },
+      });
     } catch (e) {
       toast('分镜生成失败：' + e.message, 'err');
     } finally {
       storyBusy = false;
+      stopHints?.();
       if (currentProjectId === projectId) await renderProject(projectId);
     }
   }
@@ -730,25 +1092,78 @@
 
   /* ---------------- 动作：生成文案 / 角色图 / 提交视频 ---------------- */
 
+  const SCRIPT_FIELDS = [
+    ['script', '故事梗概'],
+    ['video_prompt', '视频提示词'],
+    ['character_desc', '角色外观'],
+    ['scene_desc', '场景描述'],
+  ];
+
+  /** 生成文案：首次生成直接采用；已有文案时落库不选中，弹对比窗由用户二选一。返回是否成功 */
   async function genScript(projectId) {
-    if (scriptBusy) return; // 防双击并发（两次 LLM 调用 + 两条重复版本）
+    if (scriptBusy) return false; // 防双击并发（两次 LLM 调用 + 两条重复版本）
     scriptBusy = true;
     await renderProject(projectId);
+    let stopHints = null;
     try {
-      const { project } = await api(`/api/projects/${projectId}`);
+      stopHints = stageHints(['#wsCopySections .ws-loading-text'], STAGES_SCRIPT);
+      const { project, texts } = await api(`/api/projects/${projectId}`);
+      const hasOld = SCRIPT_FIELDS.some(([k]) => (texts || []).some((t) => t.kind === k));
       const r = await api('/api/llm/script', {
         method: 'POST',
-        body: { idea: project.idea, style: project.style, aspect_ratio: project.aspect_ratio, seconds: project.seconds, project_id: projectId },
+        body: {
+          idea: project.idea, style: project.style,
+          aspect_ratio: project.aspect_ratio, seconds: project.seconds,
+          project_id: projectId, auto_select: !hasOld,
+        },
       });
       if (!r.parsed) {
-        toast('模型未按结构化输出（已保存到脚本区供手动采用）', 'warn');
-      } else {
-        toast('文案生成完成', 'ok');
+        toast('模型未按结构化输出（原始内容已返回供手动采用）', 'warn');
+        return false;
       }
+      if (!hasOld) {
+        toast('文案生成完成', 'ok');
+        return true;
+      }
+      // 新旧对比：采用新版 = 逐字段选中新生成的版本；保留 = 旧版本不受影响
+      const newMap = {};
+      const oldMap = {};
+      for (const [k] of SCRIPT_FIELDS) {
+        newMap[k] = r.result?.[k] || '';
+        oldMap[k] = r.previous?.[k]?.content || '';
+      }
+      const renderSide = (map) => SCRIPT_FIELDS
+        .map(([k, label]) => `<div class="cmp-field"><b>${esc(label)}</b><p>${esc(map[k] || '（无）')}</p></div>`)
+        .join('');
+      window.__ui.compare({
+        title: '新生成文案与当前文案对比',
+        oldLabel: '当前使用中',
+        newLabel: '新生成',
+        oldText: oldMap,
+        newText: newMap,
+        renderText: renderSide,
+        onAdopt: async () => {
+          try {
+            for (const [k] of SCRIPT_FIELDS) {
+              const tid = r.new_text_ids?.[k];
+              if (tid) await api(`/api/projects/${projectId}/select-text`, { method: 'POST', body: { text_id: tid } });
+            }
+            toast('已采用新生成的文案', 'ok');
+          } catch (e) { toast(e.message, 'err'); }
+          if (currentProjectId === projectId) await renderProject(projectId);
+        },
+        onKeep: async () => {
+          toast('已保留当前文案（新版本已存入历史，可随时选用）', 'ok');
+          if (currentProjectId === projectId) await renderProject(projectId);
+        },
+      });
+      return true;
     } catch (e) {
       toast('文案生成失败：' + e.message, 'err');
+      return false;
     } finally {
       scriptBusy = false;
+      stopHints?.();
       // 用户可能已离开该项目视图，不强行拉回
       if (currentProjectId === projectId) await renderProject(projectId);
     }
@@ -760,22 +1175,27 @@
     if (!desc) { toast('请先填写角色外观描述', 'err'); return; }
     imgGenBusy = true;
     await renderProject(projectId);
+    let stopHints = null;
     try {
-      await api('/api/images/generate', {
+      stopHints = stageHints(['#wsCharSection .ws-loading-text'], STAGES_IMG);
+      const r = await api('/api/images/generate', {
         method: 'POST',
         body: {
           prompt: `角色立绘：${desc}。全身或半身构图，干净背景，正面站立，电影级写实，高细节`,
           size: $('#wsImgSize').value,
           ratio: $('#wsImgRatio').value,
+          count: Number($('#wsImgCount')?.value) || 1,
           project_id: projectId,
           kind: 'character',
         },
       });
-      toast('角色图已生成', 'ok');
+      const n = r.results?.length ?? 1;
+      toast(`已生成 ${n} 张候选图${r.failed ? `（${r.failed} 张失败）` : ''}，点击图片定稿种子图`, 'ok');
     } catch (e) {
       toast('图片生成失败：' + e.message, 'err');
     } finally {
       imgGenBusy = false;
+      stopHints?.();
       if (currentProjectId === projectId) await renderProject(projectId);
     }
   }

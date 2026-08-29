@@ -31,7 +31,9 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 - 🔁 One-click retry for failed tasks (keeps history for audit)
 - ▶️ Inline video preview & download for completed tasks
 - 🔍 Full audit: request JSON, create response, last poll response, poll count
-- ✍️ AI prompt optimizer in the new-task form (LLM rewrites your raw description)
+- ✍️ AI prompt optimizer in the new-task form with side-by-side before/after comparison — you decide whether to adopt; the workspace character description supports the same flow
+- 🖼️ Multi-candidate images: generate 1–4 character/scene images at once and pick one as the seed image
+- 🧭 Flow guidance: clickable step bar that follows scrolling, a dynamic "next step" hint bar, staged waiting messages, and one-click idea-to-storyboard on project creation
 - 🔐 API key stays server-side (SQLite), browser only sees a masked value; binds to `127.0.0.1` only
 - 🧾 Built-in log panel
 - ✅ End-to-end tests with a local fake Agnes API (no real key needed; 40 assertions)

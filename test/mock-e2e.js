@@ -538,6 +538,48 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await api('PUT', '/api/settings', { submit_interval_ms: 60000 }); // 还原默认，避免影响后续
   ok('设置：submit_interval_ms 默认 60000，修改生效，越界被 400 拦截');
 
+  // 17.12 文案 auto_select=false：新版只落库不选中（前端对比窗决策模式）
+  const scr2 = await api('POST', '/api/llm/script', {
+    idea: '黄昏麦田少年走向远方', style: '电影写实', aspect_ratio: '16:9', seconds: '8',
+    project_id: pid, auto_select: false,
+  });
+  if (scr2.status !== 200 || !scr2.data.parsed) err(`auto_select=false 文案生成失败: ${JSON.stringify(scr2.data).slice(0, 200)}`);
+  if (!scr2.data.previous?.script?.content) err('auto_select=false 未返回 previous 旧内容');
+  if (!scr2.data.new_text_ids?.script) err('auto_select=false 未返回 new_text_ids');
+  {
+    const d = (await api('GET', `/api/projects/${pid}`)).data;
+    const selScript = d.texts.find((t) => t.kind === 'script' && t.selected);
+    const newScript = d.texts.find((t) => t.id === scr2.data.new_text_ids.script);
+    if (!selScript || selScript.id === scr2.data.new_text_ids.script) err('auto_select=false 时旧版本应保持选中');
+    if (!newScript || newScript.selected) err('auto_select=false 时新版本应为未选中状态');
+  }
+  ok('文案 auto_select=false：旧版本保持选中，新版仅落库并回传 previous/new_text_ids');
+
+  // 17.13 分镜 auto_select=false：shots 不变 + 新版本未选中；apply 后采用
+  const shotsBeforeSb = (await api('GET', `/api/projects/${pid}`)).data.shots.map((s) => s.id);
+  const sb3 = await api('POST', '/api/llm/storyboard', { idea: '黄昏麦田少年走向远方', project_id: pid, auto_select: false });
+  if (sb3.status !== 200 || !sb3.data.parsed) err(`auto_select=false 分镜生成失败: ${JSON.stringify(sb3.data).slice(0, 200)}`);
+  if (sb3.data.auto_selected !== false || !sb3.data.text_id) err('auto_select=false 分镜响应异常');
+  if (JSON.stringify(sb3.data.current_shots.map((s) => s.id)) !== JSON.stringify(shotsBeforeSb)) err('auto_select=false 不应重建 shots');
+  const applySb2 = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: sb3.data.text_id });
+  if (applySb2.status !== 200 || applySb2.data.shots.some((s) => shotsBeforeSb.includes(s.id))) {
+    err('apply 采用新版本后 shots 未重建');
+  }
+  ok('分镜 auto_select=false：shots 保持不变，apply 采用后重建为新镜头');
+
+  // 17.14 图片 count=3：一次三张候选，全部落库，首张自动选中
+  const imgMulti = await api('POST', '/api/images/generate', {
+    prompt: '角色立绘：多张候选测试', size: '1K', ratio: '1:1', project_id: pid, kind: 'character', count: 3,
+  });
+  if (imgMulti.status !== 200) err(`count=3 图片生成失败: ${JSON.stringify(imgMulti.data).slice(0, 200)}`);
+  if (!Array.isArray(imgMulti.data.results) || imgMulti.data.results.length !== 3) err(`count=3 应返回 3 张: ${imgMulti.data.results?.length}`);
+  if (imgMulti.data.failed !== 0) err(`count=3 不应有失败: ${imgMulti.data.failed}`);
+  if (!imgMulti.data.image?.selected) err('count 多张时首张应自动选中');
+  if (imgMulti.data.remote_url !== imgMulti.data.results[0].remote_url) err('首张字段与 results[0] 不一致');
+  const imgsAfterMulti = (await api('GET', `/api/projects/${pid}`)).data.images.filter((x) => x.kind === 'character');
+  if (imgsAfterMulti.length < 3) err(`count=3 落库异常: ${imgsAfterMulti.length}`);
+  ok('图片 count=3：一次生成 3 张候选并全部落库，首张自动选中（兼容首张字段）');
+
   // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
   const img = await api('POST', '/api/images/generate', {
     prompt: '角色立绘：银发少年', size: '1K', ratio: '1:1', project_id: pid, kind: 'character',

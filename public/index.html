@@ -191,6 +191,17 @@
           <div class="field"><label>批量提交间隔 (ms)</label><input type="number" id="setSubmitMs" min="0" step="1000" /></div>
         </div>
         <p class="hint">轮询间隔建议 1000–2000ms（官方建议 1–2 秒查询一次）。超过超时仍未完成的任务将被标记为失败。批量提交间隔用于分镜批量出片（0 = 连续提交）。</p>
+        <hr style="border:none;border-top:1px dashed var(--line,#ddd);margin:16px 0" />
+        <div class="field">
+          <label>Fish Audio API Key <span class="hint" id="fishKeyStatus"></span>（TTS 配音，免费档 s2.1-pro-free）</label>
+          <input type="password" id="setFishKey" placeholder="sk-fish-..." autocomplete="off" />
+          <p class="hint">用于「创作工作台」生成旁白配音（可选；不配置则配音功能不可用）。同样只存本地 SQLite。</p>
+        </div>
+        <div class="grid2">
+          <div class="field"><label>默认音色</label><select id="setFishVoice"></select></div>
+          <div class="field"><label>默认语速</label><input type="number" id="setFishSpeed" min="0.5" max="2" step="0.05" value="1" /></div>
+        </div>
+        <p class="hint">音色为 Fish 音色库公开模型；选择「平台默认音色」则不指定音色。语速 0.5–2.0，故事旁白建议 0.9–1.0。</p>
       </div>
       <div class="modal-foot">
         <button class="btn ghost" data-close>取消</button>
@@ -225,6 +236,7 @@
   <!-- Toast -->
   <div id="toasts" class="toasts"></div>
 
+  <script src="compare.js"></script>
   <script src="app.js"></script>
   <script src="workspace.js"></script>
 </body>

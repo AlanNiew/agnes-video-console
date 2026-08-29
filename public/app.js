@@ -308,6 +308,16 @@
       $('#setPollMs').value = state.settings.poll_interval_ms;
       $('#setMaxMin').value = state.settings.max_active_minutes;
       $('#setSubmitMs').value = state.settings.submit_interval_ms ?? 60000;
+      // TTS（Fish Audio）
+      $('#fishKeyStatus').textContent = state.settings.fish_api_key_set
+        ? `（已保存 ${state.settings.fish_api_key_masked}，留空则不修改）`
+        : '（未配置）';
+      $('#setFishSpeed').value = state.settings.fish_speed ?? 1;
+      const fv = await loadFishVoices();
+      const curVoice = state.settings.fish_voice || 'default';
+      $('#setFishVoice').innerHTML = (fv.voices || [])
+        .map((v) => `<option value="${esc(v.id)}" ${v.id === curVoice ? 'selected' : ''}>${esc(v.title)}</option>`)
+        .join('');
     } catch (e) {
       toast('加载设置失败：' + e.message, 'err');
     }
@@ -624,6 +634,14 @@
   }
 
   /* ---------------- 设置 ---------------- */
+  let fishVoicesCache = null;
+  async function loadFishVoices() {
+    if (!fishVoicesCache) {
+      try { fishVoicesCache = await api('/api/tts/voices'); } catch { fishVoicesCache = { voices: [] }; }
+    }
+    return fishVoicesCache;
+  }
+
   async function saveSettings() {
     const body = {
       base_url: $('#setBaseUrl').value.trim(),
@@ -634,11 +652,18 @@
     };
     const key = $('#setApiKey').value.trim();
     if (key) body.api_key = key;
+    const fishKey = $('#setFishKey').value.trim();
+    if (fishKey) body.fish_api_key = fishKey;
+    const fishVoice = $('#setFishVoice').value;
+    if (fishVoice) body.fish_voice = fishVoice;
+    const fishSpeed = Number($('#setFishSpeed').value);
+    if (Number.isFinite(fishSpeed) && fishSpeed >= 0.5 && fishSpeed <= 2) body.fish_speed = fishSpeed;
     try {
       await api('/api/settings', { method: 'PUT', body });
       toast('设置已保存', 'ok');
       $('#settingsModal').hidden = true;
       $('#setApiKey').value = '';
+      $('#setFishKey').value = '';
       await loadSettings();
     } catch (e) {
       toast('保存失败：' + e.message, 'err');
@@ -732,13 +757,29 @@
         const r = await api('/api/llm/chat', {
           method: 'POST',
           body: {
-            system: '你是视频生成提示词优化器。把用户零散的想法优化成一段可直接用于 AI 视频生成的结构化中文提示词（100~200 字），按顺序覆盖：主体与场景 → 动作与变化 → 镜头语言 → 视觉风格 → 声音与节奏。只输出提示词本身，不要任何解释或前缀。',
+            system: '你是视频生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 视频生成的专业提示词，150~220 字，六段式按序书写：主体与场景（外观与空间具体化）→ 动作与变化（2~3 个有先后顺序的连续动作）→ 镜头语言（景别 + 运镜 + 转场）→ 光线与色调（时段、光源方向、色温）→ 视觉风格与画质 → 声音与节奏。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。',
             messages: [{ role: 'user', content: idea }],
             temperature: 0.8,
           },
         });
-        $('#fPrompt').value = r.content;
-        toast('提示词已优化，请检查后提交', 'ok');
+        const adopt = () => {
+          $('#fPrompt').value = r.content;
+          toast('已采用优化后的提示词', 'ok');
+        };
+        if (window.__ui?.compare) {
+          // 优化结果先对比，由用户决定采用；是否用 AI 优化始终由用户发起
+          window.__ui.compare({
+            title: '提示词优化对比',
+            oldLabel: '我的原始描述',
+            newLabel: 'AI 优化后',
+            oldText: idea,
+            newText: r.content,
+            onAdopt: adopt,
+            onKeep: () => toast('已保留原始描述', 'ok'),
+          });
+        } else {
+          adopt();
+        }
       } catch (e) {
         toast('优化失败：' + e.message, 'err');
       } finally {
