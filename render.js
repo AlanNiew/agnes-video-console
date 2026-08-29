@@ -194,6 +194,8 @@ class Renderer {
     // v1.4 BGM：音量 0–1（默认 0.35）；有旁白时可选闪避（sidechaincompress）
     const bgmVolume = Math.min(Math.max(Number(params.bgm_volume) || 0.35, 0), 1);
     const bgmDuck = params.bgm_duck !== false;
+    // v1.5 旁白增益：TTS 原始电平偏保守，默认提升 1.4 倍让人声稳坐音乐之上
+    const narrVolume = Math.min(Math.max(Number(params.narration_volume) || 1.4, 0.5), 3);
 
     /* ---- 0) BGM：优先本地缓存，缺失则现取播放地址重新下载 ---- */
     let bgmFile = null;
@@ -278,6 +280,8 @@ class Renderer {
         cum += seqs[k].duration - fade;
       }
       // 旁白时间轴：镜头起幅点 = 片头卡后累计（每镜步进 = 本镜时长 - 叠化）
+      // v1.5 旁白链（专业口播处理）：90Hz 高通去低频浊音 → 轻压缩平衡句间动态
+      //   → 增益（默认 1.4×）→ 按镜头起幅点延迟对齐
       const narrLabels = [];
       let ni = 0;
       let shotStart = cards.some((c) => c.kind === 'head') ? seqs[0].duration : 0;
@@ -285,12 +289,18 @@ class Renderer {
         if (s.narrationPath) {
           const startMs = Math.round((shotStart + narrOffset) * 1000);
           const label = `[n${ni}]`;
-          fl.push(`[${narrIdxStart + ni}:a]adelay=${startMs}:all=1${label}`);
+          fl.push(
+            `[${narrIdxStart + ni}:a]highpass=f=90,` +
+            `acompressor=threshold=0.22:ratio=3:attack=8:release=220:makeup=1.15,` +
+            `volume=${narrVolume},adelay=${startMs}:all=1${label}`
+          );
           narrLabels.push(label);
           ni += 1;
         }
         shotStart += s.duration - fade;
       }
+      // 终局响度标准化（EBU R128 单遍）：对齐流媒体响度目标，成片之间音量一致
+      const loudnessChain = 'loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95';
       let aout;
       // v1.4 BGM 铺底链：循环源裁到片长 + 音量 + 首尾淡入淡出；有旁白可选闪避
       const bgmChain = (vol, label = '[bgm]') =>
@@ -300,11 +310,12 @@ class Renderer {
         fl.push(`${narrLabels.join('')}amix=inputs=${narrLabels.length}:duration=longest:normalize=0[narmix]`);
         if (bgmIdx >= 0) {
           fl.push(bgmChain(bgmVolume));
+          // v1.5 闪避调优：阈值贴旁白电平、中等比率、快攻慢放——说话时音乐让路、句间自然回升
           fl.push('[narmix]asplit=2[narMain][narSc]');
-          fl.push('[bgm][narSc]sidechaincompress=threshold=0.04:ratio=10:attack=60:release=500[bgmD]');
-          fl.push('[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.92[aout]');
+          fl.push('[bgm][narSc]sidechaincompress=threshold=0.035:ratio=9:attack=40:release=450[bgmD]');
+          fl.push(`[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,${loudnessChain}[aout]`);
         } else {
-          fl.push('[narmix]alimiter=limit=0.92[aout]');
+          fl.push(`[narmix]${loudnessChain}[aout]`);
         }
         aout = '[aout]';
       } else if (bgmIdx >= 0) {

@@ -872,6 +872,22 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (pdBgm.data.project?.bgm?.song_id !== '12345') err('项目 bgm 选择未落库');
   ok(`BGM 选用并缓存：${path.basename(bgmSel.data.bgm.local_path)}`);
 
+  // 20.38 v1.5：注入两条「已完成」的镜头旁白（直接写测试库，模拟 Fish 合成产物），让渲染走完整声音链
+  {
+    const { DatabaseSync } = require('node:sqlite');
+    const tdb = new DatabaseSync(TEST_DB);
+    tdb.exec('PRAGMA busy_timeout = 5000');
+    const now = Date.now();
+    const ins = tdb.prepare(`INSERT INTO project_tts (project_id, kind, shot_id, text, model, voice_title, format, local_path, duration, size, selected, created_at)
+      VALUES (?, 'shot', ?, ?, 's2.1-pro-free', '测试音色', 'mp3', ?, 6, 100000, 1, ?)`);
+    const audioPath = (bgmFixture && fs.existsSync(bgmFixture)) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3');
+    if (!fs.existsSync(audioPath)) fs.writeFileSync(audioPath, Buffer.alloc(4096, 3));
+    ins.run(pid, shot1.id, '镜头一旁白测试', audioPath, now);
+    ins.run(pid, projDetail.data.shots[1].id, '镜头二旁白测试', audioPath, now + 1);
+    tdb.close();
+  }
+  ok('镜头旁白已注入（模拟 TTS 产物：高通+压缩+增益+闪避全链即将生效）');
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});
@@ -888,6 +904,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (ren.status !== 201) err(`渲染任务创建失败: ${JSON.stringify(ren.data)}`);
     if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
     if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined) err('渲染参数缺少 BGM 字段');
+    if (ren.data.params?.narration_volume === undefined) err('渲染参数缺少 narration_volume');
     let renJob = null;
     const dRen = Date.now() + 180_000;
     while (Date.now() < dRen) {
@@ -926,6 +943,31 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err(`tts 跨项目 shot_id 未被 404 拦截: ${JSON.stringify(ttsBad2.data)}`);
   }
   ok('TTS 镜头绑定：shot_id 需与 project_id 同提供、跨项目镜头 404');
+
+  // 20.6 v1.5：旁白绑定/解绑（含同镜头互斥让位）
+  {
+    const { DatabaseSync } = require('node:sqlite');
+    const tdb = new DatabaseSync(TEST_DB);
+    tdb.exec('PRAGMA busy_timeout = 5000');
+    const now = Date.now();
+    const r = tdb.prepare(`INSERT INTO project_tts (project_id, kind, text, model, voice_title, format, local_path, duration, size, selected, created_at)
+      VALUES (?, 'narration', '整片旁白测试', 's2.1-pro-free', '测试音色', 'mp3', ?, 6, 100000, 0, ?)`)
+      .run(pid, (bgmFixture && fs.existsSync(bgmFixture)) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3'), now);
+    tdb.close();
+    const ttsId = Number(r.lastInsertRowid);
+    const b1 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: pid, shot_id: shot1.id });
+    if (b1.status !== 200 || b1.data.tts?.kind !== 'shot' || b1.data.tts?.shot_id !== shot1.id) {
+      err(`旁白绑定镜头失败: ${JSON.stringify(b1.data).slice(0, 200)}`);
+    }
+    const pdBind = await api('GET', `/api/projects/${pid}`);
+    const shot1Bound = pdBind.data.tts.filter((t) => t.kind === 'shot' && t.shot_id === shot1.id);
+    if (shot1Bound.length !== 1 || shot1Bound[0].id !== ttsId) err('同镜头互斥失败：旧绑定未自动让位');
+    const b2 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: pid, shot_id: null });
+    if (b2.status !== 200 || b2.data.tts?.kind !== 'narration' || b2.data.tts?.shot_id !== null) err(`解绑失败: ${JSON.stringify(b2.data)}`);
+    const b3 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: 999999, shot_id: 1 });
+    if (b3.status !== 404) err('跨项目绑定未被 404 拦截');
+    ok('旁白绑定：绑定 / 同镜头互斥让位 / 解绑 / 跨项目 404 全部正常');
+  }
 
   // 21. 删除项目（级联清理 + 任务解绑）
   const delR = await api('DELETE', `/api/projects/${pid}`);

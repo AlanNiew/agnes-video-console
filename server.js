@@ -1055,6 +1055,30 @@ app.post('/api/tts/:id/select', (req, res) => {
   res.json({ ok: true, tts: projects.getTts(t.id) });
 });
 
+// v1.5 旁白绑定镜头：{shot_id} 把已有配音记录绑到指定镜头（kind 自动转 shot），成片渲染时按镜头对齐；
+// shot_id 传 null 解绑（kind 回 narration）。同一镜头绑新记录时会自动解绑旧记录。
+app.post('/api/tts/:id/bind', (req, res) => {
+  const t = projects.getTts(req.params.id);
+  if (!t) throw new ApiError(404, '配音记录不存在');
+  if (!t.local_path || t.error_message) throw new ApiError(400, '该配音记录无有效本地音频，无法绑定');
+  const projectId = Number(req.body?.project_id ?? t.project_id);
+  if (!projects.get(projectId)) throw new ApiError(404, '项目不存在');
+  const raw = req.body?.shot_id;
+  const shotId = raw === null || raw === undefined || raw === '' ? null : Number(raw);
+  if (shotId !== null) {
+    if (!projects.shots(projectId).some((s) => s.id === shotId)) throw new ApiError(404, '镜头不存在（或不属于该项目）');
+    // 同镜头互斥：旧绑定自动解绑为 narration
+    for (const other of projects.tts(projectId)) {
+      if (other.id !== t.id && other.kind === 'shot' && other.shot_id === shotId) {
+        projects.bindTts(other.id, null, null);
+      }
+    }
+  }
+  projects.bindTts(t.id, shotId === null ? 'narration' : 'shot', shotId);
+  log('info', `配音 #${t.id} ${shotId === null ? '解绑' : `绑定镜头 #${shotId}`}(项目 #${projectId})`);
+  res.json({ ok: true, tts: projects.getTts(t.id) });
+});
+
 // 删除配音记录
 app.delete('/api/tts/:id', (req, res) => {
   if (!projects.removeTts(req.params.id)) throw new ApiError(404, '配音记录不存在');
@@ -1375,6 +1399,7 @@ app.post('/api/projects/:id/render', ah(async (req, res) => {
     return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : dft;
   };
   const bgmVol = Number(b.bgm_volume);
+  const narrVol = Number(b.narration_volume);
   const params = {
     transition_ms: clampInt(b.transition_ms, 200, 2000, RENDER_PARAMS_DEFAULTS.transition_ms),
     narration_offset_ms: clampInt(b.narration_offset_ms, 0, 3000, RENDER_PARAMS_DEFAULTS.narration_offset_ms),
@@ -1383,6 +1408,8 @@ app.post('/api/projects/:id/render', ah(async (req, res) => {
     // v1.4 BGM
     bgm_volume: Number.isFinite(bgmVol) ? Math.min(Math.max(bgmVol, 0), 1) : 0.35,
     bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
+    // v1.5 旁白增益
+    narration_volume: Number.isFinite(narrVol) ? Math.min(Math.max(narrVol, 0.5), 3) : 1.4,
   };
   const collected = renderer.collectSegments(p.id);
   const ready = collected ? collected.segments.length : 0;

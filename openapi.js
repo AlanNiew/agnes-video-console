@@ -78,6 +78,7 @@ const paths = {
   },
   '/api/tts/voices': { get: '音色清单与可用模型' },
   '/api/tts/{id}/select': { post: '选用配音记录' },
+  '/api/tts/{id}/bind': { post: '绑定/解绑旁白到镜头 {project_id?, shot_id(数字=绑定并转 shot kind；null=解绑为 narration)}；同镜头互斥自动让位，成片渲染按镜头对齐混入' },
   '/api/tts/{id}': { delete: '删除配音记录（本地文件一并清理）' },
   '/artifacts/*': { get: '本地产物静态服务（图片/视频/音频/成片）' },
 };

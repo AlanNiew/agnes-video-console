@@ -238,6 +238,8 @@
     const selChar = images.find((x) => x.kind === 'character' && x.selected) || images.find((x) => x.kind === 'character');
     const selVideoText = selVideo(texts);
     const completedShots = tasks.filter((t) => t.status === 'completed').length;
+    // v1.5：已绑定镜头配音的镜头数（渲染时旁白覆盖率提示）
+    const narratedShots = shots.filter((s) => (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message)).length;
     const stepsDone = {
       1: Boolean(p.idea),
       2: texts.some((t) => t.kind === 'video_prompt' || t.kind === 'storyboard') || shots.length > 0,
@@ -379,7 +381,7 @@
               <div class="hint mt">配音为本地 mp3（存 data/artifacts），可在浏览器试听、选用；「下载」可拿去做后期混音。</div>
             </div>
           </div>
-          <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [])}</div>
+          <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [], shots)}</div>
         </div>
 
         <!-- ⑥ 成片渲染（v1.3） -->
@@ -399,11 +401,15 @@
             <label class="hint" style="display:flex;gap:6px;align-items:center">BGM 音量
               <input type="range" id="wsRBgmVol" min="5" max="90" value="35" style="width:90px" title="背景音乐音量（有旁白时建议 30–40%）" />
               <span id="wsRBgmVolV">35%</span></label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center">旁白增益
+              <input type="range" id="wsRNarrVol" min="80" max="220" value="140" style="width:90px" title="旁白音量增益（默认 140%，让人声稳坐音乐之上）" />
+              <span id="wsRNarrVolV">140%</span></label>
             <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRDuck" checked /> 旁白闪避</label>
+            <span class="meta-tag" title="已绑定镜头配音的镜头数（在第⑤步配音墙中绑定）">🎙️ 旁白 ${narratedShots}/${shots.length} 镜</span>
             <span class="spacer" style="flex:1"></span>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>
-          <div class="hint mt">旁白取每个镜头最新的「镜头配音」（在上方分镜卡片中填写旁白并生成配音）；成片为 1280×720@30，旁白混音自动限幅。渲染在服务端后台进行，可离开本页。</div>
+          <div class="hint mt">旁白取每个镜头最新绑定的配音（第⑤步配音墙中「绑定到镜头」）；混音链：旁白高通+压缩+增益 → BGM 循环铺底+首尾淡入淡出 → 旁白闪避 → 全片响度标准化（-16 LUFS）。成片 1280×720@30，服务端后台渲染。</div>
           <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
             <b>🎵 背景音乐（BGM）</b> <span class="hint">搜索在线曲库选用一首，渲染时循环铺底、首尾淡入淡出；有旁白时自动闪避（压低音乐让人声突出）</span>
             <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -489,6 +495,7 @@
               end_card: $('#wsREnd')?.checked !== false,
               bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
               bgm_duck: $('#wsRDuck')?.checked !== false,
+              narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
             },
           });
           toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
@@ -574,6 +581,13 @@
         if (l) l.textContent = volRange.value + '%';
       };
     }
+    const narrRange = $('#wsRNarrVol');
+    if (narrRange) {
+      narrRange.oninput = () => {
+        const l = $('#wsRNarrVolV');
+        if (l) l.textContent = narrRange.value + '%';
+      };
+    }
   }
 
   /* ---------------- TTS 配音（Fish Audio） ---------------- */
@@ -620,9 +634,22 @@
         .map((v) => `<option value="${esc(v.id)}" ${v.id === curVoice ? 'selected' : ''}>${esc(v.title)}</option>`)
         .join('');
     }
-    // TTS 墙内按钮（试听/选用/删除）——事件委托
+    // TTS 墙内按钮（试听/选用/删除/绑定镜头）——事件委托
     const wall = $('#wsTtsWall');
     if (wall) {
+      wall.addEventListener('change', async (ev) => {
+        const sel = ev.target.closest('[data-tts-bind]');
+        if (!sel) return;
+        const item = sel.closest('[data-tts-id]');
+        const id = Number(item?.dataset.ttsId);
+        if (!id) return;
+        const shotId = sel.value ? Number(sel.value) : null;
+        try {
+          await api(`/api/tts/${id}/bind`, { method: 'POST', body: { project_id: projectId, shot_id: shotId } });
+          toast(shotId ? '已绑定镜头：成片渲染时按镜头对齐混入' : '已解绑为整片旁白素材', 'ok');
+          if (currentProjectId === projectId) await renderProject(projectId);
+        } catch (e) { toast('绑定失败：' + e.message, 'err'); }
+      });
       wall.onclick = async (ev) => {
         const playBtn = ev.target.closest('[data-tts-play]');
         if (playBtn) {
@@ -704,17 +731,24 @@
     }
   }
 
-  function renderTtsWall(list) {
+  function renderTtsWall(list, shots = []) {
     if (!list || !list.length) return '<div class="hint">还没有配音记录。填入文稿后点「🗣️ 生成配音」。</div>';
+    const shotOpts = (cur) => ['<option value="">旁白（未绑镜头）</option>']
+      .concat(shots.map((s) => `<option value="${s.id}" ${cur === s.id ? 'selected' : ''}>镜头 ${s.seq}${s.title ? ' · ' + esc(s.title) : ''}</option>`))
+      .join('');
     return `
       <div class="tts-wall">
-        ${list.map((t) => `
+        ${list.map((t) => {
+          const bound = t.kind === 'shot' && t.shot_id;
+          const boundShot = bound ? shots.find((s) => s.id === t.shot_id) : null;
+          return `
           <div class="tts-item ${t.selected ? 'selected' : ''}" data-tts-id="${t.id}" style="border:1px solid ${t.selected ? 'var(--accent,#2b8a5a)' : 'var(--line,#e3e3e3)'};border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${t.selected ? 'var(--bg-soft,#f2f8f4)' : 'transparent'}">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span class="meta-tag">${esc(t.voice_title || t.reference_id || '默认音色')}</span>
               <span class="meta-tag">${esc(t.model || '')}</span>
               <span class="meta-tag">${t.duration != null ? t.duration + 's' : '—'}</span>
               <span class="meta-tag">${t.size != null ? Math.round(t.size / 1024) + 'KB' : '—'}</span>
+              ${bound ? `<span class="meta-tag" title="已绑定镜头，成片渲染时按镜头对齐混入">🎬 镜头 ${boundShot ? boundShot.seq : '?'}</span>` : ''}
               ${t.selected ? '<span class="badge-selected">✓ 选用</span>' : ''}
               <span class="spacer" style="flex:1"></span>
               ${t.local_url ? `<button class="btn ghost sm" data-tts-play="${esc(t.local_url)}">▶ 试听</button>` : ''}
@@ -722,11 +756,16 @@
               <button class="btn ghost sm danger" data-tts-del title="删除记录与本地音频">删除</button>
             </div>
             <div style="margin-top:6px;color:var(--muted,#888);font-size:12px">${esc(t.text || '')}</div>
+            ${t.local_url && !t.error_message && shots.length ? `
+            <div style="margin-top:6px;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted,#888)">
+              绑定到镜头（成片渲染按镜头对齐混入）：
+              <select class="meta-tag" data-tts-bind style="background:var(--bg)">${shotOpts(bound ? t.shot_id : null)}</select>
+            </div>` : ''}
             ${t.error_message ? `<div style="margin-top:4px;color:var(--danger,#c0392b);font-size:12px">失败：${esc(t.error_message)}</div>` : ''}
-          </div>
-        `).join('')}
+          </div>`;
+        }).join('')}
       </div>
-      <div class="hint mt">选用标记用于成片后期混音识别（第一句自动选用；最多同步一段旁白）。</div>`;
+      <div class="hint mt">提示：「绑定到镜头」的配音会在成片渲染时按镜头起幅点自动对齐混入（同一镜头多次绑定以最新一条为准）；未绑定的记录仅作整片旁白素材保留。</div>`;
   }
 
   /* 任务列表局部刷新：只更新 #wsTaskList，不打断文案/描述编辑 */

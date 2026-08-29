@@ -306,6 +306,7 @@ const stmts = {
   getTts: db.prepare('SELECT * FROM project_tts WHERE id = ?'),
   unselectProjectTts: db.prepare('UPDATE project_tts SET selected = 0 WHERE project_id = ? AND id != ?'),
   selectTts: db.prepare('UPDATE project_tts SET selected = 1 WHERE id = ?'),
+  bindTts: db.prepare('UPDATE project_tts SET kind = ?, shot_id = ? WHERE id = ?'),
   deleteTts: db.prepare('DELETE FROM project_tts WHERE id = ?'),
   deleteTtsByProject: db.prepare('DELETE FROM project_tts WHERE project_id = ?'),
 
@@ -844,6 +845,11 @@ const projects = {
       stmts.unselectProjectTts.run(Number(projectId), Number(id));
       stmts.selectTts.run(Number(id));
     });
+  },
+
+  /** v1.5：绑定/解绑旁白到镜头（kind: 'shot'|'narration'，shotId 绑定时必填） */
+  bindTts(id, kind, shotId) {
+    return stmts.bindTts.run(kind || 'narration', shotId === undefined || shotId === null ? null : Number(shotId), Number(id)).changes > 0;
   },
 
   removeTts(id) {

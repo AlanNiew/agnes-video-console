@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-62%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-64%20passed-brightgreen)
 
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
@@ -157,7 +157,7 @@ GET  /artifacts/*                      本地产物静态服务（图片/视频/
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 **62 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、BGM 配乐、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **64 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、BGM 配乐、专业混音链与旁白绑定、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 
