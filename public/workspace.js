@@ -471,6 +471,40 @@
     document.querySelectorAll('#wsShotSubmit [data-shot-submit]').forEach((b) => {
       b.onclick = () => submitShot(p.id, Number(b.dataset.shotSubmit));
     });
+    // v1.7 重拍与定稿选条
+    document.querySelectorAll('#wsShotSubmit [data-shot-retake]').forEach((b) => {
+      b.onclick = async () => {
+        const shotId = Number(b.dataset.shotRetake);
+        b.disabled = true;
+        try {
+          const r = await api(`/api/projects/${p.id}/shots/${shotId}/retakes`, { method: 'POST', body: { count: 1 } });
+          toast(`重拍任务 #${r.retakes[0].id} 已入队（完成后在下方候选区选定）`, 'ok');
+          window.__app?.loadTasks?.();
+          if (currentProjectId === p.id) await renderProject(p.id);
+        } catch (e) {
+          toast('重拍失败：' + e.message, 'err');
+          b.disabled = false;
+        }
+      };
+    });
+    document.querySelectorAll('#wsShotSubmit [data-take-pick]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takePick)}/select-take`, { method: 'POST', body: { task_id: Number(b.dataset.task) } });
+          toast('已选定定稿 take，成片渲染将优先使用这条', 'ok');
+          await renderProject(p.id);
+        } catch (e) { toast('选定失败：' + e.message, 'err'); }
+      };
+    });
+    document.querySelectorAll('#wsShotSubmit [data-take-auto]').forEach((b) => {
+      b.onclick = async () => {
+        try {
+          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takeAuto)}/select-take`, { method: 'POST', body: { task_id: null } });
+          toast('已恢复自动模式（渲染用最新完成条）', 'ok');
+          await renderProject(p.id);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    });
     const batchBtn = $('#wsBatchSubmit');
     if (batchBtn) batchBtn.onclick = () => runBatchSubmit(p.id);
     const stopBtn = $('#wsBatchStop');
@@ -849,13 +883,25 @@
         ${shots.map((s) => {
           const t = shotLatestTask(tasks, s.id);
           const active = t && (t.status === 'queued' || t.status === 'in_progress');
+          const takes = tasks.filter((x) => x.shot_id === s.id && x.status === 'completed').sort((a, b) => b.id - a.id);
           return `
           <div class="ver-item shot-submit-row">
             <b>镜头 ${s.seq}</b>${s.title ? ` · ${esc(s.title)}` : ''}
             <span class="meta-tag">${esc(String(s.seconds || '5'))}s</span>
             ${shotStatusBadge(t)}
             <span class="spacer" style="flex:1"></span>
+            <button class="btn ghost sm" data-shot-retake="${s.id}" ${batchBusy ? 'disabled' : ''} title="为该镜头再生成一条候选（提交队列自动按分钟节流）">📸 重拍</button>
             <button class="btn primary sm" data-shot-submit="${s.id}" ${selChar && !active && !batchBusy ? '' : 'disabled'}>🚀 提交</button>
+            ${takes.length ? `
+            <div style="width:100%;margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
+              <span class="hint">候选 ${takes.length} 条（渲染${s.take_task_id ? '用 ✓定稿' : '默认用最新'}）：</span>
+              ${takes.map((tk) => `
+                <span class="meta-tag" style="${tk.id === s.take_task_id ? 'border-color:#2b8a5a;color:#2b8a5a' : ''}">#${tk.id}${tk.id === s.take_task_id ? ' ✓定稿' : ''}</span>
+                ${tk.id === s.take_task_id
+                  ? `<button class="btn ghost sm" data-take-auto="${s.id}" title="恢复自动模式（渲染用最新完成条）">取消定稿</button>`
+                  : `<button class="btn ghost sm" data-take-pick="${s.id}" data-task="${tk.id}" title="渲染时优先使用这条">用这条</button>`}
+              `).join('')}
+            </div>` : ''}
           </div>`;
         }).join('')}
       </div>

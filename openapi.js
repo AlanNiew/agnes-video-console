@@ -58,6 +58,12 @@ const paths = {
   '/api/projects/{id}/shots/{shotId}/videos': {
     post: '单镜头提交视频任务（入队语义）。镜头 use_character_ref=false 或 mode=text → 纯文生模式；否则引用角色定稿图并自动注入 <Picture 1> 前缀',
   },
+  '/api/projects/{id}/shots/{shotId}/retakes': {
+    post: '镜头重拍：一次提交 count(1-3) 条候选任务（提交队列自动节流），完成后用 select-take 点选定稿',
+  },
+  '/api/projects/{id}/shots/{shotId}/select-take': {
+    post: '镜头选定定稿 take {task_id(该镜头已完成任务；null=恢复自动模式用最新完成条)}；成片渲染优先使用选定 take',
+  },
   '/api/projects/{id}/videos': { post: '整项目提交视频任务（旧入口，单提示词）' },
   '/api/projects/{id}/render': {
     post: '一键成片渲染：镜头视频（本地归档优先）+ 逐镜旁白（每镜头最新成功的 shot 配音）+ 项目 BGM（可选）→ xfade 叠化 + 旁白对齐混音 + BGM 循环铺底/淡入淡出/旁白闪避 + 旁白字幕烧录（ASS）→ 1280x720@30 mp4。body：{transition_ms?(200-2000, 默认600), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true), narration_volume?(0.5-3, 默认1.4), burn_subtitles?(默认true), subtitle_fontsize?(24-72, 默认42)}；需本机 ffmpeg，≥2 个已完成镜头',

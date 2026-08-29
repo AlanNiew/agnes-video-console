@@ -981,6 +981,34 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const b3 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: 999999, shot_id: 1 });
     if (b3.status !== 404) err('跨项目绑定未被 404 拦截');
     ok('旁白绑定：绑定 / 同镜头互斥让位 / 解绑 / 跨项目 404 全部正常');
+
+  // 20.7 v1.7：多镜头重拍 —— 重拍候选 / 定稿选定 / 渲染优先用定稿 / 删除回退自动
+  {
+    const rt = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/retakes`, { count: 1 });
+    if (rt.status !== 201 || !rt.data.retakes?.length) err(`重拍提交失败: ${JSON.stringify(rt.data).slice(0, 200)}`);
+    const rtTask = rt.data.retakes[0];
+    const rtDone = await waitCompleted(rtTask.id, 30_000);
+    if (rtDone?.status !== 'completed') err(`重拍任务未完成: ${rtDone?.status}`);
+    // 选一条「较旧」的完成条为定稿（若渲染仍取最新即可判定未生效）
+    const oldTake = (await api('GET', `/api/projects/${pid}`)).data.tasks
+      .filter((t) => t.shot_id === shot1.id && t.status === 'completed' && t.id !== rtTask.id)
+      .sort((a, b) => b.id - a.id)[0];
+    const pick = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: oldTake.id });
+    if (pick.status !== 200 || pick.data.shot?.take_task_id !== oldTake.id) err(`选定 take 失败: ${JSON.stringify(pick.data).slice(0, 200)}`);
+    // collectSegments 应优先取定稿条
+    const { collectSegments } = require('../render');
+    const seg1 = collectSegments(pid).segments.find((s) => s.shot.id === shot1.id);
+    if (!seg1 || seg1.src !== oldTake.video_local_path) err('渲染素材未优先使用选定定稿 take');
+    // 校验：非本镜头任务不可选
+    const badSel = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: 999999 });
+    if (badSel.status !== 404) err('跨镜头任务选定未被 404 拦截');
+    // 删除定稿任务 → 清引用回退自动模式
+    const delPicked = await api('DELETE', `/api/tasks/${oldTake.id}`);
+    if (delPicked.status !== 200) err('删除定稿任务失败');
+    const afterDel = (await api('GET', `/api/projects/${pid}`)).data.shots.find((s) => s.id === shot1.id);
+    if (afterDel.take_task_id !== null) err('删除定稿任务后未回退自动模式');
+    ok('多镜头重拍：候选提交 / 定稿选定 / 渲染优先定稿 / 删除回退自动 全部正常');
+  }
   }
 
   // 21. 删除项目（级联清理 + 任务解绑）

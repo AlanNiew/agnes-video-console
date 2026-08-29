@@ -168,6 +168,7 @@ const shotCols = new Set(db.prepare('PRAGMA table_info(shots)').all().map((r) =>
 for (const [name, type] of [
   ['narration', 'TEXT'],                       // 镜头旁白文案
   ['use_character_ref', 'INTEGER DEFAULT 1'],  // 是否引用角色定稿图（0 = 纯空镜，text 模式提交）
+  ['take_task_id', 'INTEGER'],                 // v1.7 重拍定稿：选定的 take 任务 id（NULL = 自动用最新完成条）
 ]) {
   if (!shotCols.has(name)) db.exec(`ALTER TABLE shots ADD COLUMN ${name} ${type}`);
 }
@@ -307,6 +308,8 @@ const stmts = {
   unselectProjectTts: db.prepare('UPDATE project_tts SET selected = 0 WHERE project_id = ? AND id != ?'),
   selectTts: db.prepare('UPDATE project_tts SET selected = 1 WHERE id = ?'),
   bindTts: db.prepare('UPDATE project_tts SET kind = ?, shot_id = ? WHERE id = ?'),
+  setShotTake: db.prepare('UPDATE shots SET take_task_id = ?, updated_at = ? WHERE id = ?'),
+  clearShotTakeByTask: db.prepare('UPDATE shots SET take_task_id = NULL, updated_at = ? WHERE take_task_id = ?'),
   deleteTts: db.prepare('DELETE FROM project_tts WHERE id = ?'),
   deleteTtsByProject: db.prepare('DELETE FROM project_tts WHERE project_id = ?'),
 
@@ -605,6 +608,7 @@ function shotRowToApi(row) {
     seconds: row.seconds,
     mode: row.mode || 'reference',
     use_character_ref: row.use_character_ref === null || row.use_character_ref === undefined ? 1 : Number(row.use_character_ref),
+    take_task_id: row.take_task_id === null || row.take_task_id === undefined ? null : Number(row.take_task_id), // v1.7 重拍定稿
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -850,6 +854,16 @@ const projects = {
   /** v1.5：绑定/解绑旁白到镜头（kind: 'shot'|'narration'，shotId 绑定时必填） */
   bindTts(id, kind, shotId) {
     return stmts.bindTts.run(kind || 'narration', shotId === undefined || shotId === null ? null : Number(shotId), Number(id)).changes > 0;
+  },
+
+  /** v1.7：镜头选定重拍定稿 take（taskId=null 恢复自动模式：用最新完成条） */
+  setShotTake(id, taskId) {
+    return stmts.setShotTake.run(taskId === undefined || taskId === null ? null : Number(taskId), Date.now(), Number(id)).changes > 0;
+  },
+
+  /** v1.7：任务被删除时，清掉引用它的镜头定稿（回退自动模式） */
+  clearShotTakeByTask(taskId) {
+    return stmts.clearShotTakeByTask.run(Date.now(), Number(taskId)).changes > 0;
   },
 
   removeTts(id) {

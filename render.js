@@ -172,9 +172,11 @@ function collectSegments(projectId) {
   const tts = projects.tts(projectId);
   const segments = [];
   for (const shot of shots) {
-    const done = tasks
+    const dones = tasks
       .filter((t) => t.shot_id === shot.id && t.status === 'completed' && (t.video_local_path || t.metadata_url))
-      .sort((a, b) => b.id - a.id)[0];
+      .sort((a, b) => b.id - a.id);
+    // v1.7 重拍定稿：镜头已选定 take 则优先用之，否则回退最新完成条
+    const done = dones.find((t) => t.id === shot.take_task_id) || dones[0];
     if (!done) continue;
     const narr = tts
       .filter((x) => x.kind === 'shot' && x.shot_id === shot.id && x.local_path && !x.error_message)

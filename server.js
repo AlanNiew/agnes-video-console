@@ -516,8 +516,10 @@ app.post('/api/tasks/:id/poll', ah(async (req, res) => {
 }));
 
 // 删除任务
+// 删除任务记录（若某镜头的定稿 take 引用它，则清引用回退自动模式）
 app.delete('/api/tasks/:id', (req, res) => {
   if (!tasks.remove(req.params.id)) throw new ApiError(404, '任务不存在');
+  projects.clearShotTakeByTask(Number(req.params.id));
   res.json({ ok: true });
 });
 
@@ -1359,6 +1361,53 @@ app.post('/api/projects/:id/shots/:shotId/videos', ah(async (req, res) => {
   });
   res.status(201).json(task);
 }));
+
+// v1.7 镜头重拍：一次提交 N 条候选任务（提交队列自动按分钟节流；完成后在下方选定 take）
+app.post('/api/projects/:id/shots/:shotId/retakes', ah(async (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+  if (!shot) throw new ApiError(404, '镜头不存在');
+  const b = req.body || {};
+  const count = Math.min(Math.max(Math.round(Number(b.count) || 1), 1), 3);
+  const created = [];
+  for (let i = 0; i < count; i++) {
+    const task = await pipeline.submitVideoTask({
+      projectId: p.id,
+      shot,
+      prompt: shot.video_prompt,
+      seconds: b.seconds || shot.seconds,
+      aspectRatio: b.aspect_ratio,
+      shotId: shot.id,
+    });
+    created.push({ id: task.id, status: task.status });
+  }
+  log('info', `项目 #${p.id} 镜头 #${shot.id}（seq ${shot.seq}）重拍 ${created.length} 条候选`);
+  res.status(201).json({ ok: true, retakes: created });
+}));
+
+// v1.7 镜头选定定稿 take：{task_id}（须为该镜头已完成且有产物的任务）；task_id=null 恢复自动模式
+app.post('/api/projects/:id/shots/:shotId/select-take', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+  if (!shot) throw new ApiError(404, '镜头不存在');
+  const raw = req.body?.task_id;
+  if (raw === null || raw === undefined || raw === '') {
+    projects.setShotTake(shot.id, null);
+    log('info', `镜头 #${shot.id} 恢复自动模式（渲染用最新完成条）`);
+    return res.json({ ok: true, shot: projects.shots(p.id).find((s) => s.id === shot.id) });
+  }
+  const taskId = Number(raw);
+  const task = projects.tasks(p.id).find((t) => t.id === taskId && t.shot_id === shot.id);
+  if (!task) throw new ApiError(404, '任务不存在（或不属于该镜头）');
+  if (task.status !== 'completed' || (!task.video_local_path && !task.metadata_url)) {
+    throw new ApiError(400, '只有已完成且有产物的任务才能定为定稿 take');
+  }
+  projects.setShotTake(shot.id, taskId);
+  log('info', `镜头 #${shot.id}（seq ${shot.seq}）选定定稿 take：任务 #${taskId}`);
+  res.json({ ok: true, shot: projects.shots(p.id).find((s) => s.id === shot.id) });
+});
 
 // 从项目发起视频任务（旧入口，保留原语义）：角色定稿图 + 选定分镜提示词 → 2.5-flash reference 模式。
 // 组装与溯源逻辑在 pipeline.js 服务层；M2 起新流程走 /api/projects/:id/shots/:shotId/videos

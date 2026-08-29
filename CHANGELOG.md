@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.7.0] - 2026-08-29
+
+### Added
+
+- **多镜头重拍**：镜头级候选机制——`POST /api/projects/:id/shots/:shotId/retakes`（count 1–3，提交队列自动按分钟节流）为单个镜头一次提交多条候选；完成后在镜头行「候选区」点选定稿 take（`POST .../select-take`，`task_id=null` 恢复自动模式，同镜头互斥天然成立）。`shots.take_task_id` 落库（迁移新增），**成片渲染优先使用选定 take**、未选定时回退最新完成条；删除定稿任务自动清引用回退自动模式。
+- 工作台第④步：镜头行新增「📸 重拍」按钮与候选条区（`#任务号 ✓定稿 / 用这条 / 取消定稿`）。
+- mock e2e 扩展到 **65 项**：重拍候选提交、定稿选定、collectSegments 优先定稿、跨镜头 404、删除定稿回退。
+
 ## [1.6.0] - 2026-08-29
 
 ### Added
