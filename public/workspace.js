@@ -405,6 +405,10 @@
               <input type="range" id="wsRNarrVol" min="80" max="220" value="140" style="width:90px" title="旁白音量增益（默认 140%，让人声稳坐音乐之上）" />
               <span id="wsRNarrVolV">140%</span></label>
             <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRDuck" checked /> 旁白闪避</label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRSubs" checked /> 烧录字幕</label>
+            <select id="wsRSubSize" class="meta-tag" style="background:var(--bg)" title="字幕字号">
+              <option value="36">小字</option><option value="42" selected>中字</option><option value="52">大字</option>
+            </select>
             <span class="meta-tag" title="已绑定镜头配音的镜头数（在第⑤步配音墙中绑定）">🎙️ 旁白 ${narratedShots}/${shots.length} 镜</span>
             <span class="spacer" style="flex:1"></span>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
@@ -496,6 +500,8 @@
               bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
               bgm_duck: $('#wsRDuck')?.checked !== false,
               narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
+              burn_subtitles: $('#wsRSubs')?.checked !== false,
+              subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
             },
           });
           toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');

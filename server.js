@@ -1410,6 +1410,9 @@ app.post('/api/projects/:id/render', ah(async (req, res) => {
     bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
     // v1.5 旁白增益
     narration_volume: Number.isFinite(narrVol) ? Math.min(Math.max(narrVol, 0.5), 3) : 1.4,
+    // v1.6 字幕烧录
+    burn_subtitles: b.burn_subtitles === undefined ? true : Boolean(b.burn_subtitles),
+    subtitle_fontsize: clampInt(b.subtitle_fontsize, 24, 72, 42),
   };
   const collected = renderer.collectSegments(p.id);
   const ready = collected ? collected.segments.length : 0;

@@ -905,6 +905,20 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
     if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined) err('渲染参数缺少 BGM 字段');
     if (ren.data.params?.narration_volume === undefined) err('渲染参数缺少 narration_volume');
+    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined) err('渲染参数缺少字幕烧录字段');
+    // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
+    {
+      const { buildSubtitleAss } = require('../render');
+      const ass = buildSubtitleAss(
+        [{ start: 3.3, end: 7.05, text: '测试,字幕{文本}' }, { start: 8, end: 7, text: '无效区间应被剔除' }],
+        { fontsize: 42 }
+      );
+      if (!ass.includes('Dialogue: 0,0:00:03.30,0:00:07.05,Narr')) err(`ASS 时间轴格式错误: ${ass.split('\n').find((l) => l.startsWith('Dialogue')) || ''}`);
+      if (!ass.includes('测试,字幕文本')) err('ASS 文本丢失或转义错误（花括号应被剔除、逗号应保留）');
+      if (!ass.includes('\\fad(150,150)')) err('ASS 缺少淡入淡出标记');
+      if (ass.includes('无效区间')) err('end<=start 的无效字幕行未剔除');
+      if (!ass.includes('PlayResX: 1280')) err('ASS 缺少 PlayRes');
+    }
     let renJob = null;
     const dRen = Date.now() + 180_000;
     while (Date.now() < dRen) {

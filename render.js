@@ -105,10 +105,62 @@ function stageFont(tmpDir) {
   try {
     const dest = path.join(tmpDir, 'font' + path.extname(src));
     fs.copyFileSync(src, dest);
-    return { rel: 'font' + path.extname(src), cjk: !/DejaVu/i.test(src) };
+    return { rel: 'font' + path.extname(src), cjk: !/DejaVu/i.test(src), family: fontFamilyName(src) };
   } catch {
     return null;
   }
+}
+
+/** 从字体文件路径推断字体族名（ASS Style 用） */
+function fontFamilyName(srcPath) {
+  const p = String(srcPath || '').toLowerCase();
+  if (p.includes('msyh')) return 'Microsoft YaHei';
+  if (p.includes('simhei')) return 'SimHei';
+  if (p.includes('pingfang')) return 'PingFang SC';
+  if (p.includes('noto')) return 'Noto Sans CJK SC';
+  if (p.includes('wqy')) return 'WenQuanYi Micro Hei';
+  return 'Arial';
+}
+
+/* ---------------- v1.6 字幕烧录（ASS） ---------------- */
+
+/** 秒 → ASS 中心秒时间 H:MM:SS.cc */
+function assTime(t) {
+  const s = Math.max(0, Number(t) || 0);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = Math.floor(s % 60);
+  const cs = Math.min(99, Math.round((s - Math.floor(s)) * 100));
+  return `${h}:${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}.${String(cs).padStart(2, '0')}`;
+}
+
+function assEscape(text) {
+  return String(text || '').replace(/[{}]/g, '').replace(/\r?\n/g, ' ').trim();
+}
+
+/**
+ * 生成 ASS 字幕文件内容（纯函数，供渲染与 e2e 断言）
+ * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
+ * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number}} [opts]
+ */
+function buildSubtitleAss(lines, { fontsize = 42, family = 'Microsoft YaHei', playResX = OUT_W, playResY = OUT_H } = {}) {
+  const header = `[Script Info]
+ScriptType: v4.00+
+PlayResX: ${playResX}
+PlayResY: ${playResY}
+WrapStyle: 2
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Narr,${family},${fontsize},&H00DCECF2,&H000000FF,&H00181410,&H80000000,1,0,0,0,100,100,0,0,1,2.2,1.2,2,60,60,52,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
+  const events = (lines || [])
+    .filter((l) => l && l.text && l.end > l.start)
+    .map((l) => `Dialogue: 0,${assTime(l.start)},${assTime(l.end)},Narr,,0,0,0,,{\\fad(150,150)}${assEscape(l.text)}`);
+  return header + '\n' + events.join('\n') + (events.length ? '\n' : '');
 }
 
 /** 收集项目的可渲染素材：每个镜头最新完成视频（本地优先）+ 最新成功旁白 */
@@ -132,6 +184,7 @@ function collectSegments(projectId) {
       src: done.video_local_path || done.metadata_url,
       narrationPath: narr ? narr.local_path : null,
       narrationDuration: narr ? narr.duration : null,
+      narrationText: narr ? narr.text : null, // v1.6：字幕烧录用旁白原文
       nominalSeconds: Number(shot.seconds || p.seconds || 5) || 5,
     });
   }
@@ -196,6 +249,9 @@ class Renderer {
     const bgmDuck = params.bgm_duck !== false;
     // v1.5 旁白增益：TTS 原始电平偏保守，默认提升 1.4 倍让人声稳坐音乐之上
     const narrVolume = Math.min(Math.max(Number(params.narration_volume) || 1.4, 0.5), 3);
+    // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72
+    const wantSubs = params.burn_subtitles !== false;
+    const subFontsize = Math.min(Math.max(Number(params.subtitle_fontsize) || 42, 24), 72);
 
     /* ---- 0) BGM：优先本地缓存，缺失则现取播放地址重新下载 ---- */
     let bgmFile = null;
@@ -227,7 +283,7 @@ class Renderer {
           '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest]);
         if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
         const dur = probeDuration(dest) || seg.nominalSeconds;
-        norm.push({ file: dest, duration: dur, narrationPath: seg.narrationPath });
+        norm.push({ file: dest, duration: dur, narrationPath: seg.narrationPath, narrationText: seg.narrationText, narrationDuration: seg.narrationDuration });
         renders.update(job.id, { progress: 2 + Math.round((38 * (i + 1)) / segments.length) });
       }
 
@@ -252,6 +308,23 @@ class Renderer {
       const fadeCount = seqs.length - 1;
       const total = seqs.reduce((s, x) => s + x.duration, 0) - fade * fadeCount;
 
+      /* ---- 3.5) 字幕时间轴（v1.6）：旁白起点 → 配音结束，不越过镜头边界 ---- */
+      let subLines = [];
+      if (wantSubs) {
+        let st = cards.some((c) => c.kind === 'head') ? seqs[0].duration : 0;
+        for (const s of norm) {
+          if (s.narrationText) {
+            const start = st + narrOffset;
+            const end = Math.min(
+              start + (Number(s.narrationDuration) || 4),
+              st + s.duration - fade * 0.4
+            );
+            if (end > start + 0.2) subLines.push({ start, end, text: s.narrationText });
+          }
+          st += s.duration - fade;
+        }
+      }
+
       /* ---- 4) 终混（40-95%） ---- */
       const inputs = [];
       for (const s of seqs) inputs.push('-i', s.file);
@@ -270,15 +343,21 @@ class Renderer {
       }
 
       const fl = [];
+      // v1.6：烧录字幕时 xfade 链先输出 [vpre]，再挂 subtitles 滤镜得 [vout]
+      const needSubFilter = subLines.length > 0;
+      if (needSubFilter) {
+        fs.writeFileSync(path.join(tmpDir, 'subs.ass'), buildSubtitleAss(subLines, { fontsize: subFontsize, family: font?.family || 'Arial' }));
+      }
       let prev = '[0:v]';
       let cum = seqs[0].duration;
       for (let k = 1; k < seqs.length; k++) {
         const offset = (cum - fade).toFixed(3);
-        const out = k === seqs.length - 1 ? '[vout]' : `[vx${k}]`;
+        const out = k === seqs.length - 1 ? (needSubFilter ? '[vpre]' : '[vout]') : `[vx${k}]`;
         fl.push(`${prev}[${k}:v]xfade=transition=fade:duration=${fade}:offset=${offset}${out}`);
         prev = out;
         cum += seqs[k].duration - fade;
       }
+      if (needSubFilter) fl.push('[vpre]subtitles=subs.ass[vout]');
       // 旁白时间轴：镜头起幅点 = 片头卡后累计（每镜步进 = 本镜时长 - 叠化）
       // v1.5 旁白链（专业口播处理）：90Hz 高通去低频浊音 → 轻压缩平衡句间动态
       //   → 增益（默认 1.4×）→ 按镜头起幅点延迟对齐
@@ -342,6 +421,7 @@ class Renderer {
         outPath,
       ], {
         totalMs,
+        cwd: tmpDir, // subtitles=subs.ass 相对路径 + libass 字体目录
         onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
       });
       if (!r.ok) return this.fail(job.id, `终混失败：${r.err.slice(0, 400)}`);
@@ -402,3 +482,4 @@ class Renderer {
 module.exports = new Renderer();
 module.exports.collectSegments = collectSegments;
 module.exports.hasFfmpeg = hasFfmpeg;
+module.exports.buildSubtitleAss = buildSubtitleAss;

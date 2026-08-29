@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.6.0] - 2026-08-29
+
+### Added
+
+- **字幕烧录**：成片渲染支持把每镜旁白文案按「旁白起点 → 配音结束」精确时间轴烧录为字幕（ASS 格式：底部居中、奶油色描边字、150ms 淡入淡出、自动裁剪不越过镜头叠化边界）。渲染参数新增 `burn_subtitles`（默认开）/ `subtitle_fontsize`（24–72，默认 42）；工作台第⑥步新增「烧录字幕」开关与字号选择。字幕时间轴生成 `buildSubtitleAss` 为纯函数，e2e 直接断言时间轴格式、文本转义与无效区间剔除。
+
 ## [1.5.0] - 2026-08-29
 
 > 主题：让 BGM、旁白、配音作为一个整体被专业地混音（声音设计协调）。
