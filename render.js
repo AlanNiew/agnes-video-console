@@ -146,6 +146,22 @@ function assEscape(text) {
   return String(text || '').replace(/[{}]/g, '').replace(/\r?\n/g, ' ').trim();
 }
 
+/** 中文按字数预换行（libass 对无空格 CJK 长句不做自动换行，必须显式 \N）；标点不领头 */
+function wrapCJK(text, maxChars) {
+  const t = assEscape(text);
+  const NO_LEAD = '。，、；：？！）」』】》·—…';
+  const lines = [];
+  for (let i = 0; i < t.length; i += maxChars) lines.push(t.slice(i, i + maxChars));
+  // 行首标点回收到上一行行尾（上一行允许超 1–2 字）
+  for (let i = 1; i < lines.length; i++) {
+    while (lines[i] && NO_LEAD.includes(lines[i][0])) {
+      lines[i - 1] += lines[i][0];
+      lines[i] = lines[i].slice(1);
+    }
+  }
+  return lines.filter(Boolean).join('\\N');
+}
+
 /**
  * 生成 ASS 字幕文件内容（纯函数，供渲染与 e2e 断言）
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
@@ -156,7 +172,7 @@ function buildSubtitleAss(lines, { fontsize = 42, family = 'Microsoft YaHei', pl
 ScriptType: v4.00+
 PlayResX: ${playResX}
 PlayResY: ${playResY}
-WrapStyle: 2
+WrapStyle: 0
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
@@ -167,7 +183,12 @@ Style: Narr,${family},${fontsize},&H00DCECF2,&H000000FF,&H00181410,&H80000000,1,
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
   const events = (lines || [])
     .filter((l) => l && l.text && l.end > l.start)
-    .map((l) => `Dialogue: 0,${assTime(l.start)},${assTime(l.end)},Narr,,0,0,0,,{\\fad(150,150)}${assEscape(l.text)}`);
+    .map((l) => {
+      // 每行可容纳字数 ≈ 可用宽度 / 字号（留边距 60×2），至少 10 字
+      const maxChars = Math.max(10, Math.floor((playResX - 120) / fontsize) - 1);
+      const text = wrapCJK(l.text, maxChars);
+      return `Dialogue: 0,${assTime(l.start)},${assTime(l.end)},Narr,,0,0,0,,{\\fad(150,150)}${text}`;
+    });
   return header + '\n' + events.join('\n') + (events.length ? '\n' : '');
 }
 
