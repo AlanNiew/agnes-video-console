@@ -7,7 +7,7 @@
  * - 429 / 网络错误 / 5xx 自动指数退避重试，重试耗尽才落 submit_error
  * - 其余 4xx（鉴权/参数等）不可恢复，直接 submit_error
  */
-const { settings, tasks } = require('./db');
+const { settings, tasks, instanceLockHeldByOther } = require('./db');
 const agnes = require('./agnes');
 const { log } = require('./logger');
 
@@ -54,6 +54,7 @@ class Submitter {
 
   async tick() {
     if (this.running) return;
+    if (instanceLockHeldByOther()) return; // v1.6.1 工作锁
     this.running = true;
     try {
       const interval = Math.max(Number(settings.get('submit_interval_ms', 60_000)) || 0, 0);

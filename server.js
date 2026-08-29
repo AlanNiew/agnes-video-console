@@ -7,7 +7,7 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { Readable } = require('node:stream');
 const express = require('express');
-const { settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
+const { settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, acquireInstanceLock, instanceLockHeldByOther, refreshInstanceLock } = require('./db');
 const agnes = require('./agnes');
 const fishTts = require('./fish-tts');
 const netmusic = require('./netmusic');
@@ -1473,9 +1473,27 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
   if (settings.get(k) === null) settings.set(k, v);
 }
 
-poller.start();
-submitter.start();
-renderer.start();
+// v1.6.1 单实例工作锁：后台工作器（轮询/提交/渲染）全局只允许一份。
+// 拿到锁的实例运行工作器；未拿到的仅提供 API，并每 30s 尝试接管（持有者消亡后锁 15s 过期）。
+function startWorkers() {
+  poller.start();
+  submitter.start();
+  renderer.start();
+}
+if (acquireInstanceLock()) {
+  startWorkers();
+} else {
+  log('warn', '检测到另一实例持有工作锁，本实例仅提供 API，后台工作器停用（每 30s 尝试接管）');
+  const takeover = setInterval(() => {
+    if (acquireInstanceLock()) {
+      startWorkers();
+      log('info', '工作锁已接管，后台工作器启动');
+      clearInterval(takeover);
+    }
+  }, 30_000);
+  takeover.unref?.();
+}
+setInterval(() => refreshInstanceLock(), 10_000).unref?.();
 // 只监听本机回环地址：本地单机工具，不对局域网/公网开放（API Key 存于本地）
 const server = app.listen(PORT, '127.0.0.1', () => {
   console.log('');

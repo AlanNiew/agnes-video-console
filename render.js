@@ -12,7 +12,7 @@ const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { projects, renders } = require('./db');
+const { projects, renders, instanceLockHeldByOther } = require('./db');
 const { ARTIFACTS_DIR } = require('./artifacts');
 const netmusic = require('./netmusic');
 const { log } = require('./logger');
@@ -213,6 +213,7 @@ class Renderer {
 
   async tick() {
     if (this.busy || !hasFfmpeg()) return;
+    if (instanceLockHeldByOther()) return; // v1.6.1 工作锁
     const job = renders.queued()[0];
     if (!job) return;
     this.busy = true;

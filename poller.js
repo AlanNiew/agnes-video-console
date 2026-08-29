@@ -5,7 +5,7 @@
  * 429 / 网络错误按指数退避；超过 max_active_minutes 的任务标记为失败（轮询超时）。
  * v1.3：完成视频自动归档到本地（artifacts.js）；「待提交任务」由 submitter.js 接管。
  */
-const { settings, tasks } = require('./db');
+const { settings, tasks, instanceLockHeldByOther } = require('./db');
 const agnes = require('./agnes');
 const { downloadArtifact } = require('./artifacts');
 const { log } = require('./logger');
@@ -43,6 +43,7 @@ class Poller {
 
   async tick() {
     if (this.running) return;
+    if (instanceLockHeldByOther()) return; // v1.6.1 工作锁：本实例非持有者时不工作
     this.running = true;
     try {
       // 轮询进行中的任务（待提交任务由 submitter.js 接管，见 active() 的 video_id 过滤）

@@ -937,4 +937,37 @@ const renders = {
   },
 };
 
-module.exports = { db, settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };
+/* ---------------- v1.6.1：单实例工作锁 ----------------
+ * 后台工作器（轮询/提交/渲染）全局只允许一个实例持有：
+ * 多个控制台进程共用同一 SQLite 时，锁的持有者才运行工作器，
+ * 其余实例仅提供 API——根治孤儿进程抢占任务队列的问题。
+ * 心跳 10s，锁过期判定 15s（持有者进程消亡后可被接管）。 */
+
+const INSTANCE_LOCK_KEY = 'instance_lock';
+
+function getInstanceLock() {
+  try { return JSON.parse(settings.get(INSTANCE_LOCK_KEY) || 'null'); } catch { return null; }
+}
+
+/** 锁是否被「其他存活进程」持有（心跳过期视为无主） */
+function instanceLockHeldByOther() {
+  const l = getInstanceLock();
+  if (!l || l.pid === process.pid) return false;
+  if (Date.now() - (l.heartbeat || 0) > 15_000) return false;
+  try { process.kill(l.pid, 0); return true; } catch { return false; }
+}
+
+function acquireInstanceLock() {
+  if (instanceLockHeldByOther()) return false;
+  settings.set(INSTANCE_LOCK_KEY, JSON.stringify({ pid: process.pid, heartbeat: Date.now() }));
+  return true;
+}
+
+/** 持有者心跳；锁无主时顺带接管 */
+function refreshInstanceLock() {
+  if (!instanceLockHeldByOther()) {
+    settings.set(INSTANCE_LOCK_KEY, JSON.stringify({ pid: process.pid, heartbeat: Date.now() }));
+  }
+}
+
+module.exports = { db, settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR, acquireInstanceLock, instanceLockHeldByOther, refreshInstanceLock };
