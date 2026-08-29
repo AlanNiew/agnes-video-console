@@ -345,6 +345,7 @@ class Renderer {
       const fl = [];
       // v1.6：烧录字幕时 xfade 链先输出 [vpre]，再挂 subtitles 滤镜得 [vout]
       const needSubFilter = subLines.length > 0;
+      log('info', `渲染任务 #${job.id} 字幕诊断：subLines=${subLines.length} needSubFilter=${needSubFilter} burn_subtitles=${wantSubs} narrText样本=${JSON.stringify((norm.find((s) => s.narrationText) || {}).narrationText || null).slice(0, 40)}`);
       if (needSubFilter) {
         fs.writeFileSync(path.join(tmpDir, 'subs.ass'), buildSubtitleAss(subLines, { fontsize: subFontsize, family: font?.family || 'Arial' }));
       }
