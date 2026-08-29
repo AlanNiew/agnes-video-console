@@ -172,6 +172,9 @@ for (const [name, type] of [
 ]) {
   if (!shotCols.has(name)) db.exec(`ALTER TABLE shots ADD COLUMN ${name} ${type}`);
 }
+const rjobCols = new Set(db.prepare('PRAGMA table_info(render_jobs)').all().map((r) => r.name));
+if (!rjobCols.has('covers')) db.exec('ALTER TABLE render_jobs ADD COLUMN covers TEXT'); // v1.8 封面候选 JSON
+
 const ttsCols = new Set(db.prepare('PRAGMA table_info(project_tts)').all().map((r) => r.name));
 if (!ttsCols.has('shot_id')) db.exec('ALTER TABLE project_tts ADD COLUMN shot_id INTEGER');
 // v1.4：项目背景音乐选择（JSON：song_id/name/artist/album/level/local_path 等）
@@ -321,7 +324,7 @@ const stmts = {
   listRenderJobsByProject: db.prepare('SELECT * FROM render_jobs WHERE project_id = ? ORDER BY id DESC'),
   queuedRenderJobs: db.prepare("SELECT * FROM render_jobs WHERE status = 'queued' ORDER BY id ASC"),
   updateRenderJob: db.prepare(
-    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, updated_at = ? WHERE id = ?'
+    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, updated_at = ? WHERE id = ?'
   ),
   deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
   deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
@@ -912,6 +915,7 @@ function renderRowToApi(row) {
     progress: Number(row.progress || 0),
     output_path: row.output_path,
     output_url: row.output_path ? '/artifacts/' + path.basename(row.output_path) : null,
+    covers: parseJson(row.covers) || [], // v1.8 封面候选 [{path,url}]
     error_message: row.error_message,
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -941,6 +945,7 @@ const renders = {
       patch.progress !== undefined ? Number(patch.progress) : cur.progress,
       patch.output_path !== undefined ? patch.output_path : cur.output_path,
       patch.error_message !== undefined ? patch.error_message : cur.error_message,
+      patch.covers !== undefined ? JSON.stringify(patch.covers) : cur.covers,
       Date.now(),
       Number(id)
     );

@@ -897,7 +897,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (done1?.status !== 'completed' || done2?.status !== 'completed') {
     err(`渲染素材未就绪: shot1=${done1?.status} shot2=${done2?.status}`);
   }
-  const ren = await api('POST', `/api/projects/${pid}/render`, { transition_ms: 400, title_card: true, end_card: true });
+  const ren = await api('POST', `/api/projects/${pid}/render`, { transition_ms: 400, title_card: true, end_card: true, aspect: '9:16', burn_subtitles: true, subtitle_fontsize: 42 });
   if (ren.status === 400 && String(ren.data.error).includes('ffmpeg')) {
     ok('成片渲染：本环境无 ffmpeg，跳过真实渲染（校验通过）');
   } else {
@@ -905,6 +905,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
     if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined) err('渲染参数缺少 BGM 字段');
     if (ren.data.params?.narration_volume === undefined) err('渲染参数缺少 narration_volume');
+    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined) err('渲染参数缺少字幕烧录字段');
+    if (ren.data.params?.aspect !== '9:16') err(`竖屏 aspect 参数未生效: ${ren.data.params?.aspect}`);
     if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined) err('渲染参数缺少字幕烧录字段');
     // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
     {
@@ -930,11 +932,20 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       err(`渲染未完成: ${renJob?.status} / ${renJob?.error_message}`);
     }
     if (!renJob.output_url || !fs.existsSync(renJob.output_path)) err('渲染产物缺失');
+    // v1.8：竖屏尺寸 + 封面候选
     const { spawnSync: ss } = require('node:child_process');
-    const fp = ss('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', renJob.output_path], { encoding: 'utf8' });
-    const dur = Number(String(fp.stdout || '').trim());
+    const fp = ss('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=width,height', '-of', 'json', renJob.output_path], { encoding: 'utf8' });
+    let dur = NaN, vw = 0, vh = 0;
+    try {
+      const meta = JSON.parse(fp.stdout || '{}');
+      dur = Number(meta.format?.duration);
+      const v = (meta.streams || []).find((s) => s.width);
+      vw = v?.width; vh = v?.height;
+    } catch { /* ignore */ }
     if (Number.isFinite(dur) && (dur < 6 || dur > 20)) err(`成片时长异常: ${dur}s`);
-    ok(`一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '时长未知'}，含片头/片尾卡与叠化）`);
+    if (vw !== 720 || vh !== 1280) err(`竖屏尺寸异常: ${vw}x${vh}（应为 720x1280）`);
+    if (!Array.isArray(renJob.covers) || !renJob.covers.length || !fs.existsSync(renJob.covers[0].path)) err('封面候选未生成');
+    ok(`一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '?'} · 竖屏 ${vw}x${vh} · 封面 ${renJob.covers.length} 张 · 含片头/片尾卡与叠化）`);
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');

@@ -18,11 +18,19 @@ const netmusic = require('./netmusic');
 const { log } = require('./logger');
 
 const TICK_MS = 1500;
-const OUT_W = 1280;
-const OUT_H = 720;
 const OUT_FPS = 30;
 const TITLE_DUR = 2.8;
 const END_DUR = 3.5;
+// v1.8 支持的成片方向：16:9 横屏（B站/西瓜/视频号）与 9:16 竖屏（抖音/快手）
+const DIMS = { '16:9': { w: 1280, h: 720 }, '9:16': { w: 720, h: 1280 } };
+
+/** 解析成片方向：显式参数 > 项目画幅 > 默认横屏 */
+function resolveDims(aspect, projectRatio) {
+  const a = ['16:9', '9:16'].includes(String(aspect))
+    ? String(aspect)
+    : (String(projectRatio) === '9:16' ? '9:16' : '16:9');
+  return { aspect: a, ...DIMS[a] };
+}
 
 /** 简易中文字符检测（用于字体能力降级） */
 function hasCJK(s) { return /[\u4e00-\u9fff\u3400-\u4dbf]/.test(String(s || '')); }
@@ -141,9 +149,9 @@ function assEscape(text) {
 /**
  * 生成 ASS 字幕文件内容（纯函数，供渲染与 e2e 断言）
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
- * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number}} [opts]
+ * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number, marginV?:number}} [opts]
  */
-function buildSubtitleAss(lines, { fontsize = 42, family = 'Microsoft YaHei', playResX = OUT_W, playResY = OUT_H } = {}) {
+function buildSubtitleAss(lines, { fontsize = 42, family = 'Microsoft YaHei', playResX = 1280, playResY = 720, marginV = 52 } = {}) {
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
@@ -153,7 +161,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Narr,${family},${fontsize},&H00DCECF2,&H000000FF,&H00181410,&H80000000,1,0,0,0,100,100,0,0,1,2.2,1.2,2,60,60,52,1
+Style: Narr,${family},${fontsize},&H00DCECF2,&H000000FF,&H00181410,&H80000000,1,0,0,0,100,100,0,0,1,2.2,1.2,2,60,60,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
@@ -255,6 +263,9 @@ class Renderer {
     // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72
     const wantSubs = params.burn_subtitles !== false;
     const subFontsize = Math.min(Math.max(Number(params.subtitle_fontsize) || 42, 24), 72);
+    // v1.8 成片方向：16:9 横屏 / 9:16 竖屏（默认跟随项目画幅）
+    const dims = resolveDims(params.aspect, collected.project.aspect_ratio);
+    const { w: OUT_W, h: OUT_H } = dims;
 
     /* ---- 0) BGM：优先本地缓存，缺失则现取播放地址重新下载 ---- */
     let bgmFile = null;
@@ -283,8 +294,7 @@ class Renderer {
         const dest = path.join(tmpDir, `seg-${String(i + 1).padStart(2, '0')}.mp4`);
         const r = await runFfmpeg(['-i', seg.src, '-vf',
           `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},setsar=1,fps=${OUT_FPS},format=yuv420p`,
-          '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest]);
-        if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
+          '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest]);        if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
         const dur = probeDuration(dest) || seg.nominalSeconds;
         norm.push({ file: dest, duration: dur, narrationPath: seg.narrationPath, narrationText: seg.narrationText, narrationDuration: seg.narrationDuration });
         renders.update(job.id, { progress: 2 + Math.round((38 * (i + 1)) / segments.length) });
@@ -294,11 +304,11 @@ class Renderer {
       const font = stageFont(tmpDir);
       const cards = [];
       if (wantTitle) {
-        const card = await this.makeTitleCard(tmpDir, font, project.name);
+        const card = await this.makeTitleCard(tmpDir, font, project.name, dims);
         if (card) cards.push({ kind: 'head', ...card });
       }
       if (wantEnd) {
-        const card = await this.makeEndCard(tmpDir, font, project.name, sceneImage?.local_path || sceneImage?.remote_url || null);
+        const card = await this.makeEndCard(tmpDir, font, project.name, sceneImage?.local_path || sceneImage?.remote_url || null, dims);
         if (card) cards.push({ kind: 'tail', ...card });
       }
 
@@ -350,7 +360,8 @@ class Renderer {
       const needSubFilter = subLines.length > 0;
       log('info', `渲染任务 #${job.id} 字幕诊断：subLines=${subLines.length} needSubFilter=${needSubFilter} burn_subtitles=${wantSubs} narrText样本=${JSON.stringify((norm.find((s) => s.narrationText) || {}).narrationText || null).slice(0, 40)}`);
       if (needSubFilter) {
-        fs.writeFileSync(path.join(tmpDir, 'subs.ass'), buildSubtitleAss(subLines, { fontsize: subFontsize, family: font?.family || 'Arial' }));
+        const marginV = Math.round(OUT_H * (dims.aspect === '9:16' ? 0.15 : 0.072)); // 竖屏避开手机底部 UI 区
+        fs.writeFileSync(path.join(tmpDir, 'subs.ass'), buildSubtitleAss(subLines, { fontsize: subFontsize, family: font?.family || 'Arial', playResX: OUT_W, playResY: OUT_H, marginV }));
       }
       let prev = '[0:v]';
       let cum = seqs[0].duration;
@@ -431,7 +442,28 @@ class Renderer {
       if (!r.ok) return this.fail(job.id, `终混失败：${r.err.slice(0, 400)}`);
 
       const outDur = probeDuration(outPath) || total;
-      renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath });
+
+      /* ---- 5) 封面候选（v1.8：3 张关键帧，第一张叠片名；best-effort 不影响成片） ---- */
+      const covers = [];
+      try {
+        const pickTimes = [0.18, 0.5, 0.82].map((r) => Math.min(Math.max(total * r, 0.5), Math.max(total - 0.4, 0.5)));
+        for (let i = 0; i < pickTimes.length; i++) {
+          const name = `cover-${job.id}-${i + 1}.png`;
+          const cpath = path.join(ARTIFACTS_DIR, name);
+          const args = ['-i', outPath, '-ss', pickTimes[i].toFixed(2), '-frames:v', '1'];
+          if (i === 0 && font) {
+            args.push('-vf', `drawtext=fontfile=${font.rel}:text='${escDrawtext(project.name)}':fontsize=${Math.round(dims.w * 0.052)}:fontcolor=0xF2ECDC:borderw=3:bordercolor=0x181410:x=(w-text_w)/2:y=h-text_h-${Math.round(dims.h * 0.06)}`);
+          }
+          args.push(cpath);
+          const r = await runFfmpeg(args, { cwd: tmpDir });
+          if (r.ok && fs.existsSync(cpath)) covers.push({ path: cpath, url: `/artifacts/${name}` });
+        }
+        if (covers.length) log('info', `渲染任务 #${job.id} 生成封面候选 ${covers.length} 张`);
+      } catch (e) {
+        log('warn', `渲染任务 #${job.id} 封面生成失败（不影响成片）：${e.message}`);
+      }
+
+      renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath, covers });
       log('info', `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 → ${outPath}`);
     } finally {
       try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
@@ -439,17 +471,17 @@ class Renderer {
   }
 
   /** 片头卡：合成星野 + 居中片名（字体缺失/无中文字体时降级为纯星野） */
-  async makeTitleCard(tmpDir, font, title) {
+  async makeTitleCard(tmpDir, font, title, dims = { w: 1280, h: 720 }) {
     const bg = path.join(tmpDir, 'title-bg.png');
     const r1 = await runFfmpeg([
-      '-f', 'lavfi', '-i', `nullsrc=s=${OUT_W}x${OUT_H},geq=lum='if(lt(random(2),0.0025),170+random(0)*85,14)':cb=128:cr=128`,
+      '-f', 'lavfi', '-i', `nullsrc=s=${dims.w}x${dims.h},geq=lum='if(lt(random(2),0.0025),170+random(0)*85,14)':cb=128:cr=128`,
       '-frames:v', '1', '-vf', 'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.3', bg,
     ]);
     if (!r1.ok) return { file: null, duration: TITLE_DUR, failed: r1.err };
     const dest = path.join(tmpDir, 'card-title.mp4');
     const vf = ['fade=t=in:st=0:d=0.9,fade=t=out:st=' + (TITLE_DUR - 0.6).toFixed(1) + ':d=0.6', 'format=yuv420p'];
     if (font && (font.cjk || !hasCJK(title))) {
-      vf.unshift('drawtext=fontfile=' + font.rel + `:text='${escDrawtext(title)}':fontsize=72:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2`);
+      vf.unshift('drawtext=fontfile=' + font.rel + `:text='${escDrawtext(title)}':fontsize=${Math.round(dims.w * 0.1)}:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2`);
     }
     const r2 = await runFfmpeg([
       '-loop', '1', '-i', bg, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
@@ -460,10 +492,10 @@ class Renderer {
   }
 
   /** 片尾卡：场景图压暗 + 「— 完 —」与片名（无场景图/字体时降级） */
-  async makeEndCard(tmpDir, font, title, sceneSrc) {
+  async makeEndCard(tmpDir, font, title, sceneSrc, dims = { w: 1280, h: 720 }) {
     const dest = path.join(tmpDir, 'card-end.mp4');
     const vf = [
-      'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720,setsar=1',
+      `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=increase,crop=${dims.w}:${dims.h},setsar=1`,
       'eq=brightness=-0.12:saturation=0.9',
     ];
     if (font && (font.cjk || !hasCJK(title))) {
@@ -473,7 +505,7 @@ class Renderer {
     vf.push(`fade=t=in:st=0:d=0.8,fade=t=out:st=${(END_DUR - 0.6).toFixed(1)}:d=0.6`, 'format=yuv420p');
     const inputArgs = sceneSrc
       ? ['-loop', '1', '-i', sceneSrc]
-      : ['-f', 'lavfi', '-i', `color=c=0x060A14:s=${OUT_W}x${OUT_H}`];
+      : ['-f', 'lavfi', '-i', `color=c=0x060A14:s=${dims.w}x${dims.h}`];
     const r = await runFfmpeg([
       ...inputArgs, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
       '-t', String(END_DUR), '-r', String(OUT_FPS), '-vf', vf.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest,

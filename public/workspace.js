@@ -388,6 +388,10 @@
         <div class="copy-sect" id="wsRenderSection">
           <h4>🎞️ 成片渲染 <span class="muted" style="font-weight:400">已完成镜头 + 逐镜旁白 → 完整短片（本地 ffmpeg 合成）</span></h4>
           <div class="row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <select id="wsRAspect" class="meta-tag" style="background:var(--bg)" title="成片方向（默认跟随项目画幅）">
+              <option value="16:9" ${p.aspect_ratio !== '9:16' ? 'selected' : ''}>横屏 16:9</option>
+              <option value="9:16" ${p.aspect_ratio === '9:16' ? 'selected' : ''}>竖屏 9:16</option>
+            </select>
             <label class="hint" style="display:flex;gap:6px;align-items:center">叠化
               <select id="wsRTransition" class="meta-tag" style="background:var(--bg)" title="镜头间叠化时长">
                 <option value="400">0.4s</option><option value="600" selected>0.6s</option><option value="1000">1.0s</option>
@@ -536,6 +540,7 @@
               narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
               burn_subtitles: $('#wsRSubs')?.checked !== false,
               subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
+              aspect: $('#wsRAspect')?.value || '16:9',
             },
           });
           toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
@@ -1265,6 +1270,10 @@
       ${active ? `<div style="height:6px;background:var(--bg,#1a1f2b);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${j.progress || 0}%;background:#4f7cff;transition:width .5s"></div></div>` : ''}
       ${j.status === 'completed' && j.output_url ? `<div style="margin-top:6px"><video controls preload="metadata" src="${esc(j.output_url)}" style="max-width:100%;border-radius:6px"></video>
         <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>` : ''}
+      ${(j.covers || []).length ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <span class="hint">封面候选：</span>
+        ${j.covers.map((c) => `<a href="${esc(c.url)}" download title="点击下载封面"><img src="${esc(c.url)}" style="height:72px;border-radius:4px;border:1px solid #333" /></a>`).join('')}
+      </div>` : ''}
       ${j.error_message ? `<div class="hint" style="color:#e5484d;margin-top:4px">✗ ${esc(j.error_message)}</div>` : ''}
     </div>`;
   }

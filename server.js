@@ -1462,6 +1462,10 @@ app.post('/api/projects/:id/render', ah(async (req, res) => {
     // v1.6 字幕烧录
     burn_subtitles: b.burn_subtitles === undefined ? true : Boolean(b.burn_subtitles),
     subtitle_fontsize: clampInt(b.subtitle_fontsize, 24, 72, 42),
+    // v1.8 成片方向：显式参数 > 项目画幅 > 默认横屏
+    aspect: ['16:9', '9:16'].includes(String(b.aspect))
+      ? String(b.aspect)
+      : (p.aspect_ratio === '9:16' ? '9:16' : '16:9'),
   };
   const collected = renderer.collectSegments(p.id);
   const ready = collected ? collected.segments.length : 0;

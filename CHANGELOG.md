@@ -2,6 +2,14 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.8.0] - 2026-08-29
+
+### Added
+
+- **竖屏 9:16 产线**：成片渲染方向感知——`aspect` 参数（16:9 / 9:16，默认跟随项目画幅），归一化、片头/片尾卡、字幕（PlayRes 与安全边距自动适配手机底部 UI 区）全链跟随方向；竖屏输出 720×1280@30，直通抖音/快手/视频号。
+- **封面自动生成**：渲染成功后自动抽取 3 张关键帧候选（18%/50%/82% 片长处）落 `data/artifacts`，首张叠片名；`render_jobs.covers` 落库，任务详情与工作台渲染卡直接展示缩略图与下载。best-effort：失败不影响成片。
+- mock e2e 渲染用例升级为竖屏端到端（720×1280 尺寸断言 + 封面存在断言）。
+
 ## [1.7.0] - 2026-08-29
 
 ### Added

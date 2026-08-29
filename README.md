@@ -4,7 +4,6 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
 ![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)
-
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
 [English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
@@ -21,6 +20,7 @@
 
 ## ✨ 特性
 
+- 📱 **竖屏 9:16 产线 + 封面自动生成（v1.8）**：渲染方向跟随项目画幅（16:9 横屏 / 9:16 竖屏直通抖音快手），字卡/字幕/安全边距全链自适应；渲染完成自动产出 3 张封面候选（关键帧 + 片名），工作台直接预览下载
 - 🎵 **在线 BGM 配乐（v1.4）**：工作台第⑥步搜索在线曲库（自托管音乐接口，网易云源）→ 试听 → 一键选用；渲染时 BGM 循环铺底、首尾淡入淡出，**有旁白时自动闪避**（sidechaincompress 压低音乐让人声突出），音量可调
 - 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（叠化转场、旁白按镜头对齐、片头/片尾卡、自动限幅），产出直接播放/下载
 - 🚦 **服务端提交队列（v1.3）**：任务创建为「入队」语义，后台提交器按 `submit_interval_ms` 节流提交上游，**429 限流自动指数退避重试**——批量提交不再产生撞墙死记录
