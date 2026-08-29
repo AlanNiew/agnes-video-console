@@ -2,6 +2,27 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.3.0] - 2026-08-29
+
+> 依据一次完整的真实创作实战（《种星星的人》全流程 AI 短片）回归审视产品后的改造：
+> 把「素材生产器」补全为「可出成片的创作工作站」。
+
+### Added
+
+- **一键成片渲染**：新增 `POST /api/projects/:id/render` 等端点与工作台第⑥步「🎞️ 成片渲染」——把已完成镜头视频（本地归档优先）与逐镜旁白在本地用 ffmpeg 合成完整短片：两遍式流程（各段归一化 1280×720@30 → xfade 链式叠化 → 旁白按镜头起幅点 `adelay` 对齐 → `amix`+`alimiter` 混音），可选片头/片尾卡（星野 + 片名 / 场景图压暗），`-progress` 实时回写进度，产物落 `data/artifacts/` 可直接播放/下载。需本机 ffmpeg。
+- **服务端提交队列**：任务创建改为「入队」语义，新增后台提交器 `submitter.js`——按模型读取 `submit_interval_ms` 服务端强制节流，**429 限流自动指数退避重试（默认 60s 起、5 次上限）**，网络错误/5xx 同样退避；重试耗尽才落 `submit_error`。批量提交不再因上游「1 次/分钟」限流产生撞墙死记录（实战中 8 镜首轮 6 条失败的问题根治）。
+- **视频本地归档**：任务完成即自动下载视频到 `data/artifacts`（`tasks.video_local_path`，API 返回 `video_local_url`），前端播放/下载优先本地；启动时自动补扫历史已完成任务。远端链接过期不再丢素材。
+- **superseded 失败治理**：项目任务聚合中，同镜头已有 `completed` 任务时，旧 `failed/submit_error` 自动标记 `superseded:true`（仅响应层，不改库），前端显示「已作废」徽标——看板不再被废提交记录误导。
+- **分镜旁白**：分镜生成（LLM）同步产出每镜 `narration` 旁白文案（与画面互补、连起来成篇），`shots` 表新增列，工作台分镜卡片可编辑并一键按镜头合成配音（TTS `shot_id` 绑定，成片渲染按镜头对齐时间轴）。
+- **镜头级引用开关**：`shots.use_character_ref`（默认开）——纯空镜/无人镜头可关闭角色图引用，以纯文生模式提交（不要求角色定稿图、不注入 `<Picture 1>` 前缀）；纯风景项目不再被 400 挡住。
+- **API 自描述**：新增 `GET /api/openapi.json`（轻量 OpenAPI：路径 + 摘要 + 关键语义说明，自动化脚本 / AI Agent 无需读源码即可对接）；`/api/meta` 的 `models[].rate_limit` 下发上游限流提示。
+
+### Changed
+
+- **提交语义**：`POST /api/tasks`、重试、镜头/项目视频提交统一为「入队即返回 201（queued）」，提交由后台完成（响应中不再即时含 `video_id`，`submitted_at` 记录实际提交时间；轮询超时基准同步改为 `submitted_at`）。
+- 悬挂任务清理（原 poller `cleanStuck`）职责移交提交器：待提交任务不再按创建时长误杀。
+- mock e2e 扩展到 **59 项**：429 自动重试、服务端提交节流、本地归档、superseded、分镜旁白落库、纯空镜 text 模式 payload、成片渲染真实 ffmpeg 端到端（含产物时长与删除清理）、`/api/openapi.json`、meta 限流提示。
+
 ## [Unreleased]
 
 ### Added
@@ -15,6 +36,7 @@
 
 - 图片生成失败统一为 502 汇总错误（此前超时单独 504）。
 - mock e2e 扩展到 **50 项**：auto_select 对比模式（文案/分镜）、count 多图生成与落库。
+- 上一批未提交功能（Fish Audio TTS 配音、对比采用、多图候选、流程引导）随 1.3.0 一并入库。
 
 ## [1.2.0] - 2026-08-29
 

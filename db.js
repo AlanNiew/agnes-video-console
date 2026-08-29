@@ -107,6 +107,7 @@ CREATE TABLE IF NOT EXISTS project_tts (      -- TTS 配音记录（Fish Audio�
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   project_id INTEGER NOT NULL,
   kind TEXT DEFAULT 'narration',              -- narration=整片旁白 | shot=单镜头台词
+  shot_id INTEGER,                            -- 绑定镜头（kind=shot 时指向 shots.id，成片渲染按镜头取旁白）
   text TEXT NOT NULL,                          -- 合成原文
   model TEXT,                                  -- tts 模型（s2.1-pro-free 等）
   reference_id TEXT,                           -- 音色模型 id（Fish voice id，缺省=平台默认音色）
@@ -120,6 +121,19 @@ CREATE TABLE IF NOT EXISTS project_tts (      -- TTS 配音记录（Fish Audio�
   created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ptts_project ON project_tts(project_id);
+
+CREATE TABLE IF NOT EXISTS render_jobs (      -- v1.3 成片渲染任务
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  project_id INTEGER NOT NULL,
+  status TEXT NOT NULL DEFAULT 'queued',      -- queued | rendering | completed | failed
+  params TEXT,                                 -- JSON：transition_ms / narration_offset_ms / title_card / end_card
+  progress INTEGER DEFAULT 0,                  -- 0–100（由 ffmpeg -progress 回写）
+  output_path TEXT,                            -- 成片本地路径（data/artifacts）
+  error_message TEXT,
+  created_at INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_rjobs_project ON render_jobs(project_id);
 `);
 
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
@@ -142,6 +156,23 @@ for (const [name, type] of MIGRATE_COLS) {
 // M2 溯源索引（列由上方迁移补齐后再建，避免旧库启动失败）
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_project ON tasks(project_id)');
 db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_shot ON tasks(shot_id)');
+
+// 迁移：v1.3 提交队列 / 视频本地归档 / 分镜旁白 / 镜头引用开关 / TTS 镜头绑定
+for (const [name, type] of [
+  ['submitted_at', 'INTEGER'],       // 真正提交上游成功的时间（提交队列下 poller 超时以此为基准）
+  ['video_local_path', 'TEXT'],      // 完成视频的本地归档路径（远端 metadata_url 会过期）
+]) {
+  if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
+}
+const shotCols = new Set(db.prepare('PRAGMA table_info(shots)').all().map((r) => r.name));
+for (const [name, type] of [
+  ['narration', 'TEXT'],                       // 镜头旁白文案
+  ['use_character_ref', 'INTEGER DEFAULT 1'],  // 是否引用角色定稿图（0 = 纯空镜，text 模式提交）
+]) {
+  if (!shotCols.has(name)) db.exec(`ALTER TABLE shots ADD COLUMN ${name} ${type}`);
+}
+const ttsCols = new Set(db.prepare('PRAGMA table_info(project_tts)').all().map((r) => r.name));
+if (!ttsCols.has('shot_id')) db.exec('ALTER TABLE project_tts ADD COLUMN shot_id INTEGER');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -174,6 +205,19 @@ const stmts = {
     WHERE status IN ('queued','in_progress') AND (video_id IS NULL OR video_id = '')
     ORDER BY created_at ASC
   `),
+  // v1.3 提交队列：待提交任务（提交器接管后不再按 created_at 年龄过滤）
+  pendingSubmitTasks: db.prepare(`
+    SELECT * FROM tasks
+    WHERE status = 'queued' AND (video_id IS NULL OR video_id = '')
+    ORDER BY created_at ASC, id ASC
+  `),
+  // v1.3 视频归档补扫：已完成但未本地归档的任务
+  completedWithoutLocal: db.prepare(`
+    SELECT * FROM tasks
+    WHERE status = 'completed' AND metadata_url IS NOT NULL AND metadata_url != ''
+      AND (video_local_path IS NULL OR video_local_path = '')
+    ORDER BY id ASC
+  `),
   countByStatus: db.prepare('SELECT status, COUNT(*) AS n FROM tasks GROUP BY status'),
   totalCount: db.prepare('SELECT COUNT(*) AS n FROM tasks'),
   updateTask: db.prepare(`
@@ -184,7 +228,8 @@ const stmts = {
       submit_response = ?, last_poll_response = ?, metadata_url = ?, error_message = ?,
       poll_count = ?, last_polled_at = ?,
       image = ?, num_frames = ?, frame_rate = ?, width = ?, height = ?, negative_prompt = ?,
-      project_id = ?, shot_id = ?, text_id = ?, image_id = ?
+      project_id = ?, shot_id = ?, text_id = ?, image_id = ?,
+      submitted_at = ?, video_local_path = ?
     WHERE id = ?
   `),
   insertProject: db.prepare(`
@@ -237,21 +282,21 @@ const stmts = {
 
   /* M2：镜头 */
   insertShot: db.prepare(`
-    INSERT INTO shots (project_id, seq, title, video_prompt, seconds, mode, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO shots (project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   getShot: db.prepare('SELECT * FROM shots WHERE id = ?'),
   listShots: db.prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY seq ASC, id ASC'),
-  updateShotFull: db.prepare('UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, updated_at = ? WHERE id = ?'),
+  updateShotFull: db.prepare('UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, narration = ?, use_character_ref = ?, updated_at = ? WHERE id = ?'),
   updateShotSeq: db.prepare('UPDATE shots SET seq = ?, updated_at = ? WHERE id = ? AND project_id = ?'),
   deleteShot: db.prepare('DELETE FROM shots WHERE id = ?'),
   deleteShotsByProject: db.prepare('DELETE FROM shots WHERE project_id = ?'),
 
   /* TTS：配音记录 */
   insertTts: db.prepare(`
-    INSERT INTO project_tts (project_id, kind, text, model, reference_id, voice_title, format,
+    INSERT INTO project_tts (project_id, kind, shot_id, text, model, reference_id, voice_title, format,
                              local_path, duration, size, error_message, selected, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   listProjectTts: db.prepare('SELECT * FROM project_tts WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
   getTts: db.prepare('SELECT * FROM project_tts WHERE id = ?'),
@@ -259,6 +304,19 @@ const stmts = {
   selectTts: db.prepare('UPDATE project_tts SET selected = 1 WHERE id = ?'),
   deleteTts: db.prepare('DELETE FROM project_tts WHERE id = ?'),
   deleteTtsByProject: db.prepare('DELETE FROM project_tts WHERE project_id = ?'),
+
+  /* v1.3：成片渲染任务 */
+  insertRenderJob: db.prepare(
+    'INSERT INTO render_jobs (project_id, status, params, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+  ),
+  getRenderJob: db.prepare('SELECT * FROM render_jobs WHERE id = ?'),
+  listRenderJobsByProject: db.prepare('SELECT * FROM render_jobs WHERE project_id = ? ORDER BY id DESC'),
+  queuedRenderJobs: db.prepare("SELECT * FROM render_jobs WHERE status = 'queued' ORDER BY id ASC"),
+  updateRenderJob: db.prepare(
+    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, updated_at = ? WHERE id = ?'
+  ),
+  deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
+  deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
 };
 
 /** 安全解析 JSON 列 */
@@ -325,6 +383,9 @@ function toTaskRow(row) {
     shot_id: row.shot_id === null ? null : Number(row.shot_id),
     text_id: row.text_id === null ? null : Number(row.text_id),
     image_id: row.image_id === null ? null : Number(row.image_id),
+    submitted_at: row.submitted_at === null || row.submitted_at === undefined ? null : Number(row.submitted_at),
+    video_local_path: row.video_local_path,
+    video_local_url: row.video_local_path ? '/artifacts/' + path.basename(row.video_local_path) : null,
   };
 }
 
@@ -379,6 +440,16 @@ const tasks = {
 
   active() {
     return stmts.activeTasks.all().map(toTaskRow);
+  },
+
+  /** v1.3 提交队列：待提交任务（queued 且尚未获得 video_id），由 submitter 接管 */
+  pendingSubmit() {
+    return stmts.pendingSubmitTasks.all().map(toTaskRow);
+  },
+
+  /** v1.3 归档补扫：已完成但尚未本地归档的任务 */
+  completedWithoutLocal() {
+    return stmts.completedWithoutLocal.all().map(toTaskRow);
   },
 
   /** 已提交但从未获得 video_id 的悬空任务（进程中断等） */
@@ -450,6 +521,8 @@ const tasks = {
       p.shot_id !== undefined ? p.shot_id : cur.shot_id,
       p.text_id !== undefined ? p.text_id : cur.text_id,
       p.image_id !== undefined ? p.image_id : cur.image_id,
+      p.submitted_at !== undefined ? p.submitted_at : cur.submitted_at,
+      p.video_local_path !== undefined ? p.video_local_path : cur.video_local_path,
       Number(id)
     );
     return true;
@@ -519,8 +592,10 @@ function shotRowToApi(row) {
     seq: Number(row.seq || 0),
     title: row.title,
     video_prompt: row.video_prompt,
+    narration: row.narration,
     seconds: row.seconds,
     mode: row.mode || 'reference',
+    use_character_ref: row.use_character_ref === null || row.use_character_ref === undefined ? 1 : Number(row.use_character_ref),
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -560,12 +635,13 @@ const projects = {
   },
 
   remove(id) {
-    // 级联清理：文案、图片、镜头、配音；视频任务保留但解除关联（事务保证原子完成）
+    // 级联清理：文案、图片、镜头、配音、渲染任务；视频任务保留但解除关联（事务保证原子完成）
     return tx(() => {
       stmts.deleteProjectTexts.run(Number(id));
       stmts.deleteProjectImages.run(Number(id));
       stmts.deleteTtsByProject.run(Number(id));
       stmts.deleteShotsByProject.run(Number(id));
+      stmts.deleteRenderJobsByProject.run(Number(id));
       stmts.detachProjectTasks.run(Number(id));
       return stmts.deleteProject.run(Number(id)).changes > 0;
     });
@@ -642,7 +718,16 @@ const projects = {
   },
 
   tasks(projectId) {
-    return stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
+    const rows = stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
+    // v1.3 superseded 计算（仅响应层，不改库）：同镜头已有 completed 任务时，
+    // 更早的 failed/submit_error 记录视为「已被新任务取代」，避免看板被废记录误导
+    const okShots = new Set(rows.filter((t) => t.status === 'completed' && t.shot_id).map((t) => t.shot_id));
+    for (const t of rows) {
+      if (t.shot_id && okShots.has(t.shot_id) && (t.status === 'failed' || t.status === 'submit_error')) {
+        t.superseded = true;
+      }
+    }
+    return rows;
   },
 
   /* ---------------- M2：镜头（分镜工作副本） ---------------- */
@@ -651,11 +736,14 @@ const projects = {
     return stmts.listShots.all(Number(projectId)).map(shotRowToApi);
   },
 
-  addShot({ project_id, seq, title, video_prompt, seconds, mode }) {
+  addShot({ project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref }) {
     const now = Date.now();
     const r = stmts.insertShot.run(
       Number(project_id), Number(seq) || 0, title || null, video_prompt || '',
-      seconds || null, mode || 'reference', now, now
+      seconds || null, mode || 'reference',
+      narration || null,
+      use_character_ref === undefined || use_character_ref === null ? 1 : (use_character_ref ? 1 : 0),
+      now, now
     );
     return Number(r.lastInsertRowid);
   },
@@ -669,6 +757,8 @@ const projects = {
       patch.video_prompt !== undefined ? patch.video_prompt : cur.video_prompt,
       patch.seconds !== undefined ? patch.seconds : cur.seconds,
       patch.mode !== undefined ? patch.mode : cur.mode,
+      patch.narration !== undefined ? (String(patch.narration || '').trim().slice(0, 200) || null) : cur.narration,
+      patch.use_character_ref !== undefined ? (patch.use_character_ref ? 1 : 0) : cur.use_character_ref,
       Date.now(),
       Number(id)
     );
@@ -688,7 +778,10 @@ const projects = {
       return shotsArr.map((s, i) =>
         Number(stmts.insertShot.run(
           pid, Number(s.seq ?? (i + 1)) || (i + 1), s.title || null, s.video_prompt || '',
-          s.seconds || null, s.mode || 'reference', now, now
+          s.seconds || null, s.mode || 'reference',
+          s.narration || null,
+          s.use_character_ref === undefined || s.use_character_ref === null ? 1 : (s.use_character_ref ? 1 : 0),
+          now, now
         ).lastInsertRowid)
       );
     });
@@ -711,9 +804,11 @@ const projects = {
     return stmts.listProjectTts.all(Number(projectId)).map(ttsRowToApi);
   },
 
-  addTts({ project_id, kind, text, model, reference_id, voice_title, format, local_path, duration, size, error_message, selected }) {
+  addTts({ project_id, kind, shot_id, text, model, reference_id, voice_title, format, local_path, duration, size, error_message, selected }) {
     const r = stmts.insertTts.run(
-      Number(project_id), kind || 'narration', String(text || ''), model || 's2.1-pro-free',
+      Number(project_id), kind || 'narration',
+      shot_id === undefined || shot_id === null ? null : Number(shot_id),
+      String(text || ''), model || 's2.1-pro-free',
       reference_id || null, voice_title || null, format || 'mp3',
       local_path || null, duration === undefined || duration === null ? null : Number(duration),
       size === undefined || size === null ? null : Number(size),
@@ -753,6 +848,7 @@ function ttsRowToApi(row) {
     id: Number(row.id),
     project_id: Number(row.project_id),
     kind: row.kind || 'narration',
+    shot_id: row.shot_id === null || row.shot_id === undefined ? null : Number(row.shot_id),
     text: row.text,
     model: row.model,
     reference_id: row.reference_id,
@@ -768,4 +864,55 @@ function ttsRowToApi(row) {
   };
 }
 
-module.exports = { db, settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };
+/* ---------------- v1.3：成片渲染任务 ---------------- */
+
+function renderRowToApi(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    project_id: Number(row.project_id),
+    status: row.status,
+    params: parseJson(row.params) || {},
+    progress: Number(row.progress || 0),
+    output_path: row.output_path,
+    output_url: row.output_path ? '/artifacts/' + path.basename(row.output_path) : null,
+    error_message: row.error_message,
+    created_at: Number(row.created_at),
+    updated_at: Number(row.updated_at),
+  };
+}
+
+const renders = {
+  insert({ project_id, params }) {
+    const now = Date.now();
+    const r = stmts.insertRenderJob.run(Number(project_id), 'queued', JSON.stringify(params || {}), now, now);
+    return Number(r.lastInsertRowid);
+  },
+  get(id) {
+    return renderRowToApi(stmts.getRenderJob.get(Number(id)));
+  },
+  listByProject(projectId) {
+    return stmts.listRenderJobsByProject.all(Number(projectId)).map(renderRowToApi);
+  },
+  queued() {
+    return stmts.queuedRenderJobs.all().map(renderRowToApi);
+  },
+  update(id, patch = {}) {
+    const cur = stmts.getRenderJob.get(Number(id));
+    if (!cur) return false;
+    stmts.updateRenderJob.run(
+      patch.status !== undefined ? patch.status : cur.status,
+      patch.progress !== undefined ? Number(patch.progress) : cur.progress,
+      patch.output_path !== undefined ? patch.output_path : cur.output_path,
+      patch.error_message !== undefined ? patch.error_message : cur.error_message,
+      Date.now(),
+      Number(id)
+    );
+    return true;
+  },
+  remove(id) {
+    return stmts.deleteRenderJob.run(Number(id)).changes > 0;
+  },
+};
+
+module.exports = { db, settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR };

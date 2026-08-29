@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-47%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-59%20passed-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
 **creation workspace (4-step pipeline) + task-queue board + background polling + SQLite persistence**.
@@ -22,6 +22,13 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 
 ## ✨ Features
 
+- 🎞️ One-click final cut (v1.3): workspace step ⑥ assembles completed shot videos + per-shot narration into a full short film locally via ffmpeg (xfade transitions, narration aligned per shot, title/end cards, auto limiting); output playable/downloadable from `data/artifacts/`
+- 🚦 Server-side submit queue (v1.3): task creation is "enqueue" semantics; a background submitter throttles per `submit_interval_ms` and **auto-retries 429 rate limits with exponential backoff** — batch submits no longer leave dead records
+- 💾 Local video archival (v1.3): completed videos auto-download to `data/artifacts` (`video_local_url` preferred for playback/download); startup sweep backfills history
+- 🗑️ Superseded governance (v1.3): stale failed records of a shot with a newer successful task are auto-marked superseded
+- 📝 Shot narration (v1.3): storyboard LLM emits per-shot `narration` copy (editable), one-click per-shot TTS bound via `shot_id`, aligned onto the final-cut timeline
+- 🔀 Per-shot reference toggle (v1.3): pure-landscape/no-character shots can skip the character reference and submit in text mode
+- 📡 Self-describing API (v1.3): `GET /api/openapi.json`; `/api/meta` carries upstream rate-limit hints
 - 🎬 Creation workspace (4-step pipeline): one-line idea → AI copywriting (script / character / scene, editable, multi-version) → AI character sheet (pick a final) → video tasks (reference mode auto-references the character image with a `<Picture 1>` consistency injection)
 - 🎞️ Storyboard (M2): AI breaks the idea into multi-shot storyboards (per-shot title + prompt + duration; auto/3/5/8 shots), each shot editable / reorderable / deletable with versioned history; submit per shot or batch-submit unfinished shots with configurable throttling; tasks are traced per shot
 - 🎬 Three models · per-model forms; model/aspect/duration lists served from `/api/meta` as the single source of truth
@@ -36,7 +43,7 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 - 🧭 Flow guidance: clickable step bar that follows scrolling, a dynamic "next step" hint bar, staged waiting messages, and one-click idea-to-storyboard on project creation
 - 🔐 API key stays server-side (SQLite), browser only sees a masked value; binds to `127.0.0.1` only
 - 🧾 Built-in log panel
-- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 40 assertions)
+- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 59 assertions, including 429 retry, local archival, and a real-ffmpeg final-cut render when ffmpeg is available)
 
 ## 🚀 Quick Start
 

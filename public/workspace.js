@@ -237,13 +237,18 @@
     const selVideo = (t) => t.find((x) => x.kind === 'video_prompt' && x.selected) || t.find((x) => x.kind === 'video_prompt');
     const selChar = images.find((x) => x.kind === 'character' && x.selected) || images.find((x) => x.kind === 'character');
     const selVideoText = selVideo(texts);
+    const completedShots = tasks.filter((t) => t.status === 'completed').length;
     const stepsDone = {
       1: Boolean(p.idea),
       2: texts.some((t) => t.kind === 'video_prompt' || t.kind === 'storyboard') || shots.length > 0,
       3: Boolean(selChar),
       4: tasks.length > 0, // M2 起 projects.status 退役，纯聚合推导
+      5: (d.tts || []).length > 0,
+      6: completedShots >= 2, // v1.3：≥2 个完成镜头即可渲染成片
     };
     const stepState = (n) => (stepsDone[n] ? 'done' : '');
+    let renderJobs = [];
+    try { renderJobs = (await api(`/api/projects/${id}/render/jobs`)).data.items || []; } catch { /* 旧后端兼容 */ }
     // 下一步引导：按当前产物状态给出唯一建议动作
     const guideInfo = (() => {
       if (!SCRIPT_FIELDS.some(([k]) => texts.some((t) => t.kind === k)) && !shots.length) {
@@ -252,6 +257,7 @@
       if (!shots.length) return { label: '把创意拆解为分镜', target: '#wsCopySections' };
       if (!selChar) return { label: '生成并定稿一张角色图（视频将引用它保持角色一致）', target: '#wsCharSection' };
       if (!tasks.length) return { label: '提交第一个镜头的视频任务', target: '#wsVideoSection' };
+      if (completedShots >= 2) return { label: '镜头已就绪：可一键渲染成片', target: '#wsRenderSection' };
       return { label: '全部就绪：可继续提交其他镜头，或在任务中心跟踪进度', target: null };
     })();
 
@@ -270,6 +276,8 @@
           <div class="step ${stepState(2)} ${currentStep === 2 ? 'active' : ''}" data-step="2"><span class="n">②</span>文案与提示词</div>
           <div class="step ${stepState(3)} ${currentStep === 3 ? 'active' : ''}" data-step="3"><span class="n">③</span>角色设定图</div>
           <div class="step ${stepState(4)} ${currentStep === 4 ? 'active' : ''}" data-step="4"><span class="n">④</span>视频生成</div>
+          <div class="step ${stepState(5)} ${currentStep === 5 ? 'active' : ''}" data-step="5"><span class="n">⑤</span>配音</div>
+          <div class="step ${stepState(6)} ${currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>成片</div>
         </div>
         ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b></span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
 
@@ -373,11 +381,32 @@
           </div>
           <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [])}</div>
         </div>
+
+        <!-- ⑥ 成片渲染（v1.3） -->
+        <div class="copy-sect" id="wsRenderSection">
+          <h4>🎞️ 成片渲染 <span class="muted" style="font-weight:400">已完成镜头 + 逐镜旁白 → 完整短片（本地 ffmpeg 合成）</span></h4>
+          <div class="row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <label class="hint" style="display:flex;gap:6px;align-items:center">叠化
+              <select id="wsRTransition" class="meta-tag" style="background:var(--bg)" title="镜头间叠化时长">
+                <option value="400">0.4s</option><option value="600" selected>0.6s</option><option value="1000">1.0s</option>
+              </select></label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center">旁白偏移
+              <select id="wsRNarrOffset" class="meta-tag" style="background:var(--bg)" title="旁白相对镜头起幅点的进入时间">
+                <option value="300">0.3s</option><option value="500" selected>0.5s</option><option value="1000">1.0s</option>
+              </select></label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRTitle" checked /> 片头卡</label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsREnd" checked /> 片尾卡</label>
+            <span class="spacer" style="flex:1"></span>
+            <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
+          </div>
+          <div class="hint mt">旁白取每个镜头最新的「镜头配音」（在上方分镜卡片中填写旁白并生成配音）；成片为 1280×720@30，旁白混音自动限幅。渲染在服务端后台进行，可离开本页。</div>
+          <div id="wsRenderJobs" class="mt">${renderJobs.map(renderJobItem).join('')}</div>
+        </div>
       </div>`;
 
     $('#wsBack').onclick = () => { currentProjectId = null; renderList(); };
     // 步骤条点击跳转 + 下一步引导
-    const stepTargets = { 1: '#wsCopySections', 2: '#wsCopySections', 3: '#wsCharSection', 4: '#wsVideoSection' };
+    const stepTargets = { 1: '#wsCopySections', 2: '#wsCopySections', 3: '#wsCharSection', 4: '#wsVideoSection', 5: '#wsTtsSection', 6: '#wsRenderSection' };
     ws.querySelectorAll('.step[data-step]').forEach((el) => {
       el.onclick = () => {
         currentStep = Number(el.dataset.step);
@@ -431,6 +460,30 @@
     bindGotoTaskLinks();
     // TTS 配音事件
     bindTtsEvents(p.id);
+    // v1.3 成片渲染
+    const rbtn = $('#wsRenderBtn');
+    if (rbtn) {
+      rbtn.onclick = async () => {
+        rbtn.disabled = true;
+        try {
+          await api(`/api/projects/${p.id}/render`, {
+            method: 'POST',
+            body: {
+              transition_ms: Number($('#wsRTransition')?.value || 600),
+              narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
+              title_card: $('#wsRTitle')?.checked !== false,
+              end_card: $('#wsREnd')?.checked !== false,
+            },
+          });
+          toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
+          await renderProject(p.id);
+        } catch (e) {
+          toast('渲染失败：' + e.message, 'err');
+          rbtn.disabled = false;
+        }
+      };
+    }
+    if (renderJobs.some((j) => j.status === 'queued' || j.status === 'rendering')) startRenderPoll(p.id);
   }
 
   /* ---------------- TTS 配音（Fish Audio） ---------------- */
@@ -656,7 +709,7 @@
       return !t || t.status === 'failed' || t.status === 'submit_error';
     });
     return `
-      <div class="hint mt">以下镜头将引用定稿角色图（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」），每个镜头一条独立视频任务。</div>
+      <div class="hint mt">镜头默认引用定稿角色图（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）；纯空镜镜头可在上方分镜卡片中取消勾选「引用角色图」。</div>
       <div id="wsShotSubmit" class="mt">
         ${shots.map((s) => {
           const t = shotLatestTask(tasks, s.id);
@@ -678,7 +731,7 @@
         ${batchBusy ? '<button class="btn ghost sm" id="wsBatchStop">停止批量</button>' : ''}
         <span class="hint" id="wsBatchHint">${esc(batchHint)}</span>
       </div>
-      <div class="hint mt">批量提交按设置中的「批量提交间隔」逐个发起；关闭页面即停止后续提交，已提交的不受影响。</div>`;
+      <div class="hint mt">批量提交按设置中的「批量提交间隔」逐个发起；服务端提交队列也按同一间隔节流并自动重试限流（429）——即使关闭页面，已入队任务也会由后台继续提交。</div>`;
   }
 
   async function submitShot(projectId, shotId) {
@@ -688,7 +741,7 @@
     btn.textContent = '提交中…';
     try {
       const r = await api(`/api/projects/${projectId}/shots/${shotId}/videos`, { method: 'POST', body: {} });
-      toast(`镜头任务 #${r.id} 已提交`, 'ok');
+      toast(`镜头任务 #${r.id} 已入队（后台提交器将按间隔自动提交）`, 'ok');
       window.__app?.loadTasks?.();
       if (currentProjectId === projectId) await renderProject(projectId);
     } catch (e) {
@@ -803,6 +856,11 @@
               <button class="btn ghost sm danger" data-shot-del title="删除镜头">✕</button>
             </div>
             <textarea data-shot-prompt rows="3">${esc(s.video_prompt)}</textarea>
+            <textarea data-shot-narration rows="2" placeholder="旁白文案（可选；成片渲染时按镜头合成配音并对齐时间轴）" style="margin-top:6px">${esc(s.narration || '')}</textarea>
+            <label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:6px">
+              <input type="checkbox" data-shot-ref ${s.use_character_ref !== 0 ? 'checked' : ''} />
+              引用角色定稿图（纯空镜 / 无人镜头可取消勾选，将以纯文生模式提交）
+            </label>
             <div class="row" style="display:flex;gap:10px;align-items:center;margin-top:6px">
               <select data-shot-seconds class="meta-tag" style="background:var(--bg)">${secondsOpts(s.seconds)}</select>
               <button class="btn ghost sm" data-shot-save>保存修改</button>
@@ -845,11 +903,13 @@
       if (save) {
         save.onclick = async () => {
           try {
-            await api(`/api/projects/${projectId}/shots/${id}`, {
+              await api(`/api/projects/${projectId}/shots/${id}`, {
               method: 'PATCH',
               body: {
                 title: card.querySelector('[data-shot-title]').value,
                 video_prompt: card.querySelector('[data-shot-prompt]').value,
+                narration: card.querySelector('[data-shot-narration]').value,
+                use_character_ref: card.querySelector('[data-shot-ref]').checked,
                 seconds: card.querySelector('[data-shot-seconds]').value,
               },
             });
@@ -967,12 +1027,16 @@
   /* 项目任务列表（独立渲染，供局部刷新；M2 起按镜头分组） */
   function renderTaskList(tasks, shots = []) {
     if (!tasks.length) return '';
-    const row = (t) => `
+    const row = (t) => {
+      const playSrc = t.video_local_url || t.metadata_url; // v1.3：本地归档优先（远端链接会过期）
+      return `
       <div class="ver-item">
         #${t.id} · ${esc(STATUS_LABEL[t.status] || t.status)} · ${Number(t.progress) > 0 ? `${Number(t.progress)}%` : ''} · ${fmtTime(t.created_at)}
-        ${t.status === 'completed' && t.metadata_url ? `<a class="act green" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">播放/下载</a>` : ''}
+        ${t.superseded ? '<span class="meta-tag" title="该镜头已有更新成功的任务，此失败记录仅供参考">已作废</span>' : ''}
+        ${t.status === 'completed' && playSrc ? `<a class="act green" href="${esc(playSrc)}" target="_blank" rel="noopener">播放/下载${t.video_local_url ? '（本地）' : ''}</a>` : ''}
         <a class="act" href="#" data-goto-task="${t.id}" style="margin-left:auto">去任务中心查看</a>
       </div>`;
+    };
     const shotMap = new Map(shots.map((s) => [s.id, s]));
     const groups = [];   // 有镜头归属的任务
     const others = [];   // 无归属（旧流程/镜头已删）
@@ -995,6 +1059,43 @@
         }).join('')}
         ${others.length ? `<div class="mt"><span class="badge">其他</span></div>${others.map(row).join('')}` : ''}
       </div>`;
+  }
+
+  /* ---------------- v1.3 成片渲染面板 ---------------- */
+  const RENDER_STATUS = { queued: '排队中', rendering: '渲染中', completed: '已完成', failed: '失败' };
+
+  function renderJobItem(j) {
+    const active = j.status === 'queued' || j.status === 'rendering';
+    return `
+    <div class="ver-item" data-render-job="${j.id}">
+      <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%` : ''} · ${fmtTime(j.created_at)}
+      ${active ? `<div style="height:6px;background:var(--bg,#1a1f2b);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${j.progress || 0}%;background:#4f7cff;transition:width .5s"></div></div>` : ''}
+      ${j.status === 'completed' && j.output_url ? `<div style="margin-top:6px"><video controls preload="metadata" src="${esc(j.output_url)}" style="max-width:100%;border-radius:6px"></video>
+        <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>` : ''}
+      ${j.error_message ? `<div class="hint" style="color:#e5484d;margin-top:4px">✗ ${esc(j.error_message)}</div>` : ''}
+    </div>`;
+  }
+
+  let renderPollTimer = null;
+  /** 渲染任务进行中：轮询刷新进度条；全部落定后整页刷新一次（启用下载/更新步骤状态） */
+  function startRenderPoll(projectId) {
+    clearInterval(renderPollTimer);
+    renderPollTimer = setInterval(async () => {
+      if (currentProjectId !== projectId) {
+        clearInterval(renderPollTimer);
+        renderPollTimer = null;
+        return;
+      }
+      let jobs = [];
+      try { jobs = (await api(`/api/projects/${projectId}/render/jobs`)).data.items || []; } catch { return; }
+      const box = $('#wsRenderJobs');
+      if (box) box.innerHTML = jobs.map(renderJobItem).join('');
+      if (!jobs.some((j) => j.status === 'queued' || j.status === 'rendering')) {
+        clearInterval(renderPollTimer);
+        renderPollTimer = null;
+        await renderProject(projectId);
+      }
+    }, 2000);
   }
 
   function bindGotoTaskLinks() {

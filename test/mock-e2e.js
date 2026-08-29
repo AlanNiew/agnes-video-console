@@ -20,6 +20,8 @@ const TEST_ARTIFACTS = path.join(DATA_DIR_ROOT, 'e2e-artifacts'); // 测试专�
 /* ---------------- 模拟 Agnes API ---------------- */
 const mockJobs = new Map(); // video_id -> job
 let seq = 0;
+let rateLimitRemaining = 0; // v1.3：429 模拟计数器（>0 时 POST /v1/videos 返回 429）
+let fixtureFile = null;     // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
 
 function mockResult(job) {
   const completed = job.status === 'completed';
@@ -50,6 +52,11 @@ const mockServer = http.createServer(async (req, res) => {
   };
 
   if (req.method === 'POST' && u.pathname === '/v1/videos') {
+    // v1.3：429 限流模拟（由 /__mock/ratelimit 控制剩余次数）
+    if (rateLimitRemaining > 0) {
+      rateLimitRemaining -= 1;
+      return send(429, { detail: 'video generation rate limit exceeded: allows 1 requests per 1 minute(s)' });
+    }
     let raw = '';
     for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw || '{}');
@@ -68,6 +75,27 @@ const mockServer = http.createServer(async (req, res) => {
     };
     mockJobs.set(job.video_id, job);
     return send(200, mockResult(job));
+  }
+
+  // v1.3：模拟完成的视频文件（供本地归档下载与成片渲染 e2e；有 ffmpeg 时返回可解码的真实测试视频）
+  if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
+    if (fixtureFile && fs.existsSync(fixtureFile)) {
+      const buf = fs.readFileSync(fixtureFile);
+      res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': buf.length });
+      return res.end(buf);
+    }
+    res.writeHead(200, { 'Content-Type': 'video/mp4' });
+    res.end(Buffer.from([0x00, 0x00, 0x00, 0x18, 0x66, 0x74, 0x79, 0x70, 0x6d, 0x70, 0x34, 0x32]));
+    return;
+  }
+
+  // v1.3：429 模拟开关 {count: N} —— 之后 N 次 POST /v1/videos 返回 429
+  if (req.method === 'POST' && u.pathname === '/__mock/ratelimit') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw || '{}');
+    rateLimitRemaining = Math.max(0, Number(body.count) || 0);
+    return send(200, { ok: true, rateLimitRemaining });
   }
 
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
@@ -100,8 +128,8 @@ const mockServer = http.createServer(async (req, res) => {
       // M2 分镜生成契约（system 中要求输出 shots 数组）
       content = JSON.stringify({
         shots: [
-          { seq: 1, title: '开场：麦田远景', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声', seconds: '5' },
-          { seq: 2, title: '近景：脚步与麦浪', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头，暖金色逆光，脚步声与麦浪沙沙声', seconds: '6' },
+          { seq: 1, title: '开场：麦田远景', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声', narration: '黄昏的麦田在风里起伏，少年把影子留在了土路上。', seconds: '5' },
+          { seq: 2, title: '近景：脚步与麦浪', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头，暖金色逆光，脚步声与麦浪沙沙声', narration: '他数着自己的脚步，像数着一整个夏天。', seconds: '6' },
         ],
       });
     } else if (sys.includes('JSON 对象')) {
@@ -155,6 +183,40 @@ async function api(method, p, body) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** v1.3：设置 mock 上游的 429 计数器（注意：该端点在 mock 服务器上，不是应用服务器） */
+async function mockRateLimit(count) {
+  const res = await fetch(`http://127.0.0.1:${MOCK_PORT}/__mock/ratelimit`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ count }),
+  });
+  return res.json();
+}
+
+/** v1.3：等待后台提交器把任务提交到上游（拿到 video_id 或进入失败终态） */
+async function waitSubmitted(id, timeoutMs = 20_000) {
+  const deadline = Date.now() + timeoutMs;
+  let t = null;
+  while (Date.now() < deadline) {
+    t = (await api('GET', `/api/tasks/${id}`)).data;
+    if (t?.video_id || ['failed', 'submit_error'].includes(t?.status)) return t;
+    await sleep(300);
+  }
+  return t;
+}
+
+/** v1.3：等待任务完成（渲染素材就绪） */
+async function waitCompleted(id, timeoutMs = 30_000) {
+  const deadline = Date.now() + timeoutMs;
+  let t = null;
+  while (Date.now() < deadline) {
+    t = (await api('GET', `/api/tasks/${id}`)).data;
+    if (['completed', 'failed', 'submit_error'].includes(t?.status)) return t;
+    await sleep(400);
+  }
+  return t;
+}
+
 /* ---------------- 主流程 ---------------- */
 (async () => {
   console.log('== Agnes Video 任务控制台 端到端冒烟测试 ==');
@@ -164,10 +226,23 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   await new Promise((r) => mockServer.listen(MOCK_PORT, r));
   console.log(`[mock] Agnes API 模拟服务器已启动于 :${MOCK_PORT}`);
 
+  // v1.3：有 ffmpeg 时生成可解码的测试视频（成片渲染 e2e 用；无 ffmpeg 则归档测试用伪字节）
+  try {
+    const { spawnSync } = require('node:child_process');
+    fixtureFile = path.join(DATA_DIR_ROOT, 'e2e-fixture.mp4');
+    const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
+      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15:duration=2',
+      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
+      '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', fixtureFile],
+      { encoding: 'utf8', timeout: 60_000 });
+    if (ff.status !== 0 || !fs.existsSync(fixtureFile)) fixtureFile = null;
+  } catch { fixtureFile = null; }
+
   // 配置并启动控制台（独立端口 + 独立数据库 + 独立 artifacts 目录）
   process.env.PORT = String(APP_PORT);
   process.env.DB_PATH = TEST_DB;
   process.env.DATA_DIR = TEST_ARTIFACTS;
+  process.env.SUBMIT_RATE_LIMIT_BASE_MS = '500'; // v1.3：加速 429 退避（默认 60s 对齐真实免费档）
   require('../server');
   // 轮询等待就绪（取代固定 sleep，消除慢机器/CI 上首检 ECONNREFUSED 的 flaky）
   let up = false;
@@ -182,12 +257,14 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!health.data?.ok) err('健康检查失败');
   ok('健康检查 /api/health');
 
-  // 2. 设置（指向 mock + 假 key）
+  // 2. 设置（指向 mock + 假 key；提交间隔设小以加速测试，同时验证服务端节流参数生效）
   const set = await api('PUT', '/api/settings', {
     api_key: 'sk-test-key-1234',
     base_url: `http://127.0.0.1:${MOCK_PORT}`,
     poll_interval_ms: 500,
     max_active_minutes: 1,
+    submit_interval_ms: 300,
+    fish_api_key: 'sk-fish-test-0000', // 仅用于校验层测试（本测试不会真正调用 Fish 合成）
   });
   if (set.status !== 200) err('保存设置失败');
   ok('保存设置（base_url→mock）');
@@ -223,7 +300,21 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (!Array.isArray(meta.data.image?.ratios) || meta.data.image.ratios.length < 5) {
     err('/api/meta 图片比例清单异常');
   }
-  ok('元数据 /api/meta：模型/画幅/时长/图片清单完整');
+  // v1.3：上游限流提示随 meta 下发
+  const flashMeta = meta.data.models.find((m) => m.id === 'agnes-video-2.5-flash');
+  if (!flashMeta?.rate_limit) err('meta 缺少 flash 模型的 rate_limit 限流提示');
+  ok('元数据 /api/meta：模型/画幅/时长/图片清单完整（含限流提示）');
+
+  // 3.3 v1.3：API 自描述
+  const oas = await api('GET', '/api/openapi.json');
+  if (oas.status !== 200
+    || !oas.data.paths?.['/api/tasks']?.post
+    || !oas.data.paths?.['/api/projects/{id}/render']?.post
+    || !oas.data.paths?.['/api/tts/generate']?.post) {
+    err('openapi.json 缺少关键端点描述');
+  }
+  if (!String(oas.data.info?.description || '').includes('入队')) err('openapi 描述未说明入队语义');
+  ok('/api/openapi.json 自描述：任务入队/成片渲染/配音端点齐全');
 
   // 4. 创建 text 任务
   const created = await api('POST', '/api/tasks', {
@@ -236,8 +327,12 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   });
   if (created.status !== 201) err(`创建任务失败: ${JSON.stringify(created)}`);
   const taskId = created.data.id;
-  if (!created.data.video_id) err('创建任务未返回 video_id');
-  ok(`已创建任务 #${taskId}，video_id=${created.data.video_id}`);
+  // v1.3：提交异步化 —— 创建仅入队（无 video_id），由后台提交器节流提交
+  if (created.data.video_id) err('任务刚创建就携带 video_id（提交应异步由提交器完成）');
+  const sub1 = await waitSubmitted(taskId);
+  if (!sub1?.video_id) err(`提交器未在期限内完成任务提交: ${JSON.stringify(sub1?.status)}`);
+  if (!sub1.submitted_at) err('提交成功但缺少 submitted_at');
+  ok(`已创建任务 #${taskId}，提交器异步提交成功 video_id=${sub1.video_id}`);
 
   // 4.1 列表接口回归：任务必须出现在 /api/tasks 列表中（防止占位符参数 bug 回归）
   const list = await api('GET', '/api/tasks?limit=200');
@@ -260,6 +355,38 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   // pending 兜底 + 两次推进：至少轮询 3 次（pending → in_progress → completed）
   if (final.poll_count < 3) err(`轮询次数异常: ${final.poll_count}`);
   ok(`轮询闭环完成：${final.status} @ ${final.progress}%，轮询 ${final.poll_count} 次（含 pending 状态兜底），视频: ${final.metadata_url}`);
+
+  // 5.1 v1.3 本地归档：完成后自动下载到 artifacts（远端链接过期也有本地兜底）
+  let archived = null;
+  const dArch = Date.now() + 15_000;
+  while (Date.now() < dArch) {
+    archived = (await api('GET', `/api/tasks/${taskId}`)).data;
+    if (archived.video_local_url) break;
+    await sleep(400);
+  }
+  if (!archived?.video_local_url) err('完成任务未自动归档本地视频（video_local_url 缺失）');
+  if (!fs.existsSync(archived.video_local_path)) err(`归档文件不存在: ${archived.video_local_path}`);
+  ok(`本地归档：${path.basename(archived.video_local_path)}（播放/下载优先本地）`);
+
+  // 5.2 v1.3 提交队列：连续 429 后自动退避重试，最终提交成功（不再产生 submit_error 死记录）
+  await mockRateLimit(2);
+  const rl = await api('POST', '/api/tasks', {
+    model: 'agnes-video-2.5-flash', prompt: '限流重试测试：雨夜霓虹街道空镜', mode: 'text', seconds: '5',
+  });
+  if (rl.status !== 201) err(`429 测试任务创建失败: ${JSON.stringify(rl.data)}`);
+  const rlSub = await waitSubmitted(rl.data.id, 30_000);
+  if (!rlSub?.video_id) err(`429 后未自动重试成功，最终状态: ${rlSub?.status} / ${rlSub?.error_message}`);
+  ok('提交队列：连续 2 次 429 被自动退避重试并成功提交');
+
+  // 5.3 v1.3 提交队列：服务端按 submit_interval_ms 节流（测试配置 300ms）
+  const a1 = await api('POST', '/api/tasks', { model: 'agnes-video-2.5-flash', prompt: '间隔测试A', mode: 'text' });
+  const a2 = await api('POST', '/api/tasks', { model: 'agnes-video-2.5-flash', prompt: '间隔测试B', mode: 'text' });
+  const s1 = await waitSubmitted(a1.data.id, 30_000);
+  const s2 = await waitSubmitted(a2.data.id, 30_000);
+  if (!s1?.submitted_at || !s2?.submitted_at) err('间隔测试任务未成功提交');
+  const gap = Math.abs(s2.submitted_at - s1.submitted_at);
+  if (gap < 250) err(`服务端提交间隔未生效（两次提交相差 ${gap}ms，配置为 300ms）`);
+  ok(`服务端提交节流生效（两次提交间隔 ${gap}ms ≥ 配置 300ms）`);
 
   // 6. 校验规则：text 模式带媒体 → 400
   const bad1 = await api('POST', '/api/tasks', {
@@ -461,7 +588,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (shotsPid.length !== 2 || shotsPid.map((s) => s.seq).join(',') !== '1,2') err(`shots 工作副本异常: ${JSON.stringify(shotsPid)}`);
   const sbText = sbDetail.data.texts.find((t) => t.kind === 'storyboard');
   if (!sbText?.selected) err('storyboard 文本版本未落库或未选中');
-  ok('分镜生成：storyboard 版本落库 + 2 个镜头工作副本按 seq 重建');
+  // v1.3：分镜旁白随 LLM 输出落库；引用开关默认开启
+  if (!shotsPid[0].narration) err('分镜 narration 旁白未落库');
+  if (shotsPid.some((s) => s.use_character_ref !== 1)) err('use_character_ref 默认值应为 1（引用角色图）');
+  ok('分镜生成：storyboard 版本落库 + 2 个镜头工作副本按 seq 重建（含旁白）');
 
   // 17.7 镜头 CRUD / 排序 / 校验 / 跨项目越权
   const addShot = await api('POST', `/api/projects/${pid}/shots`, {
@@ -525,8 +655,10 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   ok('校验：storyboard 空 idea 400 / 项目不存在 404');
 
   // 17.11 批量提交间隔设置：默认值、修改、非法值
+  // v1.3：默认值已在测试开头改为 300（加速提交队列），此处验证读取/修改/越界拦截；
+  // 服务端提交器与前端批量提交共用这一参数
   const st0 = await api('GET', '/api/settings');
-  if (st0.data.submit_interval_ms !== 60000) err(`submit_interval_ms 默认值异常: ${st0.data.submit_interval_ms}`);
+  if (st0.data.submit_interval_ms !== 300) err(`submit_interval_ms 读取异常: ${st0.data.submit_interval_ms}`);
   const st1 = await api('PUT', '/api/settings', { submit_interval_ms: 5000 });
   if (st1.status !== 200) err('保存 submit_interval_ms 失败');
   const st2 = await api('GET', '/api/settings');
@@ -535,8 +667,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   if (stBad1.status !== 400) err('submit_interval_ms 负数未被 400 拦截');
   const stBad2 = await api('PUT', '/api/settings', { submit_interval_ms: 999999 });
   if (stBad2.status !== 400) err('submit_interval_ms 超上限未被 400 拦截');
-  await api('PUT', '/api/settings', { submit_interval_ms: 60000 }); // 还原默认，避免影响后续
-  ok('设置：submit_interval_ms 默认 60000，修改生效，越界被 400 拦截');
+  await api('PUT', '/api/settings', { submit_interval_ms: 300 }); // 还原测试快速值，避免影响后续
+  ok('设置：submit_interval_ms 读取/修改生效/越界 400 拦截（服务端提交节流同源）');
 
   // 17.12 文案 auto_select=false：新版只落库不选中（前端对比窗决策模式）
   const scr2 = await api('POST', '/api/llm/script', {
@@ -644,6 +776,95 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
     err(`单镜头任务模型/模式异常: ${JSON.stringify(sv.data.request_json)}`);
   }
   ok(`单镜头提交视频任务 #${sv.data.id}（shot_id=${sv.data.shot_id}，提示词与溯源正确）`);
+
+  // 20.2 v1.3：镜头旁白/引用开关 —— 纯空镜走 text 模式，恢复后回到 reference
+  const pn = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, { narration: '旁白测试句子', use_character_ref: false });
+  if (pn.status !== 200 || pn.data.narration !== '旁白测试句子' || pn.data.use_character_ref !== 0) {
+    err(`镜头 narration/use_character_ref PATCH 未生效: ${JSON.stringify(pn.data)}`);
+  }
+  const svText = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  if (svText.status !== 201) err(`纯空镜镜头提交失败: ${JSON.stringify(svText.data)}`);
+  const rqT = svText.data.request_json;
+  if (rqT.mode !== 'text' || (rqT.images || []).length > 0 || svText.data.image_id) {
+    err(`纯空镜镜头应走 text 模式且无参考图/图片溯源: ${JSON.stringify(rqT)}`);
+  }
+  await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, { use_character_ref: true });
+  const svRef = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  if (svRef.data.request_json.mode !== 'reference' || !(svRef.data.request_json.images || []).length) {
+    err('恢复引用开关后应回到 reference 模式并带角色图');
+  }
+  await waitSubmitted(svText.data.id);
+  await waitSubmitted(svRef.data.id);
+  ok('镜头引用开关生效：纯空镜 text 模式（无参考图）↔ 恢复后 reference 模式');
+
+  // 20.3 v1.3：superseded —— 同镜头旧失败记录在新任务成功后自动标记作废
+  await mockRateLimit(99);
+  const supFail = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  let supFailRow = null;
+  {
+    const d = Date.now() + 40_000;
+    while (Date.now() < d) {
+      supFailRow = (await api('GET', `/api/tasks/${supFail.data.id}`)).data;
+      if (supFailRow.status === 'submit_error') break;
+      await sleep(500);
+    }
+  }
+  if (supFailRow?.status !== 'submit_error') err(`限流重试耗尽应落 submit_error，实际: ${supFailRow?.status}`);
+  await mockRateLimit(0);
+  const supOk = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  const supOkSub = await waitSubmitted(supOk.data.id, 40_000);
+  if (!supOkSub?.video_id) err(`superseded 对照任务未提交成功: ${supOkSub?.status}`);
+  const pdSup = await api('GET', `/api/projects/${pid}`);
+  const failRow = pdSup.data.tasks.find((t) => t.id === supFail.data.id);
+  if (!failRow?.superseded) err('同镜头存在更新成功任务后，旧 submit_error 未被标记 superseded');
+  ok('superseded 标记：同镜头旧失败记录在新任务成功后自动作废');
+
+  // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
+  const shot2 = projDetail.data.shots[1];
+  const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});
+  if (sv2.status !== 201) err(`第二镜头提交失败: ${JSON.stringify(sv2.data)}`);
+  const done1 = await waitCompleted(svRef.data.id);
+  const done2 = await waitCompleted(sv2.data.id);
+  if (done1?.status !== 'completed' || done2?.status !== 'completed') {
+    err(`渲染素材未就绪: shot1=${done1?.status} shot2=${done2?.status}`);
+  }
+  const ren = await api('POST', `/api/projects/${pid}/render`, { transition_ms: 400, title_card: true, end_card: true });
+  if (ren.status === 400 && String(ren.data.error).includes('ffmpeg')) {
+    ok('成片渲染：本环境无 ffmpeg，跳过真实渲染（校验通过）');
+  } else {
+    if (ren.status !== 201) err(`渲染任务创建失败: ${JSON.stringify(ren.data)}`);
+    if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
+    let renJob = null;
+    const dRen = Date.now() + 180_000;
+    while (Date.now() < dRen) {
+      renJob = (await api('GET', `/api/render/jobs/${ren.data.id}`)).data;
+      if (['completed', 'failed'].includes(renJob.status)) break;
+      await sleep(1000);
+    }
+    if (renJob?.status !== 'completed') {
+      err(`渲染未完成: ${renJob?.status} / ${renJob?.error_message}`);
+    }
+    if (!renJob.output_url || !fs.existsSync(renJob.output_path)) err('渲染产物缺失');
+    const { spawnSync: ss } = require('node:child_process');
+    const fp = ss('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', renJob.output_path], { encoding: 'utf8' });
+    const dur = Number(String(fp.stdout || '').trim());
+    if (Number.isFinite(dur) && (dur < 6 || dur > 20)) err(`成片时长异常: ${dur}s`);
+    ok(`一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '时长未知'}，含片头/片尾卡与叠化）`);
+    const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
+    if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
+    ok('渲染任务删除并清理产物文件');
+  }
+
+  // 20.5 v1.3：TTS 镜头绑定校验（仅校验层，不触发真实 Fish 合成）
+  const ttsBad1 = await api('POST', '/api/tts/generate', { text: '旁白', shot_id: shot1.id });
+  if (!(ttsBad1.status === 400 && String(ttsBad1.data.error).includes('project_id'))) {
+    err(`tts shot_id 缺 project_id 未按预期拦截: ${JSON.stringify(ttsBad1.data)}`);
+  }
+  const ttsBad2 = await api('POST', '/api/tts/generate', { text: '旁白', project_id: pid, shot_id: 999999 });
+  if (!(ttsBad2.status === 404 && String(ttsBad2.data.error).includes('镜头不存在'))) {
+    err(`tts 跨项目 shot_id 未被 404 拦截: ${JSON.stringify(ttsBad2.data)}`);
+  }
+  ok('TTS 镜头绑定：shot_id 需与 project_id 同提供、跨项目镜头 404');
 
   // 21. 删除项目（级联清理 + 任务解绑）
   const delR = await api('DELETE', `/api/projects/${pid}`);

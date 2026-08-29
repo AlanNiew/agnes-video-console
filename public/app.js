@@ -113,10 +113,11 @@
     if (t.status === 'in_progress') {
       extra = `<div class="pbar"><div style="width:${Math.max(2, Number(t.progress) || 0)}%"></div></div>`;
     }
-    if (t.status === 'completed' && t.metadata_url) {
+    const playSrc = t.video_local_url || t.metadata_url; // v1.3：本地归档优先（远端链接会过期）
+    if (t.status === 'completed' && playSrc) {
       extra = `
         <div class="video-preview" title="点击查看详情播放">
-          <video muted playsinline preload="metadata" data-src="${esc(t.metadata_url)}"></video>
+          <video muted playsinline preload="metadata" data-src="${esc(playSrc)}"></video>
           <div class="vp-overlay"><span class="vp-play">▶</span></div>
           ${t.seconds ? `<span class="vp-dur">${esc(t.seconds)}s</span>` : ''}
         </div>`;
@@ -129,8 +130,8 @@
     const actions = [];
     actions.push(`<button class="act" data-act="detail">详情</button>`);
     if (t.video_id) actions.push(`<button class="act" data-act="poll">立即查询</button>`);
-    if (t.status === 'completed' && t.metadata_url) {
-      actions.push(`<a class="act green" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">下载</a>`);
+    if (t.status === 'completed' && playSrc) {
+      actions.push(`<a class="act green" href="${esc(playSrc)}" target="_blank" rel="noopener">下载${t.video_local_url ? '' : ''}</a>`);
     }
     if (t.status === 'failed' || t.status === 'submit_error') {
       actions.push(`<button class="act" data-act="retry">重试</button>`);
@@ -143,6 +144,7 @@
           <span class="badge">${esc(MODE_LABEL[t.mode] || t.mode)}</span>
           <span class="badge">${esc(t.size || '-')}</span>
           <span class="card-id">#${t.id}</span>
+          ${t.superseded ? '<span class="badge" style="opacity:.65" title="该镜头已有更新成功的任务，此失败记录仅供参考">已作废</span>' : ''}
           ${mediaN ? `<span class="badge" title="参考素材数">素材×${mediaN}</span>` : ''}
           <span class="card-time" title="${fmtTime(t.created_at)}">${relTime(t.created_at)}</span>
         </div>
@@ -155,13 +157,13 @@
 
   function columnSig(status, tasks) {
     // 已完成列只对“任务集合 + 结果”敏感，忽略轮询计数，避免打断播放
-    return JSON.stringify(
-      tasks.map((t) =>
-        t.status === 'completed'
-          ? [t.id, t.status, t.metadata_url]
-          : [t.id, t.status, t.progress, t.video_id, t.error_message]
-      )
-    );
+      return JSON.stringify(
+        tasks.map((t) =>
+          t.status === 'completed'
+            ? [t.id, t.status, t.metadata_url, t.video_local_url]
+            : [t.id, t.status, t.progress, t.video_id, t.error_message]
+        )
+      );
   }
 
   function renderBoard() {
@@ -406,15 +408,16 @@
       return;
     }
     const body = $('#detailBody');
-    const sig = JSON.stringify([id, t.status, t.progress, t.metadata_url, t.error_message]);
+    const sig = JSON.stringify([id, t.status, t.progress, t.metadata_url, t.video_local_url, t.error_message]);
     if (state.detailSig === sig && body.dataset.rendered === '1') {
       // 内容未变化，不重建（避免打断视频）
     } else {
       state.detailSig = sig;
 
+      const playSrc = t.video_local_url || t.metadata_url; // v1.3：本地归档优先
       let play = '';
-      if (t.status === 'completed' && t.metadata_url) {
-        play = `<div class="detail-body-play"><video controls preload="metadata" src="${esc(t.metadata_url)}"></video></div>`;
+      if (t.status === 'completed' && playSrc) {
+        play = `<div class="detail-body-play"><video controls preload="metadata" src="${esc(playSrc)}"></video></div>`;
       }
 
       const req = t.request_json || {};
@@ -454,6 +457,7 @@
             ${dlRow('创建时间', fmtTime(t.created_at) + '（' + relTime(t.created_at) + '）')}
             ${dlRow('完成时间', fmtTime(t.completed_at))}
             ${dlRow('轮询次数', t.poll_count + ' 次' + (t.last_polled_at ? `（最后 ${relTime(t.last_polled_at)}）` : ''))}
+            ${t.video_local_url ? dlRow('本地归档', t.video_local_url, 'url') : ''}
             ${dlRow('视频地址', t.metadata_url, 'url')}
             ${t.error_message ? dlRow('错误信息', t.error_message) : ''}
             ${mediaRows.join('')}
@@ -470,7 +474,10 @@
     const acts = [];
     if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
     if (t.status === 'failed' || t.status === 'submit_error') acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
-    if (t.status === 'completed' && t.metadata_url) acts.push(`<a class="btn primary" href="${esc(t.metadata_url)}" target="_blank" rel="noopener">下载视频</a>`);
+    if (t.status === 'completed' && (t.video_local_url || t.metadata_url)) {
+      const dl = t.video_local_url || t.metadata_url;
+      acts.push(`<a class="btn primary" href="${esc(dl)}" target="_blank" rel="noopener">下载视频</a>`);
+    }
     acts.push(`<button class="btn ghost danger" id="dDel">删除任务</button>`);
     const actsSig = acts.join('|');
     if ($('#detailActions').dataset.sig !== actsSig) {

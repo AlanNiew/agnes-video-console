@@ -3,9 +3,11 @@
  * poller.js —— 后台轮询器
  * 每隔 poll_interval_ms 轮询所有进行中（queued / in_progress）任务；
  * 429 / 网络错误按指数退避；超过 max_active_minutes 的任务标记为失败（轮询超时）。
+ * v1.3：完成视频自动归档到本地（artifacts.js）；「待提交任务」由 submitter.js 接管。
  */
 const { settings, tasks } = require('./db');
 const agnes = require('./agnes');
+const { downloadArtifact } = require('./artifacts');
 const { log } = require('./logger');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
@@ -24,6 +26,8 @@ class Poller {
     this.timer = setInterval(() => this.tick().catch((e) => log('error', `轮询循环异常: ${e.message}`)), interval);
     this.timer.unref?.();
     log('info', `轮询器已启动，间隔 ${interval}ms`);
+    // 启动补扫：为历史已完成但未归档的任务补齐本地视频（后台执行，不阻塞启动）
+    setTimeout(() => this.sweepArchives().catch((e) => log('error', `归档补扫异常: ${e.message}`)), 3000).unref?.();
   }
 
   stop() {
@@ -41,9 +45,7 @@ class Poller {
     if (this.running) return;
     this.running = true;
     try {
-      // 1) 清理悬挂任务：已提交但从未拿到 video_id（进程中断等）
-      this.cleanStuck();
-      // 2) 轮询进行中的任务
+      // 轮询进行中的任务（待提交任务由 submitter.js 接管，见 active() 的 video_id 过滤）
       const active = tasks.active();
       for (const t of active) {
         const due = this.retryUntil.get(t.id);
@@ -55,14 +57,21 @@ class Poller {
     }
   }
 
-  cleanStuck() {
-    for (const t of tasks.stuck(60_000)) {
-      tasks.update(t.id, {
-        status: 'submit_error',
-        error_message: '任务已提交但未获得 video_id（进程中断），请重试',
-      });
-      log('warn', `任务 #${t.id} 标记为 submit_error（无 video_id）`);
+  /** v1.3 归档补扫：为历史 completed 任务补齐本地视频（顺序 + 500ms 限速，失败不阻塞） */
+  async sweepArchives() {
+    const pending = tasks.completedWithoutLocal();
+    if (!pending.length) return;
+    log('info', `归档补扫：发现 ${pending.length} 个已完成任务未本地归档，开始下载`);
+    let ok = 0;
+    for (const t of pending) {
+      const art = await downloadArtifact(t.metadata_url, { fallbackExt: '.mp4' });
+      if (art) {
+        tasks.update(t.id, { video_local_path: art.local_path });
+        ok += 1;
+      }
+      await new Promise((r) => setTimeout(r, 500));
     }
+    log('info', `归档补扫完成：成功 ${ok}/${pending.length}`);
   }
 
   async pollOne(t) {
@@ -81,9 +90,11 @@ class Poller {
     const baseUrl = settings.get('base_url', 'https://apihub.agnes-ai.com');
     const maxActiveMs = Math.max((Number(settings.get('max_active_minutes', 20)) || 20) * 60_000, 30_000);
 
-    // 轮询超时保护：任务创建超过 max_active_minutes 仍未结束
-    // （completed/failed 已是终态，手动「立即查询」不应再把它们翻成失败）
-    if (t.status !== 'completed' && t.status !== 'failed' && Date.now() - t.created_at > maxActiveMs) {
+    // 轮询超时保护：实际提交（或创建）超过 max_active_minutes 仍未结束
+    // （提交队列下任务可能在队列中等待限流放行，因此以 submitted_at 为基准；
+    //   completed/failed 已是终态，手动「立即查询」不应再把它们翻成失败）
+    const activeBase = t.submitted_at || t.created_at;
+    if (t.status !== 'completed' && t.status !== 'failed' && Date.now() - activeBase > maxActiveMs) {
       this.retryUntil.delete(t.id);
       tasks.setPollResult(t.id, {
         status: 'failed',
@@ -186,6 +197,16 @@ class Poller {
 
     if (status === 'completed') {
       log('info', `任务 #${t.id} 完成，视频地址: ${metadataUrl}`);
+      // v1.3 归档：完成即下载到本地（平台远端链接会过期；失败可由补扫/手动轮询兜底）
+      if (metadataUrl && !t.video_local_path) {
+        const art = await downloadArtifact(metadataUrl, { fallbackExt: '.mp4' });
+        if (art) {
+          tasks.update(t.id, { video_local_path: art.local_path });
+          log('info', `任务 #${t.id} 视频已本地归档: ${art.local_path}`);
+        } else {
+          log('warn', `任务 #${t.id} 视频归档失败（远端不可达），稍后可手动「立即查询」或重启补扫`);
+        }
+      }
     } else if (status === 'failed') {
       log('error', `任务 #${t.id} 失败: ${errorMessage || '未知错误'}`);
     }

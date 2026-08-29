@@ -6,11 +6,15 @@
 const path = require('node:path');
 const fs = require('node:fs');
 const express = require('express');
-const { settings, tasks, projects, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
+const { settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
 const fishTts = require('./fish-tts');
 const poller = require('./poller');
+const submitter = require('./submitter');
+const renderer = require('./render');
+const { ARTIFACTS_DIR, downloadArtifact } = require('./artifacts');
 const { createPipelineService } = require('./pipeline');
+const { buildOpenApi } = require('./openapi');
 const { log, recent: recentLogs } = require('./logger');
 
 const app = express();
@@ -24,16 +28,19 @@ const MODELS = {
     family: 'v25', sizes: ['720P'], free: true, short: 'Flash',
     hint: '限时免费 · 仅 720P · reference 最多 5 张图片 · 不支持视频参考',
     label: 'Agnes Video 2.5 Flash（最新 · 免费）',
+    rate_limit: '1 次创建/分钟（免费档限流，提交已由服务端队列自动节流）',
   },
   'agnes-video-2.5': {
     family: 'v25', sizes: ['720P', '960P', '2K'], free: false, short: '2.5',
     hint: '付费 · 720P/960P/2K · 支持视频参考',
     label: 'Agnes Video 2.5（付费）',
+    rate_limit: '以账户配额为准',
   },
   'agnes-video-v2.0': {
     family: 'v2', sizes: [], free: true, short: 'V2.0（旧）', deprecated: true,
     hint: '旧模型 · 已从界面下架（后端兼容保留）',
     label: 'Agnes Video V2.0（旧模型 · 下架）',
+    rate_limit: null,
   },
 };
 const MODES = ['text', 'keyframe', 'reference'];
@@ -51,10 +58,6 @@ const LLM_MODEL = 'agnes-2.5-flash';        // 文本：提示词优化/文案
 const IMAGE_MODEL = 'agnes-image-2.1-flash'; // 图片：角色/场景
 const IMAGE_SIZES = ['1K', '2K', '3K', '4K'];
 const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'];
-const ARTIFACTS_DIR = path.join(
-  process.env.DATA_DIR || path.join(__dirname, 'data'),
-  'artifacts'
-);
 
 /* 输入上限 */
 const MAX_TEXT_LEN = 8000;       // 提示词/创意/文案等长文本上限
@@ -287,10 +290,11 @@ function buildV25Payload(b) {
   };
 }
 
-/** 提交任务到 Agnes API 并落库（供创建 / 重试 / 流水线视频复用） */
+/** 创建任务记录并进入提交队列（v1.3）：
+ * 不再同步调用上游 —— 由后台提交器（submitter.js）按 submit_interval_ms 节流提交，
+ * 429 / 网络错误自动退避重试，把「限流撞墙」变成「排队等待」。 */
 async function submitTask(payload, meta, opts = {}) {
   const apiKey = settings.get('api_key', '');
-  const baseUrl = settings.get('base_url', DEFAULT_SETTINGS.base_url);
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
 
   const id = tasks.insert({
@@ -300,33 +304,8 @@ async function submitTask(payload, meta, opts = {}) {
     text_id: opts.text_id || null,
     image_id: opts.image_id || null,
   });
-
-  let r;
-  try {
-    r = await agnes.createTask({ apiKey, baseUrl, payload });
-  } catch (e) {
-    tasks.update(id, { status: 'submit_error', error_message: `提交网络异常：${e.message}` });
-    log('error', `任务 #${id} 提交网络异常: ${e.message}`);
-    throw new ApiError(502, `提交任务时网络异常：${e.message}`);
-  }
-
-  if (!r.ok) {
-    const detail = r.data?.detail || r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-    tasks.update(id, { status: 'submit_error', error_message: `提交失败（${r.status}）：${String(detail).slice(0, 500)}`, submit_response: r.data });
-    log('error', `任务 #${id} 创建失败（${r.status}）：${detail}`);
-    throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `创建任务失败（${r.status}）：${String(detail).slice(0, 500)}`);
-  }
-
-  const j = r.data || {};
-  tasks.update(id, {
-    task_id: j.task_id || j.id || null,
-    video_id: j.video_id || null,
-    submit_response: j,
-    status: /^(queued|in_progress|completed|failed)$/.test(j.status) ? j.status : 'queued',
-    progress: Number.isFinite(j.progress) ? Number(j.progress) : 0,
-    metadata_url: safeUrl(j.metadata?.url || j.url),
-  });
-  log('info', `任务 #${id} 创建成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
+  submitter.kick(id); // 立即唤醒提交器尝试首次提交（是否放行仍受最小间隔约束）
+  log('info', `任务 #${id} 已入队（${meta.model}，后台提交器按间隔提交，429 自动重试）`);
   return tasks.get(id);
 }
 
@@ -348,6 +327,7 @@ app.get('/api/meta', (req, res) => {
       sizes: m.sizes || [],
       video_ref: id !== 'agnes-video-2.5-flash' && m.family === 'v25',
       max_images: id === 'agnes-video-2.5-flash' ? 5 : null,
+      rate_limit: m.rate_limit || null, // v1.3：上游限流提示（前端展示与服务端节流同源）
     })),
     aspect_ratios: ASPECT_RATIOS,
     seconds: SECONDS_OK,
@@ -359,6 +339,11 @@ app.get('/api/meta', (req, res) => {
 // 健康检查
 app.get('/api/health', (req, res) => {
   res.json({ ok: true, app: 'agnes-video-console', uptime_s: Math.round(process.uptime()), db: DB_PATH, node: process.version });
+});
+
+// API 自描述（v1.3）：机器可读的端点文档，自动化脚本 / Agent 无需读源码即可对接
+app.get('/api/openapi.json', (req, res) => {
+  res.json(buildOpenApi(`${req.protocol}://${req.get('host') || '127.0.0.1:8273'}`));
 });
 
 // 获取设置（API Key 永远只返回掩码）
@@ -579,30 +564,15 @@ const STORYBOARD_SYSTEM_PROMPT = `你是资深影视分镜师。把用户的创�
     {
       "seq": 1,
       "title": "镜头标题，8 字内，格式如「开场·麦田全景」「转折·回眸特写」",
-      "video_prompt": "该镜头的视频生成提示词，150~200 字，六段式按序书写：①景别与运镜（如：大全景，镜头缓慢推进）②主体与动作（角色在做什么，动作设计需能自然衔接下一镜）③环境与细节（具体可拍的地物、道具）④光线与色调（时段、光源方向、色温）⑤视觉风格（全片统一的关键词）⑥声音与节奏。必须以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头",
+      "video_prompt": "该镜头的视频生成提示词，150~200 字，六段式按序书写：①景别与运镜（如：大全景，镜头缓慢推进）②主体与动作（角色在做什么，动作设计需能自然衔接下一镜）③环境与细节（具体可拍的地物、道具）④光线与色调（时段、光源方向、色温）⑤视觉风格（全片统一的关键词）⑥声音与节奏。有角色出镜的镜头必须以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头；纯环境/空镜/无角色镜头直接从景别写起，不要提及 <Picture 1>",
+      "narration": "该镜头的旁白文案，15~40 字，讲述式语气，与画面互补而非复述画面内容：推进叙事、交代背景或点染情绪；全片旁白连起来应是一篇完整的短文",
       "seconds": "5"
     }
   ]
 }
 分镜节奏要求：第一镜负责建立时空（交代环境与主角出场），中间镜头递进冲突或细节，最后一镜收束情绪；相邻镜头的动作与视线方向连贯（遵守 180° 轴线，不越轴）；全片视觉风格关键词完全一致；seconds 只能是 "4"~"12" 的字符串；动作量与该镜时长匹配（5 秒最多 2~3 个动作）；镜头数量遵循用户指定数量（未指定则按叙事需要 3~8 个）。`;
 
-/** 下载远程图片到本地 artifacts 做永久备份（失败不阻塞） */
-async function downloadArtifact(remoteUrl) {
-  try {
-    fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
-    const res = await fetch(remoteUrl, { signal: AbortSignal.timeout(30_000) });
-    if (!res.ok) return null;
-    const buf = Buffer.from(await res.arrayBuffer());
-    if (!buf.length) return null;
-    const ct = res.headers.get('content-type') || '';
-    let ext = ct.includes('png') ? '.png' : ct.includes('webp') ? '.webp' : ct.includes('jpeg') || ct.includes('jpg') ? '.jpg' : '.png';
-    const name = `a${Date.now()}-${Math.random().toString(36).slice(2, 7)}${ext}`;
-    fs.writeFileSync(path.join(ARTIFACTS_DIR, name), buf);
-    return { local_path: path.join(ARTIFACTS_DIR, name), local_url: `/artifacts/${name}` };
-  } catch {
-    return null;
-  }
-}
+/** 下载远程产物到本地 artifacts 做永久备份（失败不阻塞）—— 实现在 artifacts.js，供 server/poller 共用 */
 
 /** 校验图片请求并构建 payload（文生图 / 图生图 / 多图合成） */
 function buildImagePayload(b) {
@@ -660,6 +630,7 @@ function normalizeStoryboardShots(rawShots, fallbackSeconds = '5') {
       seq: out.length + 1,
       title: String(s?.title || '').trim().slice(0, 100) || null,
       video_prompt: vp.slice(0, MAX_TEXT_LEN),
+      narration: String(s?.narration || '').trim().slice(0, 200) || null, // v1.3 镜头旁白
       seconds: SECONDS_OK.includes(String(s?.seconds)) ? String(s.seconds) : fb,
       mode: 'reference',
     });
@@ -994,6 +965,13 @@ app.post('/api/tts/generate', ah(async (req, res) => {
   const kind = ['narration', 'shot'].includes(b.kind) ? b.kind : 'narration';
   const projectId = b.project_id === undefined || b.project_id === null ? null : Number(b.project_id);
   if (projectId !== null && !projects.get(projectId)) throw new ApiError(404, '项目不存在');
+  // v1.3：旁白可绑定到具体镜头（渲染成片时按镜头对齐时间轴）
+  const shotId = b.shot_id === undefined || b.shot_id === null ? null : Number(b.shot_id);
+  if (shotId !== null) {
+    if (projectId === null) throw new ApiError(400, 'shot_id 需与 project_id 同时提供');
+    if (!projects.shots(projectId).some((s) => s.id === shotId)) throw new ApiError(404, '镜头不存在（或不属于该项目）');
+  }
+  const effKind = b.kind === undefined && shotId !== null ? 'shot' : kind;
   const voice = TTS_VOICES.some((v) => v.id === String(b.voice || ''))
     ? String(b.voice) : settings.get('fish_voice', 'default');
   const speed = b.speed !== undefined ? Number(b.speed) : Number(settings.get('fish_speed', '1'));
@@ -1006,7 +984,7 @@ app.post('/api/tts/generate', ah(async (req, res) => {
   if (!r.ok) {
     const detail = r.raw || `HTTP ${r.status}`;
     if (projectId !== null) {
-      projects.addTts({ project_id: projectId, kind, text, model, reference_id: referenceId, voice_title: voiceTitle, error_message: String(detail).slice(0, 300) });
+      projects.addTts({ project_id: projectId, kind: effKind, shot_id: shotId, text, model, reference_id: referenceId, voice_title: voiceTitle, error_message: String(detail).slice(0, 300) });
     }
     throw new ApiError(r.status >= 400 && r.status < 500 ? 400 : 502, `配音生成失败（${r.status}）：${String(detail).slice(0, 300)}`);
   }
@@ -1024,7 +1002,7 @@ app.post('/api/tts/generate', ah(async (req, res) => {
   let ttsRow = null;
   if (projectId !== null) {
     const tid = projects.addTts({
-      project_id: projectId, kind, text, model, reference_id: referenceId,
+      project_id: projectId, kind: effKind, shot_id: shotId, text, model, reference_id: referenceId,
       voice_title: voiceTitle, format: 'mp3', local_path: localPath,
       duration, size: r.buf ? r.buf.length : null,
     });
@@ -1032,7 +1010,7 @@ app.post('/api/tts/generate', ah(async (req, res) => {
     projects.selectTts(tid, projectId);
     ttsRow = projects.getTts(tid);
   }
-  log('info', `TTS 配音生成成功 ${projectId ? `（项目 #${projectId} ${kind}）` : ''} 音色=${voiceTitle} 时长=${duration || '?'}s${localPath ? ' 已存本地' : ''}`);
+  log('info', `TTS 配音生成成功 ${projectId ? `（项目 #${projectId} ${effKind}${shotId ? ` #镜头${shotId}` : ''}）` : ''} 音色=${voiceTitle} 时长=${duration || '?'}s${localPath ? ' 已存本地' : ''}`);
   res.json({
     ok: true,
     text, voice: referenceId, voice_title: voiceTitle, model,
@@ -1191,11 +1169,13 @@ app.post('/api/projects/:id/shots', (req, res) => {
     project_id: p.id, seq: maxSeq + 1,
     title: String(b.title || '').trim().slice(0, 100) || null,
     video_prompt: vp, seconds: b.seconds || null, mode,
+    narration: b.narration !== undefined && b.narration !== null ? String(b.narration) : undefined,
+    use_character_ref: b.use_character_ref,
   });
   res.status(201).json(projects.shots(p.id).find((s) => s.id === id));
 });
 
-// 编辑镜头（标题/提示词/时长；归属校验防跨项目越权）
+// 编辑镜头（标题/提示词/时长/旁白/引用开关；归属校验防跨项目越权）
 app.patch('/api/projects/:id/shots/:shotId', (req, res) => {
   const p = projects.get(req.params.id);
   if (!p) throw new ApiError(404, '项目不存在');
@@ -1213,6 +1193,13 @@ app.patch('/api/projects/:id/shots/:shotId', (req, res) => {
   if (b.seconds !== undefined) {
     if (b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
     patch.seconds = b.seconds;
+  }
+  // v1.3：旁白文案与角色引用开关
+  if (b.narration !== undefined) {
+    patch.narration = b.narration === null ? null : String(b.narration).trim().slice(0, 200) || null;
+  }
+  if (b.use_character_ref !== undefined) {
+    patch.use_character_ref = b.use_character_ref ? 1 : 0;
   }
   projects.updateShot(shot.id, patch);
   res.json(projects.shots(p.id).find((s) => s.id === shot.id));
@@ -1253,6 +1240,7 @@ app.post('/api/projects/:id/shots/:shotId/videos', ah(async (req, res) => {
   const b = req.body || {};
   const task = await pipeline.submitVideoTask({
     projectId: p.id,
+    shot, // v1.3：传入镜头行，pipeline 据此尊重 use_character_ref / mode
     prompt: shot.video_prompt,
     seconds: b.seconds || shot.seconds,
     aspectRatio: b.aspect_ratio,
@@ -1285,6 +1273,60 @@ app.post('/api/projects/:id/videos', ah(async (req, res) => {
   res.status(201).json(task);
 }));
 
+/* ---------- v1.3 成片渲染（镜头视频 + 逐镜旁白 → 完整短片） ---------- */
+
+const RENDER_PARAMS_DEFAULTS = { transition_ms: 600, narration_offset_ms: 500, title_card: true, end_card: true };
+
+// 发起渲染：{transition_ms?, narration_offset_ms?, title_card?, end_card?} → 渲染任务（后台执行）
+app.post('/api/projects/:id/render', ah(async (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  if (!renderer.hasFfmpeg()) throw new ApiError(400, '未检测到 ffmpeg（需安装并加入 PATH）才能渲染成片');
+  const b = req.body || {};
+  const clampInt = (v, lo, hi, dft) => {
+    const n = Number(v);
+    return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : dft;
+  };
+  const params = {
+    transition_ms: clampInt(b.transition_ms, 200, 2000, RENDER_PARAMS_DEFAULTS.transition_ms),
+    narration_offset_ms: clampInt(b.narration_offset_ms, 0, 3000, RENDER_PARAMS_DEFAULTS.narration_offset_ms),
+    title_card: b.title_card === undefined ? RENDER_PARAMS_DEFAULTS.title_card : Boolean(b.title_card),
+    end_card: b.end_card === undefined ? RENDER_PARAMS_DEFAULTS.end_card : Boolean(b.end_card),
+  };
+  const collected = renderer.collectSegments(p.id);
+  const ready = collected ? collected.segments.length : 0;
+  if (ready < 2) throw new ApiError(400, `至少需要 2 个已完成视频的镜头才能渲染成片（当前 ${ready} 个）`);
+  const jobId = renders.insert({ project_id: p.id, params });
+  log('info', `项目 #${p.id} 发起渲染任务 #${jobId}（${ready} 镜，叠化 ${params.transition_ms}ms，旁白偏移 ${params.narration_offset_ms}ms）`);
+  res.status(201).json(renders.get(jobId));
+}));
+
+// 项目渲染任务列表
+app.get('/api/projects/:id/render/jobs', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  res.json({ items: renders.listByProject(p.id) });
+});
+
+// 渲染任务详情
+app.get('/api/render/jobs/:id', (req, res) => {
+  const job = renders.get(req.params.id);
+  if (!job) throw new ApiError(404, '渲染任务不存在');
+  res.json(job);
+});
+
+// 删除渲染任务（渲染中不可删；产物文件尽力清理）
+app.delete('/api/render/jobs/:id', (req, res) => {
+  const job = renders.get(req.params.id);
+  if (!job) throw new ApiError(404, '渲染任务不存在');
+  if (job.status === 'rendering') throw new ApiError(400, '渲染进行中，暂不能删除');
+  if (job.output_path) {
+    try { fs.rmSync(job.output_path, { force: true }); } catch { /* ignore */ }
+  }
+  renders.remove(job.id);
+  res.json({ ok: true });
+});
+
 /* ---------- 本地图片静态服务 ---------- */
 try { fs.mkdirSync(ARTIFACTS_DIR, { recursive: true }); } catch { /* ignore */ }
 app.use('/artifacts', express.static(ARTIFACTS_DIR, { maxAge: '7d' }));
@@ -1311,6 +1353,8 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
 }
 
 poller.start();
+submitter.start();
+renderer.start();
 // 只监听本机回环地址：本地单机工具，不对局域网/公网开放（API Key 存于本地）
 const server = app.listen(PORT, '127.0.0.1', () => {
   console.log('');

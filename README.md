@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-47%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-59%20passed-brightgreen)
 
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
@@ -21,6 +21,13 @@
 
 ## ✨ 特性
 
+- 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（叠化转场、旁白按镜头对齐、片头/片尾卡、自动限幅），产出直接播放/下载
+- 🚦 **服务端提交队列（v1.3）**：任务创建为「入队」语义，后台提交器按 `submit_interval_ms` 节流提交上游，**429 限流自动指数退避重试**——批量提交不再产生撞墙死记录
+- 💾 **视频本地归档（v1.3）**：任务完成即自动下载到 `data/artifacts`，播放/下载优先本地（远端链接过期也有兜底）；历史完成任务启动时自动补扫归档
+- 🗑️ **superseded 失败治理（v1.3）**：同镜头已有更新成功任务时，旧失败记录自动标记「已作废」，看板不再被废记录误导
+- 📝 **分镜旁白（v1.3）**：分镜生成同步产出每镜旁白文案（可编辑），一键按镜头合成配音（`shot_id` 绑定），成片渲染自动对齐时间轴
+- 🔀 **镜头级引用开关（v1.3）**：纯空镜/无人镜头可关闭「引用角色图」，以纯文生模式提交，不再被强制注入角色参考
+- 📡 **API 自描述（v1.3）**：`GET /api/openapi.json` 输出机器可读端点文档（自动化脚本 / AI Agent 无需读源码即可对接）；`/api/meta` 附带上游限流提示
 - 🎬 **创作工作台（四步流水线）**：一句话创意 → AI 结构化文案（梗概/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
 - 🎞️ **分镜脚本（M2）**：AI 按创意一次生成多镜头分镜（每镜头标题 + 提示词 + 时长，可选自动/3/5/8 镜），镜头可独立编辑/增删/排序/选用历史版本；支持单镜头提交与「批量提交未完成镜头」（按设置间隔节流），任务按镜头溯源分组
 - 🎬 **三模型 · 多模式**：任务中心选模型后表单自动切换参数体系；模型/画幅/时长清单由后端 `/api/meta` 统一下发
@@ -53,7 +60,7 @@ npm start
 
 ## 📖 使用流程
 
-**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成文案（可编辑、多版本选用）→「✨ 生成分镜」把创意拆成多镜头（每镜头可独立编辑/排序，也可「升级为分镜」复用手写提示词）→ 生成角色设定图并点选定稿 → 逐镜头「🚀 提交」或「🚀 批量提交未完成镜头」（按设置中的「批量提交间隔」节流）。
+**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成文案（可编辑、多版本选用）→「✨ 生成分镜」把创意拆成多镜头（每镜头含旁白文案，可独立编辑/排序；纯空镜镜头可关闭「引用角色图」）→ 生成角色设定图并点选定稿 → 逐镜头「🚀 提交」或「🚀 批量提交未完成镜头」（服务端提交队列按间隔节流，429 自动重试，关闭页面入队任务也会继续提交）→ 第⑤步「🎙️ 配音」逐镜合成旁白 → 第⑥步「🎞️ 成片渲染」一键合成完整短片。
 
 **方式二 · 任务中心（单任务）**：
 
@@ -62,7 +69,9 @@ npm start
 3. **看板跟踪**：任务自动流转「队列中 → 生成中 → 已完成/失败」，完成即可播放/下载。
 4. **失败处理**：详情查看错误，或一键「重试」（以原参数新建任务）。
 
-**TTS 配音（旁白）**：在「设置」中填写 **Fish Audio API Key**（免费档模型 `s2.1-pro-free`，[官方文档](https://docs.fish.audio)）→ 创作工作台项目第⑤步「🎙️ 配音」：粘贴文稿（支持逐句换行）→ 选音色/语速 → 生成 → 浏览器试听/选用/删除。配音为本地 mp3（存 `data/artifacts/`），可用于后期混入成片（见工作区 `scripts/mix-voice.js`）。接口：`POST /api/tts/generate`、`GET /api/tts/voices`、`POST /api/tts/:id/select`、`DELETE /api/tts/:id`。
+**TTS 配音（旁白）**：在「设置」中填写 **Fish Audio API Key**（免费档模型 `s2.1-pro-free`，[官方文档](https://docs.fish.audio)）→ 创作工作台项目第⑤步「🎙️ 配音」：粘贴文稿（支持逐句换行）→ 选音色/语速 → 生成 → 浏览器试听/选用/删除。旁白支持逐镜头绑定（分镜卡片中填写旁白 → 生成配音，`shot_id` 自动关联），成片渲染时按镜头对齐时间轴混入。接口：`POST /api/tts/generate`、`GET /api/tts/voices`、`POST /api/tts/:id/select`、`DELETE /api/tts/:id`。
+
+**成片渲染**：第⑥步「🎞️ 成片渲染」把已完成镜头视频（本地归档优先）与逐镜旁白合成为完整短片——镜头间叠化转场（可调 0.4–1.0s）、旁白按镜头起幅点对齐（偏移可调）、可选片头/片尾卡、混音自动限幅；1280×720@30 输出到 `data/artifacts/`，完成后页面内直接播放/下载。需要本机安装 **ffmpeg**（加入 PATH）。接口：`POST /api/projects/:id/render`、`GET /api/projects/:id/render/jobs`、`GET /api/render/jobs/:id`、`DELETE /api/render/jobs/:id`。
 
 **V2.0 提示**（仅历史任务/后端 API，界面已下架）：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
 
@@ -72,22 +81,27 @@ npm start
 
 ```
 agnes-video-console/
-├── server.js            # Express API + 参数校验（按模型家族分发）+ 流水线端点 + TTS 端点 + 静态服务
-├── db.js                # SQLite 数据层（任务/项目/文案/图片/配音/设置表 + 自动迁移 + 事务）
+├── server.js            # Express API + 参数校验（按模型家族分发）+ 流水线端点 + TTS 端点 + 成片渲染端点 + 静态服务
+├── db.js                # SQLite 数据层（任务/项目/文案/图片/镜头/配音/渲染任务表 + 自动迁移 + 事务）
 ├── agnes.js             # Agnes API 客户端（视频创建/查询 / chat / 图片）
+├── submitter.js         # 后台提交器（v1.3：按 submit_interval_ms 服务端节流，429 自动退避重试）
+├── poller.js            # 后台轮询器（退避 / 超时 / 完成视频自动归档 / 启动补扫）
+├── render.js            # 成片渲染器（v1.3：归一化 → xfade 叠化 → 旁白对齐混音 → 片头尾卡）
+├── artifacts.js         # 本地产物归档（远程图片/视频/音频下载备份，供 server/poller 共用）
+├── openapi.js           # API 自描述文档（GET /api/openapi.json）
 ├── fish-tts.js          # Fish Audio TTS 客户端（直连或 HTTP 代理 CONNECT 隧道）
-├── poller.js            # 后台轮询器（退避 / 超时 / 悬挂任务清理）
 ├── logger.js            # 内存环形日志
 ├── public/              # 前端单页应用（index.html / style.css / app.js 任务中心 / workspace.js 创作工作台）
-├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API）
-└── data/                # 运行时生成：agnes-console.db + artifacts 图片备份（已被 .gitignore 忽略）
+├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流与真实 ffmpeg 渲染用例）
+└── data/                # 运行时生成：agnes-console.db + artifacts 本地归档（已被 .gitignore 忽略）
 ```
 
 ## 📡 本工具自带 API
 
 ```
 GET  /api/health                       健康检查
-GET  /api/meta                         模型/画幅/时长元数据（前端下拉单一事实来源）
+GET  /api/openapi.json                 API 自描述文档（v1.3，机器可读）
+GET  /api/meta                         模型/画幅/时长元数据（含上游限流提示）
 GET  /api/settings                     获取设置（API Key 仅返回掩码）
 PUT  /api/settings                     保存设置
 GET  /api/stats                        按状态统计
@@ -120,18 +134,22 @@ DELETE /api/projects/:id/shots/:shotId 删除镜头
 POST /api/projects/:id/shots/reorder   镜头排序
 POST /api/projects/:id/videos          从项目发起视频任务（旧入口，单提示词）
 POST /api/projects/:id/shots/:shotId/videos  单镜头提交视频任务
-GET  /artifacts/*                      本地图片备份静态服务
+POST /api/projects/:id/render          一键成片渲染（镜头视频 + 逐镜旁白 → 完整短片）
+GET  /api/projects/:id/render/jobs     项目渲染任务列表
+GET  /api/render/jobs/:id              渲染任务详情（进度/产物）
+DELETE /api/render/jobs/:id            删除渲染任务（产物一并清理）
+GET  /artifacts/*                      本地产物静态服务（图片/视频/音频/成片）
 ```
 
 ## 🧪 测试
 
-无需真实 API Key——内置本地模拟 Agnes API，验证「创建 → 轮询 → 完成取回视频地址」完整闭环，以及各模型参数校验规则：
+无需真实 API Key——内置本地模拟 Agnes API，验证「创建 → 入队 → 提交（含 429 自动重试）→ 轮询 → 归档 → 渲染成片」完整闭环，以及各模型参数校验规则（有 ffmpeg 的环境会执行真实渲染断言）：
 
 ```bash
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 **47 项**断言，覆盖任务全链路、流水线、分镜脚本、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **59 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 
