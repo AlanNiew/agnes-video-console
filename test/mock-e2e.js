@@ -22,6 +22,7 @@ const mockJobs = new Map(); // video_id -> job
 let seq = 0;
 let rateLimitRemaining = 0; // v1.3：429 模拟计数器（>0 时 POST /v1/videos 返回 429）
 let fixtureFile = null;     // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
+let bgmFixture = null;      // v1.4：BGM 渲染用的可解码测试音频（有 ffmpeg 时生成）
 
 function mockResult(job) {
   const completed = job.status === 'completed';
@@ -96,6 +97,25 @@ const mockServer = http.createServer(async (req, res) => {
     const body = JSON.parse(raw || '{}');
     rateLimitRemaining = Math.max(0, Number(body.count) || 0);
     return send(200, { ok: true, rateLimitRemaining });
+  }
+
+  // v1.4：模拟音乐接口（BGM）
+  if (req.method === 'GET' && u.pathname === '/search') {
+    return send(200, {
+      code: 200, message: 'success',
+      data: [{
+        music_id: 12345, music_name: '测试曲', artist: '测试歌手', album: '测试专辑',
+        duration: 180, pic_url: '', levels: [{ level: 'standard' }, { level: 'exhigh' }],
+      }],
+    });
+  }
+  if (req.method === 'GET' && u.pathname === '/player') {
+    return send(200, { code: 200, message: 'success', data: { url: `http://127.0.0.1:${MOCK_PORT}/out/bgm.mp3` } });
+  }
+  if (req.method === 'GET' && u.pathname === '/out/bgm.mp3') {
+    const buf = (bgmFixture && fs.existsSync(bgmFixture)) ? fs.readFileSync(bgmFixture) : Buffer.alloc(4096, 7);
+    res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length });
+    return res.end(buf);
   }
 
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
@@ -236,6 +256,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', fixtureFile],
       { encoding: 'utf8', timeout: 60_000 });
     if (ff.status !== 0 || !fs.existsSync(fixtureFile)) fixtureFile = null;
+    // v1.4：BGM 测试音频（真实 mp3，供渲染混音）
+    if (fixtureFile) {
+      bgmFixture = path.join(DATA_DIR_ROOT, 'e2e-bgm.mp3');
+      const fb = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
+        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=6', '-c:a', 'libmp3lame', '-b:a', '64k', bgmFixture],
+        { encoding: 'utf8', timeout: 60_000 });
+      if (fb.status !== 0 || !fs.existsSync(bgmFixture)) bgmFixture = null;
+    }
   } catch { fixtureFile = null; }
 
   // 配置并启动控制台（独立端口 + 独立数据库 + 独立 artifacts 目录）
@@ -265,6 +293,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     max_active_minutes: 1,
     submit_interval_ms: 300,
     fish_api_key: 'sk-fish-test-0000', // 仅用于校验层测试（本测试不会真正调用 Fish 合成）
+    // v1.4 BGM：音乐接口指向 mock
+    music_api_base: `http://127.0.0.1:${MOCK_PORT}`,
+    music_api_token: 'tok-music-test-0000',
+    music_level: 'exhigh',
   });
   if (set.status !== 200) err('保存设置失败');
   ok('保存设置（base_url→mock）');
@@ -273,7 +305,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   const st = await api('GET', '/api/settings');
   if (st.data.api_key_masked !== 'sk-t****1234') err(`API Key 掩码异常: ${JSON.stringify(st.data.api_key_masked)}`);
   if (JSON.stringify(st.data).includes('sk-test-key-1234')) err('API Key 泄露到设置响应');
-  ok('API Key 仅以掩码返回，未泄露');
+  if (JSON.stringify(st.data).includes('tok-music-test-0000')) err('音乐 Token 泄露到设置响应');
+  ok('API Key / 音乐 Token 仅以掩码或布尔返回，未泄露');
 
   // 3.1 设置校验：非法模型 / 轮询间隔越界 → 400
   const setBad1 = await api('PUT', '/api/settings', { model: 'agnes-video-9.9' });
@@ -819,6 +852,26 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (!failRow?.superseded) err('同镜头存在更新成功任务后，旧 submit_error 未被标记 superseded');
   ok('superseded 标记：同镜头旧失败记录在新任务成功后自动作废');
 
+  // 20.35 v1.4：BGM 音乐接口 —— 搜索代理 / 校验 / 选用并下载缓存
+  const msr = await api('GET', `/api/music/search?keyword=${encodeURIComponent('夜曲')}&limit=3`);
+  if (msr.status !== 200 || !Array.isArray(msr.data.items) || !msr.data.items.length) {
+    err(`音乐搜索失败: ${JSON.stringify(msr.data).slice(0, 200)}`);
+  }
+  if (!msr.data.items[0].id || !msr.data.items[0].name) err('音乐搜索结果字段缺失（id/name）');
+  ok(`BGM 音乐搜索代理正常（${msr.data.items.length} 条结果，字段规范化）`);
+  const bgmEmptyKw = await api('GET', '/api/music/search?keyword=');
+  if (bgmEmptyKw.status !== 400) err('空关键词搜索未被 400 拦截');
+  const bgmSelBad = await api('POST', `/api/projects/${pid}/bgm`, { song_id: 'abc' });
+  if (bgmSelBad.status !== 400) err('非数字 song_id 未被 400 拦截');
+  const bgmSel = await api('POST', `/api/projects/${pid}/bgm`, { song_id: '12345', name: '测试曲', artist: '测试歌手', album: '测试专辑' });
+  if (bgmSel.status !== 200 || !bgmSel.data.ok || !bgmSel.data.bgm?.local_url) {
+    err(`BGM 选用失败: ${JSON.stringify(bgmSel.data).slice(0, 200)}`);
+  }
+  if (!fs.existsSync(bgmSel.data.bgm.local_path)) err('BGM 未下载到本地缓存');
+  const pdBgm = await api('GET', `/api/projects/${pid}`);
+  if (pdBgm.data.project?.bgm?.song_id !== '12345') err('项目 bgm 选择未落库');
+  ok(`BGM 选用并缓存：${path.basename(bgmSel.data.bgm.local_path)}`);
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});
@@ -834,6 +887,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   } else {
     if (ren.status !== 201) err(`渲染任务创建失败: ${JSON.stringify(ren.data)}`);
     if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
+    if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined) err('渲染参数缺少 BGM 字段');
     let renJob = null;
     const dRen = Date.now() + 180_000;
     while (Date.now() < dRen) {
@@ -854,6 +908,13 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');
   }
+
+  // 20.45 v1.4：清除 BGM 选择
+  const bgmDel = await api('DELETE', `/api/projects/${pid}/bgm`);
+  if (bgmDel.status !== 200 || !bgmDel.data.ok) err('清除 BGM 失败');
+  const pdBgm2 = await api('GET', `/api/projects/${pid}`);
+  if (pdBgm2.data.project?.bgm) err('清除 BGM 后项目仍保留选择');
+  ok('BGM 清除正常（本地缓存文件保留）');
 
   // 20.5 v1.3：TTS 镜头绑定校验（仅校验层，不触发真实 Fish 合成）
   const ttsBad1 = await api('POST', '/api/tts/generate', { text: '旁白', shot_id: shot1.id });

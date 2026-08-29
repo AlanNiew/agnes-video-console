@@ -2,6 +2,15 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.4.0] - 2026-08-29
+
+### Added
+
+- **在线 BGM 配乐**：接入自托管音乐接口（网易云源，Token 认证）。工作台第⑥步新增「🎵 背景音乐」——搜索歌曲（`GET /api/music/search` 代理并规范化字段）、▶ 试听（`GET /api/music/stream` 服务端流代理，播放地址有时效性故现取现播）、一键选用（`POST /api/projects/:id/bgm`，立即下载到 `data/artifacts` 缓存 `bgm-<id>-<level>.mp3` 并落库到 `projects.bgm`）、清除。
+- **渲染 BGM 混音**：成片渲染自动铺设所选 BGM——`-stream_loop` 循环铺满片长、`atrim` 裁剪、首尾 `afade` 淡入淡出；**有旁白时默认开启「旁白闪避」**（`asplit` + `sidechaincompress`：旁白起时自动压低音乐，让人声突出），无旁白时自动抬升 BGM 音量；BGM 音量可调（默认 35%）。渲染参数新增 `bgm_volume` / `bgm_duck`。
+- **音乐接口设置**：设置弹窗与 API 新增 `music_api_base` / `music_api_token`（仅存本地 SQLite、只做服务端调用，浏览器只见 `music_api_token_set` 布尔）/ `music_level`（standard/exhigh/lossless/hires）。
+- mock e2e 扩展到 **62 项**：音乐搜索代理、Token 不泄露、非数字 song_id 拦截、选用下载缓存、渲染带 BGM、清除选择。
+
 ## [1.3.0] - 2026-08-29
 
 > 依据一次完整的真实创作实战（《种星星的人》全流程 AI 短片）回归审视产品后的改造：

@@ -60,12 +60,18 @@ const paths = {
   },
   '/api/projects/{id}/videos': { post: '整项目提交视频任务（旧入口，单提示词）' },
   '/api/projects/{id}/render': {
-    post: '一键成片渲染：镜头视频（本地归档优先）+ 逐镜旁白（每镜头最新成功的 shot 配音）→ xfade 叠化 + 旁白对齐混音 → 1280x720@30 mp4。body：{transition_ms?(200-2000, 默认600), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true)}；需本机 ffmpeg，≥2 个已完成镜头',
+    post: '一键成片渲染：镜头视频（本地归档优先）+ 逐镜旁白（每镜头最新成功的 shot 配音）+ 项目 BGM（可选）→ xfade 叠化 + 旁白对齐混音 + BGM 循环铺底/淡入淡出/旁白闪避 → 1280x720@30 mp4。body：{transition_ms?(200-2000, 默认600), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true)}；需本机 ffmpeg，≥2 个已完成镜头',
   },
   '/api/projects/{id}/render/jobs': { get: '项目渲染任务列表' },
   '/api/render/jobs/{id}': {
     get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), output_path, output_url}',
     delete: '删除渲染任务（渲染中不可删；产物文件一并清理）',
+  },
+  '/api/music/search': { get: 'BGM 在线曲库搜索 ?keyword=&limit= → {items:[{id,name,artist,album,duration_s,cover,levels[]}]}（需设置 music_api_base）' },
+  '/api/music/stream': { get: '歌曲试听流代理 ?id=&level=（播放地址有时效性，服务端现取现转发）' },
+  '/api/projects/{id}/bgm': {
+    post: '项目选用 BGM {song_id(纯数字), name, artist?, album?, level?} → 立即下载缓存到 artifacts 并落库 projects.bgm',
+    delete: '清除项目 BGM 选择（本地缓存文件保留）',
   },
   '/api/tts/generate': {
     post: 'Fish Audio 配音合成 {text, project_id?, shot_id?(提供时 kind 自动为 shot，成片渲染按镜头取用), kind?(narration|shot), voice?, speed?, model?} → mp3 落地 artifacts',

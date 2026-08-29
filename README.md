@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-59%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-62%20passed-brightgreen)
 
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
@@ -21,6 +21,7 @@
 
 ## ✨ 特性
 
+- 🎵 **在线 BGM 配乐（v1.4）**：工作台第⑥步搜索在线曲库（自托管音乐接口，网易云源）→ 试听 → 一键选用；渲染时 BGM 循环铺底、首尾淡入淡出，**有旁白时自动闪避**（sidechaincompress 压低音乐让人声突出），音量可调
 - 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（叠化转场、旁白按镜头对齐、片头/片尾卡、自动限幅），产出直接播放/下载
 - 🚦 **服务端提交队列（v1.3）**：任务创建为「入队」语义，后台提交器按 `submit_interval_ms` 节流提交上游，**429 限流自动指数退避重试**——批量提交不再产生撞墙死记录
 - 💾 **视频本地归档（v1.3）**：任务完成即自动下载到 `data/artifacts`，播放/下载优先本地（远端链接过期也有兜底）；历史完成任务启动时自动补扫归档
@@ -73,6 +74,8 @@ npm start
 
 **成片渲染**：第⑥步「🎞️ 成片渲染」把已完成镜头视频（本地归档优先）与逐镜旁白合成为完整短片——镜头间叠化转场（可调 0.4–1.0s）、旁白按镜头起幅点对齐（偏移可调）、可选片头/片尾卡、混音自动限幅；1280×720@30 输出到 `data/artifacts/`，完成后页面内直接播放/下载。需要本机安装 **ffmpeg**（加入 PATH）。接口：`POST /api/projects/:id/render`、`GET /api/projects/:id/render/jobs`、`GET /api/render/jobs/:id`、`DELETE /api/render/jobs/:id`。
 
+**BGM 配乐（v1.4）**：在「设置 → 音乐接口」填写自托管音乐接口地址与 Token（网易云源；Token 仅存本地 SQLite、只做服务端调用）→ 第⑥步「🎵 背景音乐」搜索歌曲 → ▶ 试听（服务端流代理，现取现播）→ 选用（立即下载到 `data/artifacts` 缓存，播放地址有时效性因此落本地）→ 渲染成片时自动循环铺底、首尾淡入淡出；有旁白时默认开启「旁白闪避」，BGM 音量可调（有旁白建议 30–40%）。接口：`GET /api/music/search`、`GET /api/music/stream`、`POST/DELETE /api/projects/:id/bgm`。
+
 **V2.0 提示**（仅历史任务/后端 API，界面已下架）：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
 
 **提示词建议**：主体与场景 → 动作变化 → 镜头语言 → 视觉风格 → 声音节奏 → 一致性要求。`reference` 模式用 `<Picture 1>` / `<Audio 1>` / `<Video 1>` 指代素材。
@@ -89,6 +92,7 @@ agnes-video-console/
 ├── render.js            # 成片渲染器（v1.3：归一化 → xfade 叠化 → 旁白对齐混音 → 片头尾卡）
 ├── artifacts.js         # 本地产物归档（远程图片/视频/音频下载备份，供 server/poller 共用）
 ├── openapi.js           # API 自描述文档（GET /api/openapi.json）
+├── netmusic.js          # 音乐接口客户端（v1.4 BGM：搜索 / 播放地址 / 本地缓存下载）
 ├── fish-tts.js          # Fish Audio TTS 客户端（直连或 HTTP 代理 CONNECT 隧道）
 ├── logger.js            # 内存环形日志
 ├── public/              # 前端单页应用（index.html / style.css / app.js 任务中心 / workspace.js 创作工作台）
@@ -134,10 +138,14 @@ DELETE /api/projects/:id/shots/:shotId 删除镜头
 POST /api/projects/:id/shots/reorder   镜头排序
 POST /api/projects/:id/videos          从项目发起视频任务（旧入口，单提示词）
 POST /api/projects/:id/shots/:shotId/videos  单镜头提交视频任务
-POST /api/projects/:id/render          一键成片渲染（镜头视频 + 逐镜旁白 → 完整短片）
+POST /api/projects/:id/render          一键成片渲染（镜头视频 + 逐镜旁白 + BGM → 完整短片）
 GET  /api/projects/:id/render/jobs     项目渲染任务列表
 GET  /api/render/jobs/:id              渲染任务详情（进度/产物）
 DELETE /api/render/jobs/:id            删除渲染任务（产物一并清理）
+GET  /api/music/search                 在线曲库搜索（BGM，v1.4）
+GET  /api/music/stream                 歌曲试听流代理（现取播放地址转发）
+POST /api/projects/:id/bgm             项目选用 BGM（下载缓存 + 落库）
+DELETE /api/projects/:id/bgm           清除项目 BGM 选择
 GET  /artifacts/*                      本地产物静态服务（图片/视频/音频/成片）
 ```
 
@@ -149,7 +157,7 @@ GET  /artifacts/*                      本地产物静态服务（图片/视频/
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 **59 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **62 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、BGM 配乐、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 

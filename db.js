@@ -173,6 +173,9 @@ for (const [name, type] of [
 }
 const ttsCols = new Set(db.prepare('PRAGMA table_info(project_tts)').all().map((r) => r.name));
 if (!ttsCols.has('shot_id')) db.exec('ALTER TABLE project_tts ADD COLUMN shot_id INTEGER');
+// v1.4：项目背景音乐选择（JSON：song_id/name/artist/album/level/local_path 等）
+const projCols = new Set(db.prepare('PRAGMA table_info(projects)').all().map((r) => r.name));
+if (!projCols.has('bgm')) db.exec('ALTER TABLE projects ADD COLUMN bgm TEXT');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -242,6 +245,7 @@ const stmts = {
     UPDATE projects SET name = ?, idea = ?, style = ?, aspect_ratio = ?, seconds = ?, status = ?, updated_at = ?
     WHERE id = ?
   `),
+  setProjectBgm: db.prepare('UPDATE projects SET bgm = ?, updated_at = ? WHERE id = ?'),
   deleteProject: db.prepare('DELETE FROM projects WHERE id = ?'),
   deleteProjectTexts: db.prepare('DELETE FROM project_texts WHERE project_id = ?'),
   deleteProjectImages: db.prepare('DELETE FROM project_images WHERE project_id = ?'),
@@ -565,6 +569,9 @@ const DEFAULT_SETTINGS = {
   fish_api_key: '',            // TTS：Fish Audio API Key（可选；不配置则配音功能不可用）
   fish_voice: 'default',       // TTS：默认音色（default = 平台默认；或 Fish 音色库模型 id）
   fish_speed: '1',             // TTS：默认语速 0.5–2.0
+  music_api_base: '',          // v1.4 BGM：音乐接口地址（如 http://60.204.147.98:15001；留空则 BGM 功能不可用）
+  music_api_token: '',         // v1.4 BGM：音乐接口 Token（Authorization 头，仅服务端使用）
+  music_level: 'exhigh',       // v1.4 BGM：默认音质 standard/exhigh/lossless/hires
 };
 
 /* ---------------- 创作流水线（projects / texts / images） ---------------- */
@@ -579,6 +586,7 @@ function projectRowToApi(row) {
     aspect_ratio: row.aspect_ratio,
     seconds: row.seconds,
     status: row.status,
+    bgm: parseJson(row.bgm), // v1.4：项目背景音乐选择
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -631,6 +639,14 @@ const projects = {
       Date.now(),
       Number(id)
     );
+    return true;
+  },
+
+  /** v1.4：设置/清除项目背景音乐选择（bgmJson 为对象或 null） */
+  setBgm(id, bgmJson) {
+    const cur = stmts.getProject.get(Number(id));
+    if (!cur) return false;
+    stmts.setProjectBgm.run(bgmJson ? JSON.stringify(bgmJson) : null, Date.now(), Number(id));
     return true;
   },
 

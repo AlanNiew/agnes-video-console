@@ -5,10 +5,12 @@
  */
 const path = require('node:path');
 const fs = require('node:fs');
+const { Readable } = require('node:stream');
 const express = require('express');
 const { settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH } = require('./db');
 const agnes = require('./agnes');
 const fishTts = require('./fish-tts');
+const netmusic = require('./netmusic');
 const poller = require('./poller');
 const submitter = require('./submitter');
 const renderer = require('./render');
@@ -363,6 +365,10 @@ app.get('/api/settings', (req, res) => {
     fish_api_key_masked: fish ? `${fish.slice(0, 6)}****${fish.slice(-4)}` : '',
     fish_voice: settings.get('fish_voice', DEFAULT_SETTINGS.fish_voice),
     fish_speed: Number(settings.get('fish_speed', DEFAULT_SETTINGS.fish_speed)),
+    // BGM（v1.4 音乐接口）
+    music_api_base: settings.get('music_api_base', DEFAULT_SETTINGS.music_api_base),
+    music_api_token_set: Boolean(settings.get('music_api_token', '')),
+    music_level: settings.get('music_level', DEFAULT_SETTINGS.music_level),
   });
 });
 
@@ -421,6 +427,25 @@ app.put('/api/settings', (req, res) => {
     if (!Number.isFinite(sp) || sp < 0.5 || sp > 2) throw new ApiError(400, 'fish_speed 需在 0.5–2.0 之间');
     settings.set('fish_speed', String(sp));
     changed.push('fish_speed');
+  }
+  // BGM 音乐接口设置（v1.4）
+  if (b.music_api_base !== undefined) {
+    const u = String(b.music_api_base).trim().replace(/\/+$/, '');
+    if (u && !isHttpUrl(u)) throw new ApiError(400, 'music_api_base 必须是 http(s) 地址');
+    settings.set('music_api_base', u);
+    changed.push('music_api_base');
+  }
+  if (b.music_api_token !== undefined) {
+    const t = String(b.music_api_token).trim();
+    if (t) { settings.set('music_api_token', t); changed.push('music_api_token'); }
+    else if (b.music_api_token === '') { settings.set('music_api_token', ''); changed.push('music_api_token'); }
+  }
+  if (b.clear_music_api_token === true) { settings.set('music_api_token', ''); changed.push('music_api_token'); }
+  if (b.music_level !== undefined) {
+    const lv = String(b.music_level).trim();
+    if (!netmusic.LEVELS.includes(lv)) throw new ApiError(400, `music_level 仅支持 ${netmusic.LEVELS.join('/')}`);
+    settings.set('music_level', lv);
+    changed.push('music_level');
   }
   if (b.clear_api_key === true) settings.set('api_key', '');
   if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
@@ -1036,6 +1061,68 @@ app.delete('/api/tts/:id', (req, res) => {
   res.json({ ok: true });
 });
 
+/* ---------- BGM 音乐（v1.4：搜索 / 试听代理 / 项目选歌） ---------- */
+
+const MUSIC_LEVELS = netmusic.LEVELS;
+
+// 搜索歌曲（代理音乐接口，规范化字段）
+app.get('/api/music/search', ah(async (req, res) => {
+  const keyword = String(req.query.keyword || '').trim().slice(0, 100);
+  if (!keyword) throw new ApiError(400, '请输入搜索关键词 keyword');
+  const limit = Math.min(Math.max(Number(req.query.limit) || 8, 1), 50);
+  const items = await netmusic.search(keyword, limit);
+  res.json({ items, keyword, limit });
+}));
+
+// 试听流代理：现取播放地址并把音频流转发给浏览器（播放地址有时效性，不能落库直链）
+app.get('/api/music/stream', ah(async (req, res) => {
+  const id = String(req.query.id || '').trim();
+  if (!/^\d+$/.test(id)) throw new ApiError(400, 'id 需为纯数字歌曲 ID');
+  const level = MUSIC_LEVELS.includes(String(req.query.level)) ? String(req.query.level) : undefined;
+  const { url } = await netmusic.playUrl(id, level);
+  const upstream = await fetch(url, { signal: AbortSignal.timeout(60_000) });
+  if (!upstream.ok || !upstream.body) throw new ApiError(502, `试听流获取失败（HTTP ${upstream.status}）`);
+  res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
+  const len = upstream.headers.get('content-length');
+  if (len) res.setHeader('Content-Length', len);
+  Readable.fromWeb(upstream.body).pipe(res);
+}));
+
+// 项目选用 BGM：{song_id, name, artist?, album?, level?} → 立即下载缓存本地并落库
+app.post('/api/projects/:id/bgm', ah(async (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  const b = req.body || {};
+  const songId = String(b.song_id || '').trim();
+  if (!/^\d+$/.test(songId)) throw new ApiError(400, 'song_id 需为纯数字歌曲 ID');
+  const level = MUSIC_LEVELS.includes(String(b.level)) ? String(b.level)
+    : settings.get('music_level', DEFAULT_SETTINGS.music_level);
+  const dl = await netmusic.downloadBGM(songId, level);
+  const bgm = {
+    song_id: songId,
+    name: String(b.name || '').trim().slice(0, 200) || `歌曲 ${songId}`,
+    artist: String(b.artist || '').trim().slice(0, 100) || '',
+    album: String(b.album || '').trim().slice(0, 100) || '',
+    level,
+    local_path: dl.local_path,
+    local_url: dl.local_url,
+    cached: dl.cached,
+    selected_at: Date.now(),
+  };
+  projects.setBgm(p.id, bgm);
+  log('info', `项目 #${p.id} 选用 BGM：《${bgm.name}》- ${bgm.artist}（${level}${dl.cached ? '，缓存命中' : '，已下载'}）`);
+  res.json({ ok: true, bgm });
+}));
+
+// 清除项目 BGM 选择（本地缓存文件保留，便于再次选用）
+app.delete('/api/projects/:id/bgm', (req, res) => {
+  const p = projects.get(req.params.id);
+  if (!p) throw new ApiError(404, '项目不存在');
+  projects.setBgm(p.id, null);
+  log('info', `项目 #${p.id} 清除 BGM 选择`);
+  res.json({ ok: true });
+});
+
 /* ---------- 项目（Projects） ---------- */
 
 app.post('/api/projects', (req, res) => {
@@ -1287,11 +1374,15 @@ app.post('/api/projects/:id/render', ah(async (req, res) => {
     const n = Number(v);
     return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : dft;
   };
+  const bgmVol = Number(b.bgm_volume);
   const params = {
     transition_ms: clampInt(b.transition_ms, 200, 2000, RENDER_PARAMS_DEFAULTS.transition_ms),
     narration_offset_ms: clampInt(b.narration_offset_ms, 0, 3000, RENDER_PARAMS_DEFAULTS.narration_offset_ms),
     title_card: b.title_card === undefined ? RENDER_PARAMS_DEFAULTS.title_card : Boolean(b.title_card),
     end_card: b.end_card === undefined ? RENDER_PARAMS_DEFAULTS.end_card : Boolean(b.end_card),
+    // v1.4 BGM
+    bgm_volume: Number.isFinite(bgmVol) ? Math.min(Math.max(bgmVol, 0), 1) : 0.35,
+    bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
   };
   const collected = renderer.collectSegments(p.id);
   const ready = collected ? collected.segments.length : 0;

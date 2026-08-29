@@ -320,6 +320,10 @@
       $('#setFishVoice').innerHTML = (fv.voices || [])
         .map((v) => `<option value="${esc(v.id)}" ${v.id === curVoice ? 'selected' : ''}>${esc(v.title)}</option>`)
         .join('');
+      // v1.4 BGM（音乐接口）
+      $('#setMusicBase').value = state.settings.music_api_base || '';
+      $('#musicTokenStatus').textContent = state.settings.music_api_token_set ? '（已保存，留空则不修改）' : '（未配置）';
+      $('#setMusicLevel').value = state.settings.music_level || 'exhigh';
     } catch (e) {
       toast('加载设置失败：' + e.message, 'err');
     }
@@ -665,12 +669,19 @@
     if (fishVoice) body.fish_voice = fishVoice;
     const fishSpeed = Number($('#setFishSpeed').value);
     if (Number.isFinite(fishSpeed) && fishSpeed >= 0.5 && fishSpeed <= 2) body.fish_speed = fishSpeed;
+    // v1.4 BGM（音乐接口）
+    body.music_api_base = $('#setMusicBase').value.trim();
+    const musicToken = $('#setMusicToken').value.trim();
+    if (musicToken) body.music_api_token = musicToken;
+    const musicLevel = $('#setMusicLevel').value;
+    if (musicLevel) body.music_level = musicLevel;
     try {
       await api('/api/settings', { method: 'PUT', body });
       toast('设置已保存', 'ok');
       $('#settingsModal').hidden = true;
       $('#setApiKey').value = '';
       $('#setFishKey').value = '';
+      $('#setMusicToken').value = '';
       await loadSettings();
     } catch (e) {
       toast('保存失败：' + e.message, 'err');

@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-59%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-62%20passed-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
 **creation workspace (4-step pipeline) + task-queue board + background polling + SQLite persistence**.
@@ -22,6 +22,7 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 
 ## ✨ Features
 
+- 🎵 Online BGM (v1.4): search an online music library (self-hosted NetEase-source API) from workspace step ⑥ → preview → one-click pick; at render time the BGM loops under the film with fade in/out and **auto-ducking under narration** (sidechaincompress); volume adjustable
 - 🎞️ One-click final cut (v1.3): workspace step ⑥ assembles completed shot videos + per-shot narration into a full short film locally via ffmpeg (xfade transitions, narration aligned per shot, title/end cards, auto limiting); output playable/downloadable from `data/artifacts/`
 - 🚦 Server-side submit queue (v1.3): task creation is "enqueue" semantics; a background submitter throttles per `submit_interval_ms` and **auto-retries 429 rate limits with exponential backoff** — batch submits no longer leave dead records
 - 💾 Local video archival (v1.3): completed videos auto-download to `data/artifacts` (`video_local_url` preferred for playback/download); startup sweep backfills history
@@ -43,7 +44,7 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 - 🧭 Flow guidance: clickable step bar that follows scrolling, a dynamic "next step" hint bar, staged waiting messages, and one-click idea-to-storyboard on project creation
 - 🔐 API key stays server-side (SQLite), browser only sees a masked value; binds to `127.0.0.1` only
 - 🧾 Built-in log panel
-- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 59 assertions, including 429 retry, local archival, and a real-ffmpeg final-cut render when ffmpeg is available)
+- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 62 assertions, including 429 retry, local archival, BGM search/select, and a real-ffmpeg final-cut render when ffmpeg is available)
 
 ## 🚀 Quick Start
 

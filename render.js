@@ -14,6 +14,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { projects, renders } = require('./db');
 const { ARTIFACTS_DIR } = require('./artifacts');
+const netmusic = require('./netmusic');
 const { log } = require('./logger');
 
 const TICK_MS = 1500;
@@ -190,6 +191,27 @@ class Renderer {
     const narrOffset = Math.min(Math.max((Number(params.narration_offset_ms) || 500) / 1000, 0), 3);
     const wantTitle = params.title_card !== false;
     const wantEnd = params.end_card !== false;
+    // v1.4 BGM：音量 0–1（默认 0.35）；有旁白时可选闪避（sidechaincompress）
+    const bgmVolume = Math.min(Math.max(Number(params.bgm_volume) || 0.35, 0), 1);
+    const bgmDuck = params.bgm_duck !== false;
+
+    /* ---- 0) BGM：优先本地缓存，缺失则现取播放地址重新下载 ---- */
+    let bgmFile = null;
+    const bgmSel = collected.project.bgm;
+    if (bgmSel?.song_id) {
+      try {
+        if (bgmSel.local_path && fs.existsSync(bgmSel.local_path)) {
+          bgmFile = bgmSel.local_path;
+        } else {
+          const dl = await netmusic.downloadBGM(bgmSel.song_id, bgmSel.level);
+          bgmFile = dl.local_path;
+          projects.setBgm(collected.project.id, { ...bgmSel, local_path: dl.local_path, local_url: dl.local_url });
+        }
+        log('info', `渲染任务 #${job.id} 使用 BGM：《${bgmSel.name}》${bgmSel.artist ? ` - ${bgmSel.artist}` : ''}`);
+      } catch (e) {
+        log('warn', `渲染任务 #${job.id} BGM 不可用（${e.message}），将以无 BGM 渲染`);
+      }
+    }
 
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'agnes-render-'));
     try {
@@ -234,7 +256,16 @@ class Renderer {
       const narrIdxStart = seqs.length;
       const narrationFiles = norm.map((s) => s.narrationPath).filter(Boolean);
       for (const n of narrationFiles) inputs.push('-i', n);
-      if (!narrationFiles.length) inputs.push('-f', 'lavfi', '-t', total.toFixed(2), '-i', 'anullsrc=r=44100:cl=stereo');
+      let silentIdx = -1;
+      if (!narrationFiles.length) {
+        silentIdx = narrIdxStart;
+        inputs.push('-f', 'lavfi', '-t', total.toFixed(2), '-i', 'anullsrc=r=44100:cl=stereo');
+      }
+      let bgmIdx = -1;
+      if (bgmFile) {
+        bgmIdx = narrIdxStart + narrationFiles.length + (silentIdx >= 0 ? 1 : 0);
+        inputs.push('-stream_loop', '-1', '-i', bgmFile); // BGM 不足片长则循环
+      }
 
       const fl = [];
       let prev = '[0:v]';
@@ -261,8 +292,24 @@ class Renderer {
         shotStart += s.duration - fade;
       }
       let aout;
+      // v1.4 BGM 铺底链：循环源裁到片长 + 音量 + 首尾淡入淡出；有旁白可选闪避
+      const bgmChain = (vol, label = '[bgm]') =>
+        `[${bgmIdx}:a]atrim=0:${total.toFixed(2)},volume=${vol},` +
+        `afade=t=in:st=0:d=2,afade=t=out:st=${Math.max(0, total - 3).toFixed(2)}:d=3${label}`;
       if (narrLabels.length) {
-        fl.push(`${narrLabels.join('')}amix=inputs=${narrLabels.length}:duration=longest:normalize=0,alimiter=limit=0.92[aout]`);
+        fl.push(`${narrLabels.join('')}amix=inputs=${narrLabels.length}:duration=longest:normalize=0[narmix]`);
+        if (bgmIdx >= 0) {
+          fl.push(bgmChain(bgmVolume));
+          fl.push('[narmix]asplit=2[narMain][narSc]');
+          fl.push('[bgm][narSc]sidechaincompress=threshold=0.04:ratio=10:attack=60:release=500[bgmD]');
+          fl.push('[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,alimiter=limit=0.92[aout]');
+        } else {
+          fl.push('[narmix]alimiter=limit=0.92[aout]');
+        }
+        aout = '[aout]';
+      } else if (bgmIdx >= 0) {
+        // 无旁白：BGM 适当抬升音量（保证成片有可听的音乐底）
+        fl.push(bgmChain(Math.max(bgmVolume, 0.55), '[aout]'));
         aout = '[aout]';
       } else {
         aout = `${narrIdxStart}:a`; // 静音源直接作为音轨（直接流映射不能带方括号标签）

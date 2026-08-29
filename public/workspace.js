@@ -396,10 +396,24 @@
               </select></label>
             <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRTitle" checked /> 片头卡</label>
             <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsREnd" checked /> 片尾卡</label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center">BGM 音量
+              <input type="range" id="wsRBgmVol" min="5" max="90" value="35" style="width:90px" title="背景音乐音量（有旁白时建议 30–40%）" />
+              <span id="wsRBgmVolV">35%</span></label>
+            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRDuck" checked /> 旁白闪避</label>
             <span class="spacer" style="flex:1"></span>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>
           <div class="hint mt">旁白取每个镜头最新的「镜头配音」（在上方分镜卡片中填写旁白并生成配音）；成片为 1280×720@30，旁白混音自动限幅。渲染在服务端后台进行，可离开本页。</div>
+          <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
+            <b>🎵 背景音乐（BGM）</b> <span class="hint">搜索在线曲库选用一首，渲染时循环铺底、首尾淡入淡出；有旁白时自动闪避（压低音乐让人声突出）</span>
+            <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
+              <input id="wsBgmQuery" placeholder="搜索歌曲 / 歌手，如：夜空中最亮的星" style="flex:1;min-width:200px" />
+              <button class="btn ghost sm" id="wsBgmSearch">🔍 搜索</button>
+            </div>
+            <div id="wsBgmCurrent" class="mt">${bgmCurrentHtml(p.bgm)}</div>
+            <div id="wsBgmResults" class="mt"></div>
+            <audio id="wsBgmAudio" preload="none" style="display:none"></audio>
+          </div>
           <div id="wsRenderJobs" class="mt">${renderJobs.map(renderJobItem).join('')}</div>
         </div>
       </div>`;
@@ -473,6 +487,8 @@
               narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
               title_card: $('#wsRTitle')?.checked !== false,
               end_card: $('#wsREnd')?.checked !== false,
+              bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
+              bgm_duck: $('#wsRDuck')?.checked !== false,
             },
           });
           toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
@@ -484,6 +500,80 @@
       };
     }
     if (renderJobs.some((j) => j.status === 'queued' || j.status === 'rendering')) startRenderPoll(p.id);
+    // v1.4 BGM：搜索 / 试听 / 选用 / 清除
+    let bgmAudio = null;
+    let bgmAudioUrl = '';
+    const bgmSearchBtn = $('#wsBgmSearch');
+    if (bgmSearchBtn) {
+      bgmSearchBtn.onclick = async () => {
+        const q = $('#wsBgmQuery').value.trim();
+        if (!q) return toast('请输入搜索关键词', 'warn');
+        bgmSearchBtn.disabled = true;
+        try {
+          const r = await api(`/api/music/search?limit=8&keyword=${encodeURIComponent(q)}`);
+          const box = $('#wsBgmResults');
+          const items = r.items || [];
+          box.innerHTML = items.length ? items.map((s) => `
+            <div class="ver-item" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span><b>${esc(s.name)}</b> ${esc(s.artist)}${s.album ? ` · <span class="muted">${esc(s.album)}</span>` : ''}</span>
+              <span class="meta-tag">${fmtSecs(s.duration_s)}</span>
+              <span class="spacer" style="flex:1"></span>
+              <button class="btn ghost sm" data-bgm-play="${s.id}" data-level="${esc(s.levels?.[1] || 'exhigh')}">▶ 试听</button>
+              <button class="btn ghost sm" data-bgm-pick="${s.id}" data-name="${esc(s.name)}" data-artist="${esc(s.artist)}" data-album="${esc(s.album)}">选用</button>
+            </div>`).join('') : '<span class="hint">没有找到结果</span>';
+          box.querySelectorAll('[data-bgm-play]').forEach((b) => {
+            b.onclick = () => {
+              if (!bgmAudio) bgmAudio = new Audio();
+              const url = `/api/music/stream?id=${b.dataset.bgmPlay}&level=${b.dataset.level}`;
+              if (bgmAudioUrl === url) {
+                if (bgmAudio.paused) bgmAudio.play().catch(() => toast('试听加载失败', 'err'));
+                else bgmAudio.pause();
+                return;
+              }
+              bgmAudioUrl = url;
+              bgmAudio.src = url;
+              bgmAudio.play().catch(() => toast('试听加载失败（检查设置中的音乐接口配置）', 'err'));
+            };
+          });
+          box.querySelectorAll('[data-bgm-pick]').forEach((b) => {
+            b.onclick = async () => {
+              b.disabled = true;
+              try {
+                await api(`/api/projects/${p.id}/bgm`, { method: 'POST', body: {
+                  song_id: b.dataset.bgmPick, name: b.dataset.name, artist: b.dataset.artist, album: b.dataset.album,
+                } });
+                toast('BGM 已选用（已下载到本地缓存）', 'ok');
+                await renderProject(p.id);
+              } catch (e) {
+                toast('选用失败：' + e.message, 'err');
+                b.disabled = false;
+              }
+            };
+          });
+        } catch (e) {
+          toast('搜索失败：' + e.message, 'err');
+        } finally {
+          bgmSearchBtn.disabled = false;
+        }
+      };
+    }
+    const bgmClear = $('#wsBgmClear');
+    if (bgmClear) {
+      bgmClear.onclick = async () => {
+        try {
+          await api(`/api/projects/${p.id}/bgm`, { method: 'DELETE' });
+          toast('已清除 BGM 选择', 'ok');
+          await renderProject(p.id);
+        } catch (e) { toast(e.message, 'err'); }
+      };
+    }
+    const volRange = $('#wsRBgmVol');
+    if (volRange) {
+      volRange.oninput = () => {
+        const l = $('#wsRBgmVolV');
+        if (l) l.textContent = volRange.value + '%';
+      };
+    }
   }
 
   /* ---------------- TTS 配音（Fish Audio） ---------------- */
@@ -1063,6 +1153,18 @@
 
   /* ---------------- v1.3 成片渲染面板 ---------------- */
   const RENDER_STATUS = { queued: '排队中', rendering: '渲染中', completed: '已完成', failed: '失败' };
+
+  function bgmCurrentHtml(bgm) {
+    if (!bgm?.song_id) return '<span class="hint">未选用 BGM（可选：选用后渲染时循环铺底，有旁白时自动闪避）</span>';
+    return `<span class="meta-tag">🎵 ${esc(bgm.name)}${bgm.artist ? ' - ' + esc(bgm.artist) : ''}</span>
+      <span class="meta-tag">${esc(bgm.level || '')}</span>
+      <button class="btn ghost sm" id="wsBgmClear" title="清除 BGM 选择（本地缓存保留）">✕ 清除</button>`;
+  }
+
+  function fmtSecs(s) {
+    const n = Math.max(0, Math.round(Number(s) || 0));
+    return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
+  }
 
   function renderJobItem(j) {
     const active = j.status === 'queued' || j.status === 'rendering';
