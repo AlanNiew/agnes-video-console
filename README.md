@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-40%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-47%20passed-brightgreen)
 
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
@@ -21,7 +21,8 @@
 
 ## ✨ 特性
 
-- 🎬 **创作工作台（四步流水线）**：一句话创意 → AI 结构化文案（梗概/视频提示词/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 一键发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
+- 🎬 **创作工作台（四步流水线）**：一句话创意 → AI 结构化文案（梗概/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
+- 🎞️ **分镜脚本（M2）**：AI 按创意一次生成多镜头分镜（每镜头标题 + 提示词 + 时长，可选自动/3/5/8 镜），镜头可独立编辑/增删/排序/选用历史版本；支持单镜头提交与「批量提交未完成镜头」（按设置间隔节流），任务按镜头溯源分组
 - 🎬 **三模型 · 多模式**：任务中心选模型后表单自动切换参数体系；模型/画幅/时长清单由后端 `/api/meta` 统一下发
 - 📋 **任务队列看板**：队列中 / 生成中 / 已完成 / 失败 四列实时看板，进度条、搜索、状态过滤
 - 🔄 **后台自动轮询**：可配置间隔（默认 2s）；429 / 网络错误指数退避；超时任务自动标记失败
@@ -50,7 +51,7 @@ npm start
 
 ## 📖 使用流程
 
-**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成四类文案（可编辑、多版本选用）→ 生成角色设定图并点选定稿 → 「🚀 提交视频任务」，系统自动组装 reference 模式（定稿角色图 + `<Picture 1>` 外观一致性注入）。
+**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成文案（可编辑、多版本选用）→「✨ 生成分镜」把创意拆成多镜头（每镜头可独立编辑/排序，也可「升级为分镜」复用手写提示词）→ 生成角色设定图并点选定稿 → 逐镜头「🚀 提交」或「🚀 批量提交未完成镜头」（按设置中的「批量提交间隔」节流）。
 
 **方式二 · 任务中心（单任务）**：
 
@@ -96,17 +97,24 @@ POST /api/tasks/bulk/clear-failed      清空失败
 GET  /api/logs                         最近运行日志
 POST /api/llm/chat                     通用文本生成（提示词优化）
 POST /api/llm/script                   创意 → 结构化文案（可关联项目落库）
+POST /api/llm/storyboard               创意 → 多镜头分镜（可关联项目，重建镜头工作副本）
 POST /api/images/generate              图片生成（文生图/图生图，可关联项目）
 DELETE /api/images/:id                 删除项目图片记录
 POST /api/projects                     创建创作项目
 GET  /api/projects                     项目列表
-GET  /api/projects/:id                 项目详情（聚合文案/图片/任务）
+GET  /api/projects/:id                 项目详情（聚合文案/图片/镜头/任务）
 PATCH /api/projects/:id                更新项目
-DELETE /api/projects/:id               删除项目（级联清理文案/图片，任务解绑）
+DELETE /api/projects/:id               删除项目（级联清理文案/图片/镜头，任务解绑）
 POST /api/projects/:id/select-text     选定文案版本
 PATCH /api/projects/:id/texts/:textId  编辑文案内容（校验归属）
 POST /api/projects/:id/select-image    定稿角色/场景图
-POST /api/projects/:id/videos          从项目发起视频任务（reference + 角色图）
+POST /api/projects/:id/storyboard/apply 选用历史分镜版本（重建镜头）
+POST /api/projects/:id/shots           手动添加镜头
+PATCH /api/projects/:id/shots/:shotId  编辑镜头（校验归属）
+DELETE /api/projects/:id/shots/:shotId 删除镜头
+POST /api/projects/:id/shots/reorder   镜头排序
+POST /api/projects/:id/videos          从项目发起视频任务（旧入口，单提示词）
+POST /api/projects/:id/shots/:shotId/videos  单镜头提交视频任务
 GET  /artifacts/*                      本地图片备份静态服务
 ```
 
@@ -118,7 +126,7 @@ GET  /artifacts/*                      本地图片备份静态服务
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 **40 项**断言，覆盖任务全链路、流水线、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **47 项**断言，覆盖任务全链路、流水线、分镜脚本、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 

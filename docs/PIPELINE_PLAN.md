@@ -149,12 +149,37 @@ POST /api/projects/:id/videos   从项目发起视频任务：
 5. 前端工作台四步 UI + 任务中心「AI 优化」按钮；
 6. mock e2e 扩展：模拟 `/v1/chat/completions`、`/v1/images/generations`，全链路「创意→文案→角色图→视频任务」用例。
 
-### M2（下一阶段）
-- 分镜脚本结构化（多镜头 storyboard，一个项目批量出多条视频）；
-- 图片本地归档打包导出、项目复制；
-- 统一模型注册表（新旧模型一致化，按需开放付费模型；元数据下发 `/api/meta` 已于体检阶段完成）；
-- 音频参考/音画同步接入（视 Agnes 能力）；
-- 项目模板库（风格预设、角色库复用）。
+### M2（下一阶段）—— 分镜脚本结构化（✅ 已实现，v1.2.0，2026-08-29）
+
+> 实现结论：按本节设计完成（批A–E 全部落地），47 项 mock e2e 全绿。与设计的差异：(1) 新增 `POST /api/projects/:id/storyboard/apply` 用于「选用历史分镜版本 → 重建镜头」；(2) 测试最终为 47 项（原估 55+，以断言密度为准）；(3) 其余（shots 表、溯源外键、pipeline.js 服务层、前端节流批量提交、submit_interval_ms 设置）均按设计交付。
+
+**目标**：一个创作项目从「单条视频提示词」升级为「多镜头分镜」——LLM 一次生成整段分镜（每镜头含标题 + 视频提示词 + 时长），镜头可手动编辑/增删/排序，支持单镜头提交与批量节流提交，任务按镜头溯源。
+
+**本期范围**：分镜核心包；批量提交采用前端节流（用户已确认）。项目复制/图片打包导出、镜头级 keyframe 首尾帧、音频参考、模板库、后端提交队列、单镜头 LLM 重生成均**排除在本期外**（shots.mode 字段为 keyframe 预留）。
+
+**实施批次**：
+
+- **批A 前置改造**（先还体检发现的结构债）：
+  1. 新建 `shots` 表（`id/project_id/seq/title/video_prompt/seconds/mode/created_at/updated_at` + `idx_shots_project`）；`tasks` 迁移列追加 `shot_id/text_id/image_id`（复用 MIGRATE_COLS 机制）并补 `idx_tasks_project`、`idx_tasks_shot`；
+  2. 新建 `pipeline.js` 服务层，把 `/api/projects/:id/videos` 内联的「角色图 → 提示词回退链 → `<Picture 1>` 注入 → buildPayload → submitTask」抽为 `submitShotVideo()`，旧端点薄壳化、行为不变；
+  3. `projects.status` 退役（列保留兼容，M2 流程不再写入），工作台步骤指示改纯聚合推导；
+  4. 回归 40 项 mock e2e 全绿。
+- **批B 分镜后端 API**：
+  - `POST /api/llm/storyboard`（`shot_count: auto|3|5|8`）：storyboard 整体作为 `project_texts` 新 kind=`storyboard` 版本落库（复用多版本/选用机制），解析成功后事务重建 shots 工作副本；解析失败降级返回原文；
+  - `GET /api/projects/:id` 聚合增加 `shots` 与每镜头任务关联；
+  - 镜头 CRUD：`POST /api/projects/:id/shots`、`PATCH .../shots/:shotId`、`DELETE .../shots/:shotId`、`POST .../shots/reorder`（全部归属校验，镜头数 ≤20）；
+  - `POST /api/projects/:id/shots/:shotId/videos` 单镜头提交（任务落 `shot_id`/`image_id` 溯源）；旧端点保留原语义。
+- **批C 前端第②步**：「视频提示词」区升级为「分镜」区——未生成时提供「✨ 生成分镜（自动/3/5/8）」与「升级为分镜」（把选定 video_prompt 变 1 个镜头）；已有分镜渲染镜头卡片（序号/标题/提示词/时长，保存/删除/上移/下移），支持「＋ 添加镜头」「✨ 重新生成分镜（confirm 覆盖）」与 storyboard 历史版本选用（选用即重建 shots）。
+- **批D 前端第④步**：每镜头状态徽章（未提交/生成中 k%/已完成/失败，按 `task.shot_id` 聚合）+ 单镜头「🚀 提交」；「🚀 批量提交未完成镜头」由前端节流逐个调用单镜头接口，间隔读新设置项 `submit_interval_ms`（默认 60000ms，0–300000，0=连续），显示进度 k/N、可随时停止；任务列表按镜头分组（旧任务归「其他」）；设置弹窗支持新字段。
+- **批E 测试/文档/收尾**：mock chat 增加分镜 JSON 分支（按结构化契约标记识别）；用例 40 → 55+（分镜落库重建、镜头 CRUD+归属 404、单镜头提交 payload 与溯源断言、旧流程回归）；README/CHANGELOG 回填、本节回填实现结论；版本升 1.2.0。
+
+**关键设计决策**：
+1. **独立 `shots` 表而非 `project_texts` 加列**——分镜是逐镜头编辑/排序/与任务溯源的「工作副本」，storyboard 的「多版本/选用」语义留在 project_texts，两层职责分离（解决体检注意事项 #1）；
+2. **tasks 落 `shot_id`/`text_id`/`image_id` 溯源外键**（解决 #2）；
+3. **`projects.status` 退役改聚合推导**（解决 #3）；
+4. **编排抽 `pipeline.js` 服务层**（解决 #4），M2 批量提交复用同一入口；
+5. **`project_id`/`shot_id` 索引随本批补齐**（解决 #5）；
+6. **批量提交选前端节流**：官方文档未写视频提交 RPM（调研值 1/分），不引入「待提交」状态机与后端队列；间隔可配置，实测 API 允许可调低至 0。
 
 ### M2 前注意事项（体检阶段架构审计结论，动工前需先解决）
 

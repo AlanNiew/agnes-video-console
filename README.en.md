@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-40%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-47%20passed-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
 **creation workspace (4-step pipeline) + task-queue board + background polling + SQLite persistence**.
@@ -22,7 +22,8 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 
 ## ✨ Features
 
-- 🎬 Creation workspace (4-step pipeline): one-line idea → AI copywriting (script / video prompt / character / scene, editable, multi-version) → AI character sheet (pick a final) → one-click video task (reference mode auto-references the character image with a `<Picture 1>` consistency injection)
+- 🎬 Creation workspace (4-step pipeline): one-line idea → AI copywriting (script / character / scene, editable, multi-version) → AI character sheet (pick a final) → video tasks (reference mode auto-references the character image with a `<Picture 1>` consistency injection)
+- 🎞️ Storyboard (M2): AI breaks the idea into multi-shot storyboards (per-shot title + prompt + duration; auto/3/5/8 shots), each shot editable / reorderable / deletable with versioned history; submit per shot or batch-submit unfinished shots with configurable throttling; tasks are traced per shot
 - 🎬 Three models · per-model forms; model/aspect/duration lists served from `/api/meta` as the single source of truth
 - 📋 Kanban task board: queued / in-progress / completed / failed, live progress, search & filters
 - 🔄 Background poller: configurable interval (default 2s), exponential backoff on 429/network errors, automatic timeout
@@ -51,7 +52,7 @@ Open **http://127.0.0.1:8273**, click ⚙ settings and enter your Agnes API Key.
 
 ## 📖 Usage
 
-**Option A · Creation workspace (recommended)**: click "🎬 创作工作台" in the header → new project (one-line idea + aspect/duration) → AI generates four copy types (editable, versioned) → generate a character image and pick the final → "🚀 提交视频任务" assembles the reference-mode payload automatically (final character image + `<Picture 1>` consistency injection).
+**Option A · Creation workspace (recommended)**: click "🎬 创作工作台" in the header → new project (one-line idea + aspect/duration) → AI copywriting (editable, versioned) → "✨ 生成分镜" to break the idea into shots (each editable/reorderable, or "升级为分镜" to reuse a hand-written prompt as one shot) → generate a character image and pick the final → submit shots one by one or "🚀 批量提交未完成镜头" (throttled by the "批量提交间隔" setting).
 
 **Option B · Task center (single tasks)**:
 
@@ -84,7 +85,7 @@ No real API key required — a local fake Agnes API verifies the whole create �
 npm run test:mock
 ```
 
-Expected output: `== 全部通过 ✔ ==` (currently **40 assertions**, covering the full task loop, the creation pipeline, input validation and security constraints). CI runs it on every push / PR.
+Expected output: `== 全部通过 ✔ ==` (currently **47 assertions**, covering the full task loop, the creation pipeline, storyboards, input validation and security constraints). CI runs it on every push / PR.
 
 ## 🔒 Security
 
