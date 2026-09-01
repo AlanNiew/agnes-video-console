@@ -2,8 +2,8 @@
 (() => {
   'use strict';
 
-  const esc = (s) =>
-    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // 公共工具统一来自 common.js（须先于本文件加载）
+  const { esc } = window.__common;
 
   /**
    * 弹出「旧版 vs 新版」对比窗，由用户二选一

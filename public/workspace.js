@@ -2,15 +2,8 @@
 (() => {
   'use strict';
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const esc = (s) =>
-    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  const fmtTime = (ts) => {
-    if (!ts) return '-';
-    const d = new Date(ts);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  };
+  // 公共工具统一来自 common.js（须先于本文件加载）
+  const { $, esc, fmtTime, toast, api } = window.__common;
   const STATUS_LABEL = { queued: '队列中', in_progress: '生成中', completed: '已完成', failed: '失败', submit_error: '提交失败' };
   const KIND_LABEL = {
     script: '故事梗概',
@@ -82,27 +75,6 @@
   async function getMeta() {
     if (!META) META = await api('/api/meta');
     return META;
-  }
-
-  async function api(path, opts = {}) {
-    const res = await fetch(path, {
-      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-      ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    let data = null;
-    try { data = await res.json(); } catch { /* ignore */ }
-    if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
-    return data;
-  }
-
-  function toast(msg, type = '') {
-    const box = $('#toasts');
-    const el = document.createElement('div');
-    el.className = `toast ${type}`;
-    el.textContent = msg;
-    box.appendChild(el);
-    setTimeout(() => el.remove(), 4200);
   }
 
   /* ---------------- 视图 ---------------- */

@@ -2,10 +2,8 @@
 (() => {
   'use strict';
 
-  const $ = (sel, root = document) => root.querySelector(sel);
-  const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
-  const esc = (s) =>
-    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  // 公共工具统一来自 common.js（须先于本文件加载）
+  const { $, $$, esc, fmtTime, toast, api } = window.__common;
 
   const STATUS_LABEL = {
     queued: '队列中',
@@ -38,12 +36,6 @@
   };
 
   /* ---------------- 工具 ---------------- */
-  function fmtTime(ts) {
-    if (!ts) return '-';
-    const d = new Date(ts);
-    const p = (n) => String(n).padStart(2, '0');
-    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
-  }
   function relTime(ts) {
     if (!ts) return '-';
     const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
@@ -52,31 +44,6 @@
     if (s < 3600) return `${Math.floor(s / 60)}分钟前`;
     if (s < 86400) return `${Math.floor(s / 3600)}小时前`;
     return `${Math.floor(s / 86400)}天前`;
-  }
-
-  function toast(msg, type = '') {
-    const box = $('#toasts');
-    const el = document.createElement('div');
-    el.className = `toast ${type}`;
-    el.textContent = msg;
-    box.appendChild(el);
-    setTimeout(() => el.remove(), 3800);
-  }
-
-  async function api(path, opts = {}) {
-    const res = await fetch(path, {
-      headers: opts.body ? { 'Content-Type': 'application/json' } : {},
-      ...opts,
-      body: opts.body ? JSON.stringify(opts.body) : undefined,
-    });
-    let data = null;
-    try { data = await res.json(); } catch { /* ignore */ }
-    if (!res.ok) {
-      const err = new Error(data?.error || `HTTP ${res.status}`);
-      err.status = res.status;
-      throw err;
-    }
-    return data;
   }
 
   /* ---------------- 统计栏 ---------------- */
