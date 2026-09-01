@@ -194,7 +194,7 @@ class Poller {
       completed_at: j.completed_at !== undefined && j.completed_at !== null ? Number(j.completed_at) : null,
       last_poll_response: j,
       metadata_url: metadataUrl,
-      error_message: status === 'failed' ? (errorMessage || '生成失败（未知错误）') : null,
+      error_message: status === 'failed' ? errorMessage || '生成失败（未知错误）' : null,
     });
 
     if (status === 'completed') {

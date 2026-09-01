@@ -26,18 +26,22 @@ const app = express();
 app.use(express.json({ limit: '2mb' }));
 
 /* ---------------- 路由装配（注册顺序 = 拆分前的原始顺序，行为不变） ---------------- */
-require('./routes/meta')(app);       // /api/meta /api/health /api/openapi.json /api/logs
-require('./routes/settings')(app);   // GET/PUT /api/settings
-require('./routes/tasks')(app);      // /api/stats /api/tasks*（创建/重试/轮询/删除/批量）
-require('./routes/llm')(app);        // /api/llm/chat /script /storyboard
-require('./routes/images')(app);     // /api/images/generate /api/images/:id
-require('./routes/tts')(app);        // /api/tts/*（voices/pool/market/generate/select/bind）
-require('./routes/music')(app);      // /api/music/* + /api/projects/:id/bgm
-require('./routes/projects')(app);   // /api/projects*（文案/图片/镜头/视频任务/重拍/定稿）
-require('./routes/render')(app);     // /api/projects/:id/render + /api/render/jobs*
+require('./routes/meta')(app); // /api/meta /api/health /api/openapi.json /api/logs
+require('./routes/settings')(app); // GET/PUT /api/settings
+require('./routes/tasks')(app); // /api/stats /api/tasks*（创建/重试/轮询/删除/批量）
+require('./routes/llm')(app); // /api/llm/chat /script /storyboard
+require('./routes/images')(app); // /api/images/generate /api/images/:id
+require('./routes/tts')(app); // /api/tts/*（voices/pool/market/generate/select/bind）
+require('./routes/music')(app); // /api/music/* + /api/projects/:id/bgm
+require('./routes/projects')(app); // /api/projects*（文案/图片/镜头/视频任务/重拍/定稿）
+require('./routes/render')(app); // /api/projects/:id/render + /api/render/jobs*
 
 /* ---------------- 本地图片静态服务 ---------------- */
-try { fs.mkdirSync(ARTIFACTS_DIR, { recursive: true }); } catch { /* ignore */ }
+try {
+  fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
+} catch {
+  /* ignore */
+}
 app.use('/artifacts', express.static(ARTIFACTS_DIR, { maxAge: '7d' }));
 
 /* ---------------- 静态前端 ---------------- */
@@ -113,7 +117,10 @@ process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
 // 常驻轮询服务的进程级兜底：遗漏的 rejection 记日志不崩；uncaughtException 走优雅退出
 process.on('unhandledRejection', (reason) => {
-  log('error', `未处理的 Promise rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`);
+  log(
+    'error',
+    `未处理的 Promise rejection: ${reason instanceof Error ? reason.stack || reason.message : String(reason)}`,
+  );
 });
 process.on('uncaughtException', (err) => {
   log('error', `未捕获异常，进程即将退出: ${err.stack || err.message}`);

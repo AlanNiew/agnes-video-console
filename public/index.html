@@ -1,266 +1,308 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="zh-CN">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Agnes Video 任务控制台</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <!-- 顶部导航 -->
-  <header class="topbar">
-    <div class="brand">
-      <div class="logo">▶</div>
-      <div>
-        <h1>Agnes Video 任务控制台</h1>
-        <p class="brand-sub" id="brandSub">未连接 · 请先在设置中填写 API Key</p>
-      </div>
-    </div>
-    <div class="stats" id="statsBar">
-      <div class="stat"><span class="num" id="statTotal">0</span><span class="lbl">全部</span></div>
-      <div class="stat"><span class="num amber" id="statQueued">0</span><span class="lbl">队列中</span></div>
-      <div class="stat"><span class="num blue" id="statActive">0</span><span class="lbl">生成中</span></div>
-      <div class="stat"><span class="num green" id="statDone">0</span><span class="lbl">已完成</span></div>
-      <div class="stat"><span class="num red" id="statFailed">0</span><span class="lbl">失败</span></div>
-    </div>
-    <div class="actions">
-      <div class="nav-tabs" id="mainNav">
-        <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
-        <button class="nav-tab active" id="navTasks">📋 任务中心</button>
-      </div>
-      <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
-      <button class="btn primary" id="btnNewTask">＋ 新建任务</button>
-      <button class="btn ghost icon-btn" id="btnSettings" title="设置">⚙</button>
-    </div>
-  </header>
-
-  <!-- 工具栏 -->
-  <div class="toolbar">
-    <input type="search" id="searchInput" class="search" placeholder="🔍 按 prompt 搜索任务…" />
-    <div class="chips" id="statusChips">
-      <button class="chip active" data-status="">全部</button>
-      <button class="chip" data-status="queued">队列中</button>
-      <button class="chip" data-status="in_progress">生成中</button>
-      <button class="chip" data-status="completed">已完成</button>
-      <button class="chip" data-status="failed">失败</button>
-    </div>
-    <div class="toolbar-right">
-      <button class="btn ghost sm" id="btnClearDone" title="删除全部已完成任务">清空已完成</button>
-      <button class="btn ghost sm" id="btnClearFailed" title="删除全部失败任务">清空失败</button>
-    </div>
-  </div>
-
-  <!-- 看板 -->
-  <main class="board" id="board">
-    <section class="col" data-col="queued">
-      <header class="col-head amber"><span class="dot"></span>队列中 <span class="cnt" id="cntQueued">0</span></header>
-      <div class="col-body" id="colQueued"></div>
-    </section>
-    <section class="col" data-col="in_progress">
-      <header class="col-head blue"><span class="dot"></span>生成中 <span class="cnt" id="cntActive">0</span></header>
-      <div class="col-body" id="colActive"></div>
-    </section>
-    <section class="col" data-col="completed">
-      <header class="col-head green"><span class="dot"></span>已完成 <span class="cnt" id="cntDone">0</span></header>
-      <div class="col-body" id="colDone"></div>
-    </section>
-    <section class="col" data-col="failed">
-      <header class="col-head red"><span class="dot"></span>失败 <span class="cnt" id="cntFailed">0</span></header>
-      <div class="col-body" id="colFailed"></div>
-    </section>
-  </main>
-
-  <!-- 空状态提示 -->
-  <div class="empty-tip" id="emptyTip" hidden>
-    <div class="empty-box">
-      <h3>还没有任务</h3>
-      <p>点击右上角「新建任务」，选择生成模式并填写描述，任务会出现在看板中并自动轮询进度。</p>
-    </div>
-  </div>
-
-  <!-- ================= 创作工作台（M1） ================= -->
-  <section id="workspaceView" hidden></section>
-
-  <!-- ================= 新建任务弹窗 ================= -->
-  <div class="modal-overlay" id="newTaskModal" hidden>
-    <div class="modal wide">
-      <div class="modal-head">
-        <h2>新建视频生成任务</h2>
-        <button class="modal-close" data-close>✕</button>
-      </div>
-      <div class="modal-body">
-        <div id="v25Form">
-        <div class="tabs" id="modeTabs">
-          <button class="tab active" data-mode="text">文生视频</button>
-          <button class="tab" data-mode="keyframe">首尾帧控制</button>
-          <button class="tab" data-mode="reference">多模态参考</button>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Agnes Video 任务控制台</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <!-- 顶部导航 -->
+    <header class="topbar">
+      <div class="brand">
+        <div class="logo">▶</div>
+        <div>
+          <h1>Agnes Video 任务控制台</h1>
+          <p class="brand-sub" id="brandSub">未连接 · 请先在设置中填写 API Key</p>
         </div>
-
-        <div class="field">
-          <label>模型 <span class="hint" id="modelHint"></span></label>
-          <!-- 选项由 app.js 启动时按 GET /api/meta 动态填充 -->
-          <select id="fModel"></select>
+      </div>
+      <div class="stats" id="statsBar">
+        <div class="stat"><span class="num" id="statTotal">0</span><span class="lbl">全部</span></div>
+        <div class="stat"><span class="num amber" id="statQueued">0</span><span class="lbl">队列中</span></div>
+        <div class="stat"><span class="num blue" id="statActive">0</span><span class="lbl">生成中</span></div>
+        <div class="stat"><span class="num green" id="statDone">0</span><span class="lbl">已完成</span></div>
+        <div class="stat"><span class="num red" id="statFailed">0</span><span class="lbl">失败</span></div>
+      </div>
+      <div class="actions">
+        <div class="nav-tabs" id="mainNav">
+          <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
+          <button class="nav-tab active" id="navTasks">📋 任务中心</button>
         </div>
+        <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
+        <button class="btn primary" id="btnNewTask">＋ 新建任务</button>
+        <button class="btn ghost icon-btn" id="btnSettings" title="设置">⚙</button>
+      </div>
+    </header>
 
-        <div class="field">
-          <label>提示词 prompt <span class="hint">建议：主体与场景 → 动作变化 → 镜头语言 → 风格 → 声音节奏</span></label>
-          <textarea id="fPrompt" rows="4" placeholder="例：雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声"></textarea>
-          <div class="tmpl-row">
-            <span class="hint">示例模板：</span>
-            <select id="fTemplate" onchange="window.__app?.applyTemplate(this.value)">
-              <option value="">— 选择示例 —</option>
-            </select>
-            <button type="button" class="btn ghost sm" id="btnAiOptimize" title="用文本模型把当前描述优化为结构化视频提示词">✨ AI 优化提示词</button>
+    <!-- 工具栏 -->
+    <div class="toolbar">
+      <input type="search" id="searchInput" class="search" placeholder="🔍 按 prompt 搜索任务…" />
+      <div class="chips" id="statusChips">
+        <button class="chip active" data-status="">全部</button>
+        <button class="chip" data-status="queued">队列中</button>
+        <button class="chip" data-status="in_progress">生成中</button>
+        <button class="chip" data-status="completed">已完成</button>
+        <button class="chip" data-status="failed">失败</button>
+      </div>
+      <div class="toolbar-right">
+        <button class="btn ghost sm" id="btnClearDone" title="删除全部已完成任务">清空已完成</button>
+        <button class="btn ghost sm" id="btnClearFailed" title="删除全部失败任务">清空失败</button>
+      </div>
+    </div>
+
+    <!-- 看板 -->
+    <main class="board" id="board">
+      <section class="col" data-col="queued">
+        <header class="col-head amber">
+          <span class="dot"></span>队列中 <span class="cnt" id="cntQueued">0</span>
+        </header>
+        <div class="col-body" id="colQueued"></div>
+      </section>
+      <section class="col" data-col="in_progress">
+        <header class="col-head blue"><span class="dot"></span>生成中 <span class="cnt" id="cntActive">0</span></header>
+        <div class="col-body" id="colActive"></div>
+      </section>
+      <section class="col" data-col="completed">
+        <header class="col-head green"><span class="dot"></span>已完成 <span class="cnt" id="cntDone">0</span></header>
+        <div class="col-body" id="colDone"></div>
+      </section>
+      <section class="col" data-col="failed">
+        <header class="col-head red"><span class="dot"></span>失败 <span class="cnt" id="cntFailed">0</span></header>
+        <div class="col-body" id="colFailed"></div>
+      </section>
+    </main>
+
+    <!-- 空状态提示 -->
+    <div class="empty-tip" id="emptyTip" hidden>
+      <div class="empty-box">
+        <h3>还没有任务</h3>
+        <p>点击右上角「新建任务」，选择生成模式并填写描述，任务会出现在看板中并自动轮询进度。</p>
+      </div>
+    </div>
+
+    <!-- ================= 创作工作台（M1） ================= -->
+    <section id="workspaceView" hidden></section>
+
+    <!-- ================= 新建任务弹窗 ================= -->
+    <div class="modal-overlay" id="newTaskModal" hidden>
+      <div class="modal wide">
+        <div class="modal-head">
+          <h2>新建视频生成任务</h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div class="modal-body">
+          <div id="v25Form">
+            <div class="tabs" id="modeTabs">
+              <button class="tab active" data-mode="text">文生视频</button>
+              <button class="tab" data-mode="keyframe">首尾帧控制</button>
+              <button class="tab" data-mode="reference">多模态参考</button>
+            </div>
+
+            <div class="field">
+              <label>模型 <span class="hint" id="modelHint"></span></label>
+              <!-- 选项由 app.js 启动时按 GET /api/meta 动态填充 -->
+              <select id="fModel"></select>
+            </div>
+
+            <div class="field">
+              <label
+                >提示词 prompt <span class="hint">建议：主体与场景 → 动作变化 → 镜头语言 → 风格 → 声音节奏</span></label
+              >
+              <textarea
+                id="fPrompt"
+                rows="4"
+                placeholder="例：雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声"
+              ></textarea>
+              <div class="tmpl-row">
+                <span class="hint">示例模板：</span>
+                <select id="fTemplate" onchange="window.__app?.applyTemplate(this.value)">
+                  <option value="">— 选择示例 —</option>
+                </select>
+                <button
+                  type="button"
+                  class="btn ghost sm"
+                  id="btnAiOptimize"
+                  title="用文本模型把当前描述优化为结构化视频提示词"
+                >
+                  ✨ AI 优化提示词
+                </button>
+              </div>
+              <div class="media-hint" id="mediaHint"></div>
+            </div>
+
+            <!-- keyframe 模式 -->
+            <div class="field hidden" id="grpKeyframe">
+              <label>首帧图片 URL</label>
+              <input type="text" id="fFirstFrame" placeholder="https://example.com/first.png" />
+              <label class="mt">尾帧图片 URL</label>
+              <input type="text" id="fLastFrame" placeholder="https://example.com/last.png" />
+              <p class="hint">至少提供一个；图片需可公开访问且任务完成前保持有效。</p>
+            </div>
+
+            <!-- reference 模式 -->
+            <div class="field hidden" id="grpReference">
+              <label>参考图片 images（最多 5 张）</label>
+              <div id="refImages" class="list"></div>
+              <button type="button" class="btn ghost sm" data-add="images">＋ 添加图片 URL</button>
+
+              <label class="mt">参考音频 audios</label>
+              <div id="refAudios" class="list"></div>
+              <button type="button" class="btn ghost sm" data-add="audios">＋ 添加音频 URL</button>
+
+              <div id="grpVideos">
+                <label class="mt">参考视频 videos（仅 2.5 付费版支持）</label>
+                <div id="refVideos" class="list"></div>
+                <button type="button" class="btn ghost sm" data-add="videos">＋ 添加视频 URL</button>
+              </div>
+              <p class="hint">
+                提示词中可用 &lt;Picture 1&gt; / &lt;Audio 1&gt; / &lt;Video 1&gt; 指代素材（从 1 编号）。
+              </p>
+            </div>
+
+            <div class="grid2">
+              <div class="field">
+                <label>时长 seconds</label>
+                <select id="fSeconds"></select>
+              </div>
+              <div class="field">
+                <label>画幅 aspect_ratio</label>
+                <select id="fAspect"></select>
+              </div>
+              <div class="field">
+                <label>size 分辨率</label>
+                <select id="fSize"></select>
+              </div>
+              <div class="field">
+                <label>seed 种子（可选）</label> <input type="number" id="fSeed" min="0" placeholder="留空=随机" />
+              </div>
+            </div>
           </div>
-          <div class="media-hint" id="mediaHint"></div>
+          <!-- /v25Form -->
         </div>
-
-        <!-- keyframe 模式 -->
-        <div class="field hidden" id="grpKeyframe">
-          <label>首帧图片 URL</label>
-          <input type="text" id="fFirstFrame" placeholder="https://example.com/first.png" />
-          <label class="mt">尾帧图片 URL</label>
-          <input type="text" id="fLastFrame" placeholder="https://example.com/last.png" />
-          <p class="hint">至少提供一个；图片需可公开访问且任务完成前保持有效。</p>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>取消</button>
+          <button class="btn primary" id="btnSubmitTask">提交任务</button>
         </div>
-
-        <!-- reference 模式 -->
-        <div class="field hidden" id="grpReference">
-          <label>参考图片 images（最多 5 张）</label>
-          <div id="refImages" class="list"></div>
-          <button type="button" class="btn ghost sm" data-add="images">＋ 添加图片 URL</button>
-
-          <label class="mt">参考音频 audios</label>
-          <div id="refAudios" class="list"></div>
-          <button type="button" class="btn ghost sm" data-add="audios">＋ 添加音频 URL</button>
-
-          <div id="grpVideos">
-            <label class="mt">参考视频 videos（仅 2.5 付费版支持）</label>
-            <div id="refVideos" class="list"></div>
-            <button type="button" class="btn ghost sm" data-add="videos">＋ 添加视频 URL</button>
-          </div>
-          <p class="hint">提示词中可用 &lt;Picture 1&gt; / &lt;Audio 1&gt; / &lt;Video 1&gt; 指代素材（从 1 编号）。</p>
-        </div>
-
-        <div class="grid2">
-          <div class="field"><label>时长 seconds</label>
-            <select id="fSeconds"></select>
-          </div>
-          <div class="field"><label>画幅 aspect_ratio</label>
-            <select id="fAspect"></select>
-          </div>
-          <div class="field"><label>size 分辨率</label>
-            <select id="fSize"></select>
-          </div>
-          <div class="field"><label>seed 种子（可选）</label>
-            <input type="number" id="fSeed" min="0" placeholder="留空=随机" /></div>
-        </div>
-        </div><!-- /v25Form -->
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" data-close>取消</button>
-        <button class="btn primary" id="btnSubmitTask">提交任务</button>
       </div>
     </div>
-  </div>
 
-  <!-- ================= 设置弹窗 ================= -->
-  <div class="modal-overlay" id="settingsModal" hidden>
-    <div class="modal">
-      <div class="modal-head">
-        <h2>设置</h2>
-        <button class="modal-close" data-close>✕</button>
-      </div>
-      <div class="modal-body">
-        <div class="field">
-          <label>Agnes API Key <span class="hint" id="keyStatus"></span></label>
-          <input type="password" id="setApiKey" placeholder="sk-..." autocomplete="off" />
-          <p class="hint">密钥只保存在本地 SQLite 中，仅服务端使用，不会下发到浏览器。</p>
+    <!-- ================= 设置弹窗 ================= -->
+    <div class="modal-overlay" id="settingsModal" hidden>
+      <div class="modal">
+        <div class="modal-head">
+          <h2>设置</h2>
+          <button class="modal-close" data-close>✕</button>
         </div>
-        <div class="field">
-          <label>Base URL</label>
-          <input type="text" id="setBaseUrl" placeholder="https://apihub.agnes-ai.com" />
-        </div>
-        <div class="field">
-          <label>默认模型</label>
-          <select id="setModel"></select><!-- 选项由 app.js 按 /api/meta 填充 -->
-        </div>
-        <div class="grid2">
-          <div class="field"><label>轮询间隔 (ms)</label><input type="number" id="setPollMs" min="500" step="100" /></div>
-          <div class="field"><label>任务超时 (分钟)</label><input type="number" id="setMaxMin" min="1" step="1" /></div>
-          <div class="field"><label>批量提交间隔 (ms)</label><input type="number" id="setSubmitMs" min="0" step="1000" /></div>
-        </div>
-        <p class="hint">轮询间隔建议 1000–2000ms（官方建议 1–2 秒查询一次）。超过超时仍未完成的任务将被标记为失败。批量提交间隔用于分镜批量出片（0 = 连续提交）。</p>
-        <hr style="border:none;border-top:1px dashed var(--line,#ddd);margin:16px 0" />
-        <div class="field">
-          <label>Fish Audio API Key <span class="hint" id="fishKeyStatus"></span>（TTS 配音，免费档 s2.1-pro-free）</label>
-          <input type="password" id="setFishKey" placeholder="sk-fish-..." autocomplete="off" />
-          <p class="hint">用于「创作工作台」生成旁白配音（可选；不配置则配音功能不可用）。同样只存本地 SQLite。</p>
-        </div>
-        <div class="grid2">
-          <div class="field"><label>默认音色</label><select id="setFishVoice"></select></div>
-          <div class="field"><label>默认语速</label><input type="number" id="setFishSpeed" min="0.5" max="2" step="0.05" value="1" /></div>
-        </div>
-        <p class="hint">音色为 Fish 音色库公开模型；选择「平台默认音色」则不指定音色。语速 0.5–2.0，故事旁白建议 0.9–1.0。</p>
-        <hr style="border:none;border-top:1px dashed var(--line,#ddd);margin:16px 0" />
-        <div class="field">
-          <label>音乐接口地址 <span class="hint">（v1.4 BGM，可选）</span></label>
-          <input type="text" id="setMusicBase" placeholder="http://60.204.147.98:15001" autocomplete="off" />
-          <p class="hint">自托管在线曲库接口（网易云源）。配置后可在工作台第⑥步为成片搜索、试听并铺设背景音乐。</p>
-        </div>
-        <div class="grid2">
+        <div class="modal-body">
           <div class="field">
-            <label>音乐接口 Token <span class="hint" id="musicTokenStatus"></span></label>
-            <input type="password" id="setMusicToken" placeholder="登录 Token（Authorization）" autocomplete="off" />
+            <label>Agnes API Key <span class="hint" id="keyStatus"></span></label>
+            <input type="password" id="setApiKey" placeholder="sk-..." autocomplete="off" />
+            <p class="hint">密钥只保存在本地 SQLite 中，仅服务端使用，不会下发到浏览器。</p>
           </div>
           <div class="field">
-            <label>默认音质</label>
-            <select id="setMusicLevel">
-              <option value="standard">标准 128k</option>
-              <option value="exhigh" selected>极高 320k</option>
-              <option value="lossless">无损 FLAC</option>
-              <option value="hires">Hi-Res</option>
-            </select>
+            <label>Base URL</label>
+            <input type="text" id="setBaseUrl" placeholder="https://apihub.agnes-ai.com" />
           </div>
+          <div class="field">
+            <label>默认模型</label>
+            <select id="setModel"></select><!-- 选项由 app.js 按 /api/meta 填充 -->
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label>轮询间隔 (ms)</label><input type="number" id="setPollMs" min="500" step="100" />
+            </div>
+            <div class="field">
+              <label>任务超时 (分钟)</label><input type="number" id="setMaxMin" min="1" step="1" />
+            </div>
+            <div class="field">
+              <label>批量提交间隔 (ms)</label><input type="number" id="setSubmitMs" min="0" step="1000" />
+            </div>
+          </div>
+          <p class="hint">
+            轮询间隔建议 1000–2000ms（官方建议 1–2
+            秒查询一次）。超过超时仍未完成的任务将被标记为失败。批量提交间隔用于分镜批量出片（0 = 连续提交）。
+          </p>
+          <hr style="border: none; border-top: 1px dashed var(--line, #ddd); margin: 16px 0" />
+          <div class="field">
+            <label
+              >Fish Audio API Key <span class="hint" id="fishKeyStatus"></span>（TTS 配音，免费档 s2.1-pro-free）</label
+            >
+            <input type="password" id="setFishKey" placeholder="sk-fish-..." autocomplete="off" />
+            <p class="hint">用于「创作工作台」生成旁白配音（可选；不配置则配音功能不可用）。同样只存本地 SQLite。</p>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label>默认音色</label
+              ><select id="setFishVoice"></select>
+            </div>
+            <div class="field">
+              <label>默认语速</label><input type="number" id="setFishSpeed" min="0.5" max="2" step="0.05" value="1" />
+            </div>
+          </div>
+          <p class="hint">
+            音色为 Fish 音色库公开模型；选择「平台默认音色」则不指定音色。语速 0.5–2.0，故事旁白建议 0.9–1.0。
+          </p>
+          <hr style="border: none; border-top: 1px dashed var(--line, #ddd); margin: 16px 0" />
+          <div class="field">
+            <label>音乐接口地址 <span class="hint">（v1.4 BGM，可选）</span></label>
+            <input type="text" id="setMusicBase" placeholder="http://60.204.147.98:15001" autocomplete="off" />
+            <p class="hint">自托管在线曲库接口（网易云源）。配置后可在工作台第⑥步为成片搜索、试听并铺设背景音乐。</p>
+          </div>
+          <div class="grid2">
+            <div class="field">
+              <label>音乐接口 Token <span class="hint" id="musicTokenStatus"></span></label>
+              <input type="password" id="setMusicToken" placeholder="登录 Token（Authorization）" autocomplete="off" />
+            </div>
+            <div class="field">
+              <label>默认音质</label>
+              <select id="setMusicLevel">
+                <option value="standard">标准 128k</option>
+                <option value="exhigh" selected>极高 320k</option>
+                <option value="lossless">无损 FLAC</option>
+                <option value="hires">Hi-Res</option>
+              </select>
+            </div>
+          </div>
+          <p class="hint">
+            Token 仅存本地 SQLite、只做服务端调用；留空则不修改。仅限个人创作试听与为自制短片配乐使用。
+          </p>
         </div>
-        <p class="hint">Token 仅存本地 SQLite、只做服务端调用；留空则不修改。仅限个人创作试听与为自制短片配乐使用。</p>
-      </div>
-      <div class="modal-foot">
-        <button class="btn ghost" data-close>取消</button>
-        <button class="btn primary" id="btnSaveSettings">保存设置</button>
+        <div class="modal-foot">
+          <button class="btn ghost" data-close>取消</button>
+          <button class="btn primary" id="btnSaveSettings">保存设置</button>
+        </div>
       </div>
     </div>
-  </div>
 
-  <!-- ================= 任务详情弹窗 ================= -->
-  <div class="modal-overlay" id="detailModal" hidden>
-    <div class="modal wide">
-      <div class="modal-head">
-        <h2>任务详情 <span class="chip-mini" id="dStatus"></span></h2>
-        <button class="modal-close" data-close>✕</button>
+    <!-- ================= 任务详情弹窗 ================= -->
+    <div class="modal-overlay" id="detailModal" hidden>
+      <div class="modal wide">
+        <div class="modal-head">
+          <h2>任务详情 <span class="chip-mini" id="dStatus"></span></h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div class="modal-body" id="detailBody"></div>
+        <div class="modal-foot" id="detailActions"></div>
       </div>
-      <div class="modal-body" id="detailBody"></div>
-      <div class="modal-foot" id="detailActions"></div>
     </div>
-  </div>
 
-  <!-- ================= 日志弹窗 ================= -->
-  <div class="modal-overlay" id="logModal" hidden>
-    <div class="modal wide">
-      <div class="modal-head">
-        <h2>运行日志</h2>
-        <button class="modal-close" data-close>✕</button>
+    <!-- ================= 日志弹窗 ================= -->
+    <div class="modal-overlay" id="logModal" hidden>
+      <div class="modal wide">
+        <div class="modal-head">
+          <h2>运行日志</h2>
+          <button class="modal-close" data-close>✕</button>
+        </div>
+        <div class="modal-body"><pre id="logBox" class="logbox"></pre></div>
       </div>
-      <div class="modal-body"><pre id="logBox" class="logbox"></pre></div>
     </div>
-  </div>
 
-  <!-- Toast -->
-  <div id="toasts" class="toasts"></div>
+    <!-- Toast -->
+    <div id="toasts" class="toasts"></div>
 
-  <script src="common.js"></script>
-  <script src="compare.js"></script>
-  <script src="app.js"></script>
-  <script src="workspace.js"></script>
-</body>
+    <script src="common.js"></script>
+    <script src="compare.js"></script>
+    <script src="app.js"></script>
+    <script src="workspace.js"></script>
+  </body>
 </html>

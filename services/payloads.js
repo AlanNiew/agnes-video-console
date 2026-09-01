@@ -8,9 +8,15 @@ const { settings, tasks, DEFAULT_SETTINGS } = require('../db');
 const submitter = require('../submitter');
 const { log } = require('../logger');
 const {
-  MODELS, MODES, SECONDS_OK, ASPECT_RATIOS,
-  IMAGE_MODEL, IMAGE_SIZES, IMAGE_RATIOS,
-  MAX_TEXT_LEN, MAX_INPUT_IMAGES,
+  MODELS,
+  MODES,
+  SECONDS_OK,
+  ASPECT_RATIOS,
+  IMAGE_MODEL,
+  IMAGE_SIZES,
+  IMAGE_RATIOS,
+  MAX_TEXT_LEN,
+  MAX_INPUT_IMAGES,
 } = require('../constants');
 const { ApiError } = require('../errors');
 
@@ -63,8 +69,11 @@ function cleanVideoList(arr) {
 /* ---------------- V2.0 payload ---------------- */
 
 function gcd(a, b) {
-  a = Math.abs(a); b = Math.abs(b);
-  while (b) { [a, b] = [b, a % b]; }
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b) {
+    [a, b] = [b, a % b];
+  }
   return a || 1;
 }
 
@@ -98,7 +107,10 @@ function buildV2Payload(b) {
 
   const width = b.width === undefined || b.width === null || b.width === '' ? null : Number(b.width);
   const height = b.height === undefined || b.height === null || b.height === '' ? null : Number(b.height);
-  for (const [k, v] of [['width', width], ['height', height]]) {
+  for (const [k, v] of [
+    ['width', width],
+    ['height', height],
+  ]) {
     if (v !== null && (!Number.isInteger(v) || v <= 0)) throw new ApiError(400, `${k} 必须为正整数`);
   }
   const negativePrompt = b.negative_prompt ? String(b.negative_prompt).trim() : '';
@@ -120,7 +132,8 @@ function buildV2Payload(b) {
     imageUrl = String(b.image || '').trim();
     if (!isHttpUrl(imageUrl)) throw new ApiError(400, '图生视频模式需要提供可公开访问的 image URL');
     payload.image = imageUrl;
-  } else { // keyframes
+  } else {
+    // keyframes
     const frames = cleanUrlList(b.images, '关键帧图片');
     if (frames.length < 2) throw new ApiError(400, '关键帧动画至少需要 2 张关键帧图片 URL');
     payload.extra_body = { image: frames, mode: 'keyframes' };
@@ -138,9 +151,20 @@ function buildV2Payload(b) {
   return {
     payload,
     meta: {
-      model, mode, prompt, seconds, size: sizeStr, aspect_ratio: aspectRatio, seed,
-      image: imageUrl, images, num_frames: numFrames, frame_rate: frameRate,
-      width, height, negative_prompt: negativePrompt || null,
+      model,
+      mode,
+      prompt,
+      seconds,
+      size: sizeStr,
+      aspect_ratio: aspectRatio,
+      seed,
+      image: imageUrl,
+      images,
+      num_frames: numFrames,
+      frame_rate: frameRate,
+      width,
+      height,
+      negative_prompt: negativePrompt || null,
     },
   };
 }
@@ -217,8 +241,18 @@ function buildV25Payload(b) {
   return {
     payload,
     meta: {
-      model, mode, prompt, seconds, size, aspect_ratio: aspectRatio, seed,
-      first_frame: firstFrame, last_frame: lastFrame, images, audios, videos,
+      model,
+      mode,
+      prompt,
+      seconds,
+      size,
+      aspect_ratio: aspectRatio,
+      seed,
+      first_frame: firstFrame,
+      last_frame: lastFrame,
+      images,
+      audios,
+      videos,
     },
   };
 }
@@ -290,7 +324,9 @@ async function submitTask(payload, meta, opts = {}) {
   if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
 
   const id = tasks.insert({
-    status: 'queued', ...meta, request_json: payload,
+    status: 'queued',
+    ...meta,
+    request_json: payload,
     project_id: opts.project_id || null,
     shot_id: opts.shot_id || null,
     text_id: opts.text_id || null,

@@ -21,7 +21,11 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Syntax check
-        run: node --check server.js && node --check db.js && node --check poller.js && node --check test/mock-e2e.js && node --check public/app.js && node --check public/workspace.js
-      - name: Run e2e mock tests
+      - name: Lint (eslint，no-undef/no-use-before-define 等静态错误防线)
+        run: npm run lint
+      - name: Format check (prettier)
+        run: npm run format:check
+      - name: Unit tests (jest，61 项)
+        run: npm run test:unit
+      - name: E2E mock tests (mock 上游 + 真实 ffmpeg 渲染)
         run: npm run test:mock

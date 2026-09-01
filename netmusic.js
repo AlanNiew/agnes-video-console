@@ -19,7 +19,9 @@ const DOWNLOAD_TIMEOUT_MS = 300_000;
 const LEVELS = ['standard', 'exhigh', 'lossless', 'hires'];
 
 function baseUrl() {
-  let u = String(settings.get('music_api_base', DEFAULT_SETTINGS.music_api_base) || '').trim().replace(/\/+$/, '');
+  let u = String(settings.get('music_api_base', DEFAULT_SETTINGS.music_api_base) || '')
+    .trim()
+    .replace(/\/+$/, '');
   if (u && !/^https?:\/\//i.test(u)) u = 'http://' + u;
   return u;
 }
@@ -41,16 +43,27 @@ async function requestJson(url) {
     res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT_MS) });
   } catch (e) {
     // fetch 网络层失败（连接被拒/DNS/超时/TLS）统一报 "fetch failed"，包装成可操作信息
-    const host = String(url).replace(/^https?:\/\//i, '').split('?')[0].split('/')[0];
-    const hint = e.name === 'TimeoutError'
-      ? `请求超时（${TIMEOUT_MS / 1000}s）`
-      : `连接失败（${e.cause?.code || e.message || '未知网络错误'}）`;
+    const host = String(url)
+      .replace(/^https?:\/\//i, '')
+      .split('?')[0]
+      .split('/')[0];
+    const hint =
+      e.name === 'TimeoutError'
+        ? `请求超时（${TIMEOUT_MS / 1000}s）`
+        : `连接失败（${e.cause?.code || e.message || '未知网络错误'}）`;
     // 上游不可达：502 直接透传给前端，而不是笼统的 500
-    throw new ApiError(502, `音乐接口服务不可达（${host}）：${hint}。请确认该服务已启动、设置中的 music_api_base 地址与端口正确`);
+    throw new ApiError(
+      502,
+      `音乐接口服务不可达（${host}）：${hint}。请确认该服务已启动、设置中的 music_api_base 地址与端口正确`,
+    );
   }
   const text = await res.text();
   let j = null;
-  try { j = text ? JSON.parse(text) : null; } catch { j = null; }
+  try {
+    j = text ? JSON.parse(text) : null;
+  } catch {
+    j = null;
+  }
   if (!res.ok || !j || j.code !== 200) {
     throw new ApiError(502, `音乐接口错误（HTTP ${res.status}）：${String(j?.message || text || '').slice(0, 200)}`);
   }
@@ -65,15 +78,17 @@ async function search(keyword, limit = 8) {
   if (!kw) throw new ApiError(400, '请输入搜索关键词');
   const lim = Math.min(Math.max(Number(limit) || 8, 1), 50);
   const data = await requestJson(`${base}/search?keyword=${encodeURIComponent(kw)}&limit=${lim}`);
-  const items = (Array.isArray(data) ? data : []).map((s) => ({
-    id: String(s.music_id ?? s.id ?? ''),
-    name: String(s.music_name ?? s.name ?? '').trim(),
-    artist: String(s.artist ?? '').trim(),
-    album: String(s.album ?? '').trim(),
-    duration_s: Number(s.duration) || 0,          // 实测为秒（文档写毫秒，以实测为准）
-    cover: String(s.pic_url ?? s.cover_url ?? '').trim(),
-    levels: Array.isArray(s.levels) ? s.levels.map((l) => l.level) : [],
-  })).filter((s) => s.id && s.name);
+  const items = (Array.isArray(data) ? data : [])
+    .map((s) => ({
+      id: String(s.music_id ?? s.id ?? ''),
+      name: String(s.music_name ?? s.name ?? '').trim(),
+      artist: String(s.artist ?? '').trim(),
+      album: String(s.album ?? '').trim(),
+      duration_s: Number(s.duration) || 0, // 实测为秒（文档写毫秒，以实测为准）
+      cover: String(s.pic_url ?? s.cover_url ?? '').trim(),
+      levels: Array.isArray(s.levels) ? s.levels.map((l) => l.level) : [],
+    }))
+    .filter((s) => s.id && s.name);
   return items;
 }
 
@@ -81,9 +96,11 @@ async function search(keyword, limit = 8) {
 async function playUrl(id, level) {
   const base = baseUrl();
   if (!base) throw new ApiError(400, '尚未配置音乐接口地址（设置 → music_api_base）');
-  const lv = LEVELS.includes(String(level)) ? String(level)
-    : (LEVELS.includes(String(settings.get('music_level', DEFAULT_SETTINGS.music_level)))
-      ? String(settings.get('music_level', DEFAULT_SETTINGS.music_level)) : 'exhigh');
+  const lv = LEVELS.includes(String(level))
+    ? String(level)
+    : LEVELS.includes(String(settings.get('music_level', DEFAULT_SETTINGS.music_level)))
+      ? String(settings.get('music_level', DEFAULT_SETTINGS.music_level))
+      : 'exhigh';
   const data = await requestJson(`${base}/player?id=${encodeURIComponent(String(id))}&level=${lv}`);
   const url = String(data?.url || '').trim();
   if (!/^https?:\/\//i.test(url)) throw new ApiError(502, '音乐接口未返回有效播放地址（该歌曲可能无版权或需要 VIP）');
@@ -104,7 +121,9 @@ async function downloadBGM(id, level) {
     if (st.isFile() && st.size > 1024) {
       return { local_path: localPath, local_url: `/artifacts/${name}`, cached: true };
     }
-  } catch { /* 不存在则下载 */ }
+  } catch {
+    /* 不存在则下载 */
+  }
 
   const { url } = await playUrl(id, lv);
   const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });

@@ -38,10 +38,15 @@ function parseLLMJson(text) {
   if (!text) return null;
   let s = String(text).trim();
   // 去掉 ```json ... ``` 围栏
-  s = s.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/i, '').trim();
+  s = s
+    .replace(/^```(?:json)?\s*/i, '')
+    .replace(/```\s*$/i, '')
+    .trim();
   try {
     return JSON.parse(s);
-  } catch { /* 继续尝试提取对象 */ }
+  } catch {
+    /* 继续尝试提取对象 */
+  }
   const start = s.indexOf('{');
   if (start === -1) return null;
   let depth = 0;
@@ -70,9 +75,15 @@ function normalizeStoryboardShots(rawShots, fallbackSeconds = '5') {
     if (!vp) continue; // 空提示词镜头直接丢弃
     out.push({
       seq: out.length + 1,
-      title: String(s?.title || '').trim().slice(0, 100) || null,
+      title:
+        String(s?.title || '')
+          .trim()
+          .slice(0, 100) || null,
       video_prompt: vp.slice(0, MAX_TEXT_LEN),
-      narration: String(s?.narration || '').trim().slice(0, 200) || null, // v1.3 镜头旁白
+      narration:
+        String(s?.narration || '')
+          .trim()
+          .slice(0, 200) || null, // v1.3 镜头旁白
       seconds: SECONDS_OK.includes(String(s?.seconds)) ? String(s.seconds) : fb,
       mode: 'reference',
     });

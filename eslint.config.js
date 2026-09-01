@@ -31,13 +31,26 @@ module.exports = [
     languageOptions: {
       ecmaVersion: 2022,
       sourceType: 'script',
-      globals: { ...globals.browser, __common: 'readonly', __ui: 'readonly', __app: 'readonly', __ws: 'readonly', __audio: 'readonly' },
+      globals: {
+        ...globals.browser,
+        __common: 'readonly',
+        __ui: 'readonly',
+        __app: 'readonly',
+        __ws: 'readonly',
+        __audio: 'readonly',
+      },
     },
   },
   {
     // e2e 冒烟测试：进程级脚本风格
     files: ['test/mock-e2e.js'],
     languageOptions: { globals: { ...globals.node } },
+    rules: { 'no-process-exit': 'off' },
+  },
+  {
+    // jest 单元测试：注入测试全局
+    files: ['test/unit/**/*.test.js'],
+    languageOptions: { globals: { ...globals.node, ...globals.jest } },
     rules: { 'no-process-exit': 'off' },
   },
   {

@@ -23,7 +23,8 @@
   const modelInfo = (id) => META?.models.find((m) => m.id === id) || null;
   const modelShort = (id) => modelInfo(id)?.short || MODEL_NAME_FALLBACK[id] || String(id).replace('agnes-video-', '');
   const selectableModels = () => (META ? META.models.filter((m) => !m.deprecated) : []);
-  const DEFAULT_MODEL = () => (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
+  const DEFAULT_MODEL = () =>
+    (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
 
   const state = {
     tasks: [],
@@ -98,7 +99,9 @@
     actions.push(`<button class="act" data-act="detail">详情</button>`);
     if (t.video_id) actions.push(`<button class="act" data-act="poll">立即查询</button>`);
     if (t.status === 'completed' && playSrc) {
-      actions.push(`<a class="act green" href="${esc(playSrc)}" target="_blank" rel="noopener">下载${t.video_local_url ? '' : ''}</a>`);
+      actions.push(
+        `<a class="act green" href="${esc(playSrc)}" target="_blank" rel="noopener">下载${t.video_local_url ? '' : ''}</a>`,
+      );
     }
     if (t.status === 'failed' || t.status === 'submit_error') {
       actions.push(`<button class="act" data-act="retry">重试</button>`);
@@ -124,13 +127,13 @@
 
   function columnSig(status, tasks) {
     // 已完成列只对“任务集合 + 结果”敏感，忽略轮询计数，避免打断播放
-      return JSON.stringify(
-        tasks.map((t) =>
-          t.status === 'completed'
-            ? [t.id, t.status, t.metadata_url, t.video_local_url]
-            : [t.id, t.status, t.progress, t.video_id, t.error_message]
-        )
-      );
+    return JSON.stringify(
+      tasks.map((t) =>
+        t.status === 'completed'
+          ? [t.id, t.status, t.metadata_url, t.video_local_url]
+          : [t.id, t.status, t.progress, t.video_id, t.error_message],
+      ),
+    );
   }
 
   function renderBoard() {
@@ -158,7 +161,9 @@
       if (state.lastColSig[col] === sig) continue;
       state.lastColSig[col] = sig;
       const el = $(map[col]);
-      el.innerHTML = byCol[col].length ? byCol[col].map(cardHTML).join('') : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
+      el.innerHTML = byCol[col].length
+        ? byCol[col].map(cardHTML).join('')
+        : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
     }
     $('#board').classList.toggle('focus', Boolean(filter));
     // 空态文案：区分「全局无任务」与「搜索/筛选无结果」
@@ -181,26 +186,38 @@
     if (!videos.length) return;
     if ('IntersectionObserver' in window) {
       if (!videoObserver) {
-        videoObserver = new IntersectionObserver((entries) => {
-          for (const en of entries) {
-            if (!en.isIntersecting) continue;
-            const v = en.target;
-            if (!v.src) {
-              v.src = v.dataset.src;
-              // 元数据加载成功后，用真实时长替换角标（如 5.04s → 5s）
-              v.addEventListener('loadedmetadata', () => {
-                const dur = v.closest('.video-preview')?.querySelector('.vp-dur');
-                if (dur && Number.isFinite(v.duration) && v.duration > 0) dur.textContent = `${Math.round(v.duration)}s`;
-              }, { once: true });
+        videoObserver = new IntersectionObserver(
+          (entries) => {
+            for (const en of entries) {
+              if (!en.isIntersecting) continue;
+              const v = en.target;
+              if (!v.src) {
+                v.src = v.dataset.src;
+                // 元数据加载成功后，用真实时长替换角标（如 5.04s → 5s）
+                v.addEventListener(
+                  'loadedmetadata',
+                  () => {
+                    const dur = v.closest('.video-preview')?.querySelector('.vp-dur');
+                    if (dur && Number.isFinite(v.duration) && v.duration > 0)
+                      dur.textContent = `${Math.round(v.duration)}s`;
+                  },
+                  { once: true },
+                );
+              }
+              videoObserver.unobserve(v);
             }
-            videoObserver.unobserve(v);
-          }
-        }, { rootMargin: '180px' });
+          },
+          { rootMargin: '180px' },
+        );
       }
-      videos.forEach((v) => { if (!v.src) videoObserver.observe(v); });
+      videos.forEach((v) => {
+        if (!v.src) videoObserver.observe(v);
+      });
     } else {
       // 不支持 IntersectionObserver 的浏览器：直接加载
-      videos.forEach((v) => { if (!v.src) v.src = v.dataset.src; });
+      videos.forEach((v) => {
+        if (!v.src) v.src = v.dataset.src;
+      });
     }
   }
 
@@ -250,14 +267,18 @@
     META = await api('/api/meta');
     // 新建任务表单下拉
     $('#fModel').innerHTML = selectableModels()
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .join('');
     $('#fSeconds').innerHTML = META.seconds
-      .map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)}</option>`).join('');
+      .map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)}</option>`)
+      .join('');
     $('#fAspect').innerHTML = META.aspect_ratios
-      .map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`).join('');
+      .map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`)
+      .join('');
     // 设置弹窗默认模型下拉（同样只列未下架模型）
     $('#setModel').innerHTML = selectableModels()
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('');
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .join('');
   }
 
   async function loadSettings() {
@@ -268,8 +289,7 @@
         ? `（已保存 ${state.settings.api_key_masked}，留空则不修改）`
         : '（未配置）';
       // 旧模型兜底：设置里的默认模型若已下架，则回退默认免费模型
-      const m = selectableModels().some((x) => x.id === state.settings.model)
-        ? state.settings.model : DEFAULT_MODEL();
+      const m = selectableModels().some((x) => x.id === state.settings.model) ? state.settings.model : DEFAULT_MODEL();
       $('#fModel').value = m;
       onModelChange();
       $('#setModel').value = m; // 设置弹窗同样做旧模型兜底，避免静默不选中
@@ -289,7 +309,9 @@
         .join('');
       // v1.4 BGM（音乐接口）
       $('#setMusicBase').value = state.settings.music_api_base || '';
-      $('#musicTokenStatus').textContent = state.settings.music_api_token_set ? '（已保存，留空则不修改）' : '（未配置）';
+      $('#musicTokenStatus').textContent = state.settings.music_api_token_set
+        ? '（已保存，留空则不修改）'
+        : '（未配置）';
       $('#setMusicLevel').value = state.settings.music_level || 'exhigh';
     } catch (e) {
       toast('加载设置失败：' + e.message, 'err');
@@ -324,7 +346,8 @@
       const id = Number(card.dataset.id);
       const actName = btn.dataset.act;
       if (actName === 'detail') return openDetail(id);
-      if (actName === 'poll') return act(id, '查询', async () => (await api(`/api/tasks/${id}/poll`, { method: 'POST' })).status);
+      if (actName === 'poll')
+        return act(id, '查询', async () => (await api(`/api/tasks/${id}/poll`, { method: 'POST' })).status);
       if (actName === 'retry') {
         if (confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) {
           await act(id, '重试', async () => {
@@ -444,7 +467,8 @@
     // 操作栏：仅按钮集合变化时重建，避免每 2s 替换节点吃掉点击
     const acts = [];
     if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
-    if (t.status === 'failed' || t.status === 'submit_error') acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
+    if (t.status === 'failed' || t.status === 'submit_error')
+      acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
     if (t.status === 'completed' && (t.video_local_url || t.metadata_url)) {
       const dl = t.video_local_url || t.metadata_url;
       acts.push(`<a class="btn primary" href="${esc(dl)}" target="_blank" rel="noopener">下载视频</a>`);
@@ -458,15 +482,41 @@
       $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
       $('#dStatus').className = `chip-mini ${t.status}`;
 
-      const bind = (idBtn, fn) => { const el = $('#' + idBtn); if (el) el.onclick = fn; };
-      bind('dPoll', async () => { try { const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' }); toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok'); await refreshDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); } });
+      const bind = (idBtn, fn) => {
+        const el = $('#' + idBtn);
+        if (el) el.onclick = fn;
+      };
+      bind('dPoll', async () => {
+        try {
+          const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' });
+          toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok');
+          await refreshDetail();
+          await loadTasks();
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
       bind('dRetry', async () => {
         if (!confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) return;
-        try { const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' }); toast(`已创建新任务 #${r.task.id}`, 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+        try {
+          const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
+          toast(`已创建新任务 #${r.task.id}`, 'ok');
+          closeDetail();
+          await loadTasks();
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       });
       bind('dDel', async () => {
         if (!confirm(`确认删除任务 #${id}？`)) return;
-        try { await api(`/api/tasks/${id}`, { method: 'DELETE' }); toast('已删除', 'ok'); closeDetail(); await loadTasks(); } catch (e) { toast(e.message, 'err'); }
+        try {
+          await api(`/api/tasks/${id}`, { method: 'DELETE' });
+          toast('已删除', 'ok');
+          closeDetail();
+          await loadTasks();
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       });
     } else {
       $('#dStatus').textContent = STATUS_LABEL[t.status] || t.status;
@@ -488,17 +538,21 @@
     $('#grpReference').classList.toggle('hidden', mode !== 'reference');
     const hint = $('#mediaHint');
     if (mode === 'text') hint.textContent = '纯文本模式：不携带任何媒体素材。';
-    if (mode === 'keyframe') hint.textContent = '首帧/尾帧控制：至少提供一个图片 URL，生成结果会尽量保持为成片的真实首/尾帧。';
-    if (mode === 'reference') hint.textContent = '多模态参考：素材作为内容/风格/节奏参考，提示词中用 <Picture 1>、<Audio 1>、<Video 1> 指代（从 1 编号）。';
+    if (mode === 'keyframe')
+      hint.textContent = '首帧/尾帧控制：至少提供一个图片 URL，生成结果会尽量保持为成片的真实首/尾帧。';
+    if (mode === 'reference')
+      hint.textContent =
+        '多模态参考：素材作为内容/风格/节奏参考，提示词中用 <Picture 1>、<Audio 1>、<Video 1> 指代（从 1 编号）。';
   }
 
   function renderRefList(key) {
     const el = $('#ref' + key.charAt(0).toUpperCase() + key.slice(1));
     el.innerHTML = refState[key]
       .map((v, i) => {
-        const extra = key === 'videos' && typeof v === 'object'
-          ? `<input type="number" data-i="${i}" data-f="start" placeholder="start_seconds" value="${Number(v.start_seconds) || 0}" style="max-width:90px" />`
-          : '';
+        const extra =
+          key === 'videos' && typeof v === 'object'
+            ? `<input type="number" data-i="${i}" data-f="start" placeholder="start_seconds" value="${Number(v.start_seconds) || 0}" style="max-width:90px" />`
+            : '';
         const url = typeof v === 'string' ? v : v.url;
         return `<div class="list-row">
           <input type="text" data-i="${i}" value="${esc(url)}" placeholder="https://... ${key === 'videos' ? '(支持字符串或对象)' : ''}" />
@@ -516,9 +570,8 @@
       const url = row.querySelector('input[type=text]').value.trim();
       const start = row.querySelector('input[data-f=start]')?.value;
       if (key === 'videos') {
-        refState.videos[i] = start !== undefined && start !== ''
-          ? { url, start_seconds: Number(start) || 0, require_audio: false }
-          : url;
+        refState.videos[i] =
+          start !== undefined && start !== '' ? { url, start_seconds: Number(start) || 0, require_audio: false } : url;
       } else {
         refState[key][i] = url;
       }
@@ -575,19 +628,51 @@
     $('#fFirstFrame').value = '';
     $('#fLastFrame').value = '';
     $('#fTemplate').value = '';
-    refState.images = []; refState.audios = []; refState.videos = [];
-    renderRefList('images'); renderRefList('audios'); renderRefList('videos');
+    refState.images = [];
+    refState.audios = [];
+    refState.videos = [];
+    renderRefList('images');
+    renderRefList('audios');
+    renderRefList('videos');
   }
 
   /* ---------------- 模板 ---------------- */
   const TEMPLATES = {
-    'text-city': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声' },
-    'text-cats': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '夜晚森林中三只猫组成微型铜管乐队向前行进，镜头平稳后退，月光穿过树叶，自然脚步声与乐器声' },
-    'text-ocean': { model: 'agnes-video-2.5-flash', mode: 'text', prompt: '航拍镜头缓缓掠过翡翠色海面，白色浪花在礁石上翻卷，阳光透过云层洒下，海鸥鸣叫，写实风格' },
-    'keyframe-walk': { model: 'agnes-video-2.5-flash', mode: 'keyframe', prompt: '人物从首帧姿态自然转身走向窗边，衣物和头发运动真实，镜头缓慢推进，平滑过渡到尾帧构图' },
-    'ref-character': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 中的角色和美术风格为参考，角色在花田中自然奔跑，保持外观一致，低机位跟拍' },
-    'ref-audio': { model: 'agnes-video-2.5-flash', mode: 'reference', prompt: '以 <Picture 1> 为视觉主体，根据 <Audio 1> 的节奏设计动作和镜头切换，保持自然连贯' },
-    'ref-video': { model: 'agnes-video-2.5', mode: 'reference', prompt: '参考 <Video 1> 的主体动作和镜头节奏，将场景改为月光下的卧室，同时保持时序连贯' },
+    'text-city': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'text',
+      prompt: '雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声',
+    },
+    'text-cats': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'text',
+      prompt: '夜晚森林中三只猫组成微型铜管乐队向前行进，镜头平稳后退，月光穿过树叶，自然脚步声与乐器声',
+    },
+    'text-ocean': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'text',
+      prompt: '航拍镜头缓缓掠过翡翠色海面，白色浪花在礁石上翻卷，阳光透过云层洒下，海鸥鸣叫，写实风格',
+    },
+    'keyframe-walk': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'keyframe',
+      prompt: '人物从首帧姿态自然转身走向窗边，衣物和头发运动真实，镜头缓慢推进，平滑过渡到尾帧构图',
+    },
+    'ref-character': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'reference',
+      prompt: '以 <Picture 1> 中的角色和美术风格为参考，角色在花田中自然奔跑，保持外观一致，低机位跟拍',
+    },
+    'ref-audio': {
+      model: 'agnes-video-2.5-flash',
+      mode: 'reference',
+      prompt: '以 <Picture 1> 为视觉主体，根据 <Audio 1> 的节奏设计动作和镜头切换，保持自然连贯',
+    },
+    'ref-video': {
+      model: 'agnes-video-2.5',
+      mode: 'reference',
+      prompt: '参考 <Video 1> 的主体动作和镜头节奏，将场景改为月光下的卧室，同时保持时序连贯',
+    },
   };
 
   function applyTemplate(key) {
@@ -606,7 +691,8 @@
     const info = modelInfo($('#fModel').value);
     $('#modelHint').textContent = info ? `（${info.hint}）` : '';
     $('#fSize').innerHTML = (info?.sizes?.length ? info.sizes : ['720P'])
-      .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+      .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)
+      .join('');
     const grpVideos = $('#grpVideos');
     if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
   }
@@ -615,7 +701,11 @@
   let fishVoicesCache = null;
   async function loadFishVoices() {
     if (!fishVoicesCache) {
-      try { fishVoicesCache = await api('/api/tts/voices'); } catch { fishVoicesCache = { voices: [] }; }
+      try {
+        fishVoicesCache = await api('/api/tts/voices');
+      } catch {
+        fishVoicesCache = { voices: [] };
+      }
     }
     return fishVoicesCache;
   }
@@ -659,10 +749,10 @@
   async function refreshLogs() {
     try {
       const { items } = await api('/api/logs');
-      $('#logBox').textContent = items
-        .map((l) => `[${fmtTime(l.ts)}] [${l.level}] ${l.msg}`)
-        .join('\n');
-    } catch { /* ignore */ }
+      $('#logBox').textContent = items.map((l) => `[${fmtTime(l.ts)}] [${l.level}] ${l.msg}`).join('\n');
+    } catch {
+      /* ignore */
+    }
   }
 
   /* ---------------- 弹窗通用 ---------------- */
@@ -693,7 +783,9 @@
           lastWsTasksRefresh = Date.now();
           window.__ws?.refreshTasks?.();
         }
-      } catch { /* ignore */ } finally {
+      } catch {
+        /* ignore */
+      } finally {
         loopBusy = false;
       }
     }, 2000);
@@ -734,7 +826,10 @@
     // ✨ AI 优化提示词（调文本模型）
     $('#btnAiOptimize').addEventListener('click', async () => {
       const idea = $('#fPrompt').value.trim();
-      if (!idea) { toast('请先填写原始描述', 'err'); return; }
+      if (!idea) {
+        toast('请先填写原始描述', 'err');
+        return;
+      }
       const btn = $('#btnAiOptimize');
       btn.disabled = true;
       btn.textContent = '优化中…';
@@ -742,7 +837,8 @@
         const r = await api('/api/llm/chat', {
           method: 'POST',
           body: {
-            system: '你是视频生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 视频生成的专业提示词，150~220 字，六段式按序书写：主体与场景（外观与空间具体化）→ 动作与变化（2~3 个有先后顺序的连续动作）→ 镜头语言（景别 + 运镜 + 转场）→ 光线与色调（时段、光源方向、色温）→ 视觉风格与画质 → 声音与节奏。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。',
+            system:
+              '你是视频生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 视频生成的专业提示词，150~220 字，六段式按序书写：主体与场景（外观与空间具体化）→ 动作与变化（2~3 个有先后顺序的连续动作）→ 镜头语言（景别 + 运镜 + 转场）→ 光线与色调（时段、光源方向、色温）→ 视觉风格与画质 → 声音与节奏。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。',
             messages: [{ role: 'user', content: idea }],
             temperature: 0.8,
           },
@@ -776,9 +872,15 @@
     // 提交与按钮
     $('#btnSubmitTask').addEventListener('click', submitTask);
     $('#btnNewTask').addEventListener('click', () => openNewTask(null));
-    $('#btnSettings').addEventListener('click', () => { loadSettings(); $('#settingsModal').hidden = false; });
+    $('#btnSettings').addEventListener('click', () => {
+      loadSettings();
+      $('#settingsModal').hidden = false;
+    });
     $('#btnSaveSettings').addEventListener('click', saveSettings);
-    $('#btnLogs').addEventListener('click', () => { $('#logModal').hidden = false; refreshLogs(); });
+    $('#btnLogs').addEventListener('click', () => {
+      $('#logModal').hidden = false;
+      refreshLogs();
+    });
 
     $('#btnClearDone').addEventListener('click', async () => {
       if (!confirm('确认删除全部已完成任务？')) return;
@@ -787,7 +889,9 @@
         toast(`已清理 ${r.removed} 条`, 'ok');
         if (state.detailId) refreshDetail(); // 被清空的任务若是当前打开的详情，触发 404 自动关闭
         loadTasks();
-      } catch (e) { toast(e.message, 'err'); }
+      } catch (e) {
+        toast(e.message, 'err');
+      }
     });
     $('#btnClearFailed').addEventListener('click', async () => {
       if (!confirm('确认删除全部失败/提交失败任务？')) return;
@@ -796,14 +900,19 @@
         toast(`已清理 ${r.removed} 条`, 'ok');
         if (state.detailId) refreshDetail();
         loadTasks();
-      } catch (e) { toast(e.message, 'err'); }
+      } catch (e) {
+        toast(e.message, 'err');
+      }
     });
 
     // 搜索 + 状态过滤
     let searchTimer = null;
     $('#searchInput').addEventListener('input', (e) => {
       clearTimeout(searchTimer);
-      searchTimer = setTimeout(() => { state.search = e.target.value.trim(); loadTasks(); }, 350);
+      searchTimer = setTimeout(() => {
+        state.search = e.target.value.trim();
+        loadTasks();
+      }, 350);
     });
     $('#statusChips').addEventListener('click', (e) => {
       const chip = e.target.closest('.chip');

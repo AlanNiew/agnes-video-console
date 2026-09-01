@@ -6,15 +6,19 @@
 const path = require('node:path');
 const fs = require('node:fs');
 
-const ARTIFACTS_DIR = path.join(
-  process.env.DATA_DIR || path.join(__dirname, 'data'),
-  'artifacts'
-);
+const ARTIFACTS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'artifacts');
 
 const EXT_BY_CONTENT_TYPE = [
-  ['.png', 'png'], ['.webp', 'webp'], ['.jpg', 'jpeg'], ['.jpg', 'jpg'],
-  ['.mp4', 'mp4'], ['.webm', 'webm'],
-  ['.mp3', 'mpeg'], ['.mp3', 'mp3'], ['.wav', 'wav'], ['.ogg', 'ogg'],
+  ['.png', 'png'],
+  ['.webp', 'webp'],
+  ['.jpg', 'jpeg'],
+  ['.jpg', 'jpg'],
+  ['.mp4', 'mp4'],
+  ['.webm', 'webm'],
+  ['.mp3', 'mpeg'],
+  ['.mp3', 'mp3'],
+  ['.wav', 'wav'],
+  ['.ogg', 'ogg'],
 ];
 
 function extFor(contentType, fallback = '.png') {

@@ -6,10 +6,7 @@
 const { projects } = require('../db');
 const { createPipelineService } = require('../pipeline');
 const { log } = require('../logger');
-const {
-  ASPECT_RATIOS, SECONDS_OK, PROJECT_STATUSES,
-  MAX_SHOTS, MAX_TEXT_LEN, SHOT_MODES,
-} = require('../constants');
+const { ASPECT_RATIOS, SECONDS_OK, PROJECT_STATUSES, MAX_SHOTS, MAX_TEXT_LEN, SHOT_MODES } = require('../constants');
 const { ApiError, ah } = require('../errors');
 const { buildPayload, submitTask } = require('../services/payloads');
 const { normalizeStoryboardShots } = require('../services/prompts');
@@ -22,10 +19,15 @@ module.exports = function registerProjectRoutes(app) {
     const b = req.body || {};
     const name = String(b.name || '').trim();
     if (!name) throw new ApiError(400, '项目名称不能为空');
-    if (b.aspect_ratio && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+    if (b.aspect_ratio && !ASPECT_RATIOS.includes(b.aspect_ratio))
+      throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
     if (b.seconds && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
     const id = projects.insert({
-      name, idea: b.idea, style: b.style, aspect_ratio: b.aspect_ratio, seconds: b.seconds,
+      name,
+      idea: b.idea,
+      style: b.style,
+      aspect_ratio: b.aspect_ratio,
+      seconds: b.seconds,
     });
     res.status(201).json(projects.get(id));
   });
@@ -41,7 +43,7 @@ module.exports = function registerProjectRoutes(app) {
       images: projects.images(p.id),
       shots: projects.shots(p.id),
       tasks: projects.tasks(p.id),
-      tts: projects.tts(p.id),   // TTS 配音记录
+      tts: projects.tts(p.id), // TTS 配音记录
     });
   });
 
@@ -57,12 +59,20 @@ module.exports = function registerProjectRoutes(app) {
     if (b.status !== undefined && !PROJECT_STATUSES.includes(b.status)) {
       throw new ApiError(400, `status 仅支持 ${PROJECT_STATUSES.join('/')}`);
     }
-    if (b.aspect_ratio !== undefined && b.aspect_ratio !== null && !ASPECT_RATIOS.includes(b.aspect_ratio)) throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
-    if (b.seconds !== undefined && b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
-    if (b.idea !== undefined && b.idea !== null && String(b.idea).length > MAX_TEXT_LEN) throw new ApiError(400, `idea 长度需 ≤ ${MAX_TEXT_LEN}`);
+    if (b.aspect_ratio !== undefined && b.aspect_ratio !== null && !ASPECT_RATIOS.includes(b.aspect_ratio))
+      throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}`);
+    if (b.seconds !== undefined && b.seconds !== null && !SECONDS_OK.includes(String(b.seconds)))
+      throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+    if (b.idea !== undefined && b.idea !== null && String(b.idea).length > MAX_TEXT_LEN)
+      throw new ApiError(400, `idea 长度需 ≤ ${MAX_TEXT_LEN}`);
     if (b.style !== undefined && b.style !== null) b.style = String(b.style).trim().slice(0, 200) || null;
     projects.update(p.id, {
-      name: b.name, idea: b.idea, style: b.style, aspect_ratio: b.aspect_ratio, seconds: b.seconds, status: b.status,
+      name: b.name,
+      idea: b.idea,
+      style: b.style,
+      aspect_ratio: b.aspect_ratio,
+      seconds: b.seconds,
+      status: b.status,
     });
     res.json(projects.get(p.id));
   });
@@ -144,9 +154,15 @@ module.exports = function registerProjectRoutes(app) {
     const mode = SHOT_MODES.includes(b.mode) ? b.mode : 'reference';
     const maxSeq = existing.reduce((m, s) => Math.max(m, s.seq), 0);
     const id = projects.addShot({
-      project_id: p.id, seq: maxSeq + 1,
-      title: String(b.title || '').trim().slice(0, 100) || null,
-      video_prompt: vp, seconds: b.seconds || null, mode,
+      project_id: p.id,
+      seq: maxSeq + 1,
+      title:
+        String(b.title || '')
+          .trim()
+          .slice(0, 100) || null,
+      video_prompt: vp,
+      seconds: b.seconds || null,
+      mode,
       narration: b.narration !== undefined && b.narration !== null ? String(b.narration) : undefined,
       use_character_ref: b.use_character_ref,
     });
@@ -169,7 +185,8 @@ module.exports = function registerProjectRoutes(app) {
       patch.video_prompt = vp;
     }
     if (b.seconds !== undefined) {
-      if (b.seconds !== null && !SECONDS_OK.includes(String(b.seconds))) throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
+      if (b.seconds !== null && !SECONDS_OK.includes(String(b.seconds)))
+        throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
       patch.seconds = b.seconds;
     }
     // v1.3：旁白文案与角色引用开关
@@ -202,7 +219,11 @@ module.exports = function registerProjectRoutes(app) {
     const current = projects.shots(p.id);
     const idSet = new Set(current.map((s) => s.id));
     const reqIds = ids.map(Number);
-    if (reqIds.length !== current.length || reqIds.some((id) => !idSet.has(id)) || new Set(reqIds).size !== reqIds.length) {
+    if (
+      reqIds.length !== current.length ||
+      reqIds.some((id) => !idSet.has(id)) ||
+      new Set(reqIds).size !== reqIds.length
+    ) {
       throw new ApiError(400, 'ids 必须与项目现有镜头一一对应（不重不漏）');
     }
     projects.reorderShots(p.id, reqIds);
@@ -210,46 +231,52 @@ module.exports = function registerProjectRoutes(app) {
   });
 
   // 单镜头提交视频任务（M2 主入口；复用 pipeline 服务层组装与溯源）
-  app.post('/api/projects/:id/shots/:shotId/videos', ah(async (req, res) => {
-    const p = projects.get(req.params.id);
-    if (!p) throw new ApiError(404, '项目不存在');
-    const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
-    if (!shot) throw new ApiError(404, '镜头不存在');
-    const b = req.body || {};
-    const task = await pipeline.submitVideoTask({
-      projectId: p.id,
-      shot, // v1.3：传入镜头行，pipeline 据此尊重 use_character_ref / mode
-      prompt: shot.video_prompt,
-      seconds: b.seconds || shot.seconds,
-      aspectRatio: b.aspect_ratio,
-      shotId: shot.id,
-    });
-    res.status(201).json(task);
-  }));
-
-  // v1.7 镜头重拍：一次提交 N 条候选任务（提交队列自动按分钟节流；完成后在下方选定 take）
-  app.post('/api/projects/:id/shots/:shotId/retakes', ah(async (req, res) => {
-    const p = projects.get(req.params.id);
-    if (!p) throw new ApiError(404, '项目不存在');
-    const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
-    if (!shot) throw new ApiError(404, '镜头不存在');
-    const b = req.body || {};
-    const count = Math.min(Math.max(Math.round(Number(b.count) || 1), 1), 3);
-    const created = [];
-    for (let i = 0; i < count; i++) {
+  app.post(
+    '/api/projects/:id/shots/:shotId/videos',
+    ah(async (req, res) => {
+      const p = projects.get(req.params.id);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+      if (!shot) throw new ApiError(404, '镜头不存在');
+      const b = req.body || {};
       const task = await pipeline.submitVideoTask({
         projectId: p.id,
-        shot,
+        shot, // v1.3：传入镜头行，pipeline 据此尊重 use_character_ref / mode
         prompt: shot.video_prompt,
         seconds: b.seconds || shot.seconds,
         aspectRatio: b.aspect_ratio,
         shotId: shot.id,
       });
-      created.push({ id: task.id, status: task.status });
-    }
-    log('info', `项目 #${p.id} 镜头 #${shot.id}（seq ${shot.seq}）重拍 ${created.length} 条候选`);
-    res.status(201).json({ ok: true, retakes: created });
-  }));
+      res.status(201).json(task);
+    }),
+  );
+
+  // v1.7 镜头重拍：一次提交 N 条候选任务（提交队列自动按分钟节流；完成后在下方选定 take）
+  app.post(
+    '/api/projects/:id/shots/:shotId/retakes',
+    ah(async (req, res) => {
+      const p = projects.get(req.params.id);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
+      if (!shot) throw new ApiError(404, '镜头不存在');
+      const b = req.body || {};
+      const count = Math.min(Math.max(Math.round(Number(b.count) || 1), 1), 3);
+      const created = [];
+      for (let i = 0; i < count; i++) {
+        const task = await pipeline.submitVideoTask({
+          projectId: p.id,
+          shot,
+          prompt: shot.video_prompt,
+          seconds: b.seconds || shot.seconds,
+          aspectRatio: b.aspect_ratio,
+          shotId: shot.id,
+        });
+        created.push({ id: task.id, status: task.status });
+      }
+      log('info', `项目 #${p.id} 镜头 #${shot.id}（seq ${shot.seq}）重拍 ${created.length} 条候选`);
+      res.status(201).json({ ok: true, retakes: created });
+    }),
+  );
 
   // v1.7 镜头选定定稿 take：{task_id}（须为该镜头已完成且有产物的任务）；task_id=null 恢复自动模式
   app.post('/api/projects/:id/shots/:shotId/select-take', (req, res) => {
@@ -276,25 +303,28 @@ module.exports = function registerProjectRoutes(app) {
 
   // 从项目发起视频任务（旧入口，保留原语义）：角色定稿图 + 选定分镜提示词 → 2.5-flash reference 模式。
   // 组装与溯源逻辑在 pipeline.js 服务层；M2 起新流程走 /api/projects/:id/shots/:shotId/videos
-  app.post('/api/projects/:id/videos', ah(async (req, res) => {
-    const p = projects.get(req.params.id);
-    if (!p) throw new ApiError(404, '项目不存在');
-    const b = req.body || {};
-    let prompt = String(b.prompt || '').trim();
-    if (!prompt) {
-      const selectedVideo = projects.selectedText(p.id, 'video_prompt');
-      prompt = selectedVideo?.content || '';
-    }
-    if (!prompt) {
-      const latest = projects.texts(p.id).find((t) => t.kind === 'video_prompt');
-      prompt = latest?.content || '';
-    }
-    const task = await pipeline.submitVideoTask({
-      projectId: p.id,
-      prompt,
-      seconds: b.seconds,
-      aspectRatio: b.aspect_ratio,
-    });
-    res.status(201).json(task);
-  }));
+  app.post(
+    '/api/projects/:id/videos',
+    ah(async (req, res) => {
+      const p = projects.get(req.params.id);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const b = req.body || {};
+      let prompt = String(b.prompt || '').trim();
+      if (!prompt) {
+        const selectedVideo = projects.selectedText(p.id, 'video_prompt');
+        prompt = selectedVideo?.content || '';
+      }
+      if (!prompt) {
+        const latest = projects.texts(p.id).find((t) => t.kind === 'video_prompt');
+        prompt = latest?.content || '';
+      }
+      const task = await pipeline.submitVideoTask({
+        projectId: p.id,
+        prompt,
+        seconds: b.seconds,
+        aspectRatio: b.aspect_ratio,
+      });
+      res.status(201).json(task);
+    }),
+  );
 };

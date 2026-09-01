@@ -64,7 +64,8 @@ module.exports = function registerSettingsRoutes(app) {
     }
     if (b.poll_interval_ms !== undefined) {
       const ms = Number(b.poll_interval_ms);
-      if (!Number.isFinite(ms) || ms < 500 || ms > 30000) throw new ApiError(400, 'poll_interval_ms 需在 500–30000ms 之间');
+      if (!Number.isFinite(ms) || ms < 500 || ms > 30000)
+        throw new ApiError(400, 'poll_interval_ms 需在 500–30000ms 之间');
       settings.set('poll_interval_ms', String(Math.round(ms)));
       changed.push('poll_interval_ms');
     }
@@ -76,20 +77,32 @@ module.exports = function registerSettingsRoutes(app) {
     }
     if (b.submit_interval_ms !== undefined) {
       const ms = Number(b.submit_interval_ms);
-      if (!Number.isInteger(ms) || ms < 0 || ms > 300000) throw new ApiError(400, 'submit_interval_ms 需为 0–300000 的整数（0 = 连续提交）');
+      if (!Number.isInteger(ms) || ms < 0 || ms > 300000)
+        throw new ApiError(400, 'submit_interval_ms 需为 0–300000 的整数（0 = 连续提交）');
       settings.set('submit_interval_ms', String(ms));
       changed.push('submit_interval_ms');
     }
     // TTS 设置（Fish Audio）
     if (b.fish_api_key !== undefined) {
       const k = String(b.fish_api_key).trim();
-      if (k) { settings.set('fish_api_key', k); changed.push('fish_api_key'); }
-      else if (b.fish_api_key === '') { settings.set('fish_api_key', ''); changed.push('fish_api_key'); }
+      if (k) {
+        settings.set('fish_api_key', k);
+        changed.push('fish_api_key');
+      } else if (b.fish_api_key === '') {
+        settings.set('fish_api_key', '');
+        changed.push('fish_api_key');
+      }
     }
-    if (b.clear_fish_api_key === true) { settings.set('fish_api_key', ''); changed.push('fish_api_key'); }
+    if (b.clear_fish_api_key === true) {
+      settings.set('fish_api_key', '');
+      changed.push('fish_api_key');
+    }
     if (b.fish_voice !== undefined) {
       const v = String(b.fish_voice).trim().slice(0, 100);
-      if (v) { settings.set('fish_voice', v); changed.push('fish_voice'); }
+      if (v) {
+        settings.set('fish_voice', v);
+        changed.push('fish_voice');
+      }
     }
     if (b.fish_speed !== undefined) {
       const sp = Number(b.fish_speed);
@@ -106,10 +119,18 @@ module.exports = function registerSettingsRoutes(app) {
     }
     if (b.music_api_token !== undefined) {
       const t = String(b.music_api_token).trim();
-      if (t) { settings.set('music_api_token', t); changed.push('music_api_token'); }
-      else if (b.music_api_token === '') { settings.set('music_api_token', ''); changed.push('music_api_token'); }
+      if (t) {
+        settings.set('music_api_token', t);
+        changed.push('music_api_token');
+      } else if (b.music_api_token === '') {
+        settings.set('music_api_token', '');
+        changed.push('music_api_token');
+      }
     }
-    if (b.clear_music_api_token === true) { settings.set('music_api_token', ''); changed.push('music_api_token'); }
+    if (b.clear_music_api_token === true) {
+      settings.set('music_api_token', '');
+      changed.push('music_api_token');
+    }
     if (b.music_level !== undefined) {
       const lv = String(b.music_level).trim();
       if (!netmusic.LEVELS.includes(lv)) throw new ApiError(400, `music_level 仅支持 ${netmusic.LEVELS.join('/')}`);
@@ -119,10 +140,18 @@ module.exports = function registerSettingsRoutes(app) {
     // v1.9 声音广场 Token
     if (b.fish_web_token !== undefined) {
       const t = String(b.fish_web_token).trim();
-      if (t) { settings.set('fish_web_token', t); changed.push('fish_web_token'); }
-      else if (b.fish_web_token === '') { settings.set('fish_web_token', ''); changed.push('fish_web_token'); }
+      if (t) {
+        settings.set('fish_web_token', t);
+        changed.push('fish_web_token');
+      } else if (b.fish_web_token === '') {
+        settings.set('fish_web_token', '');
+        changed.push('fish_web_token');
+      }
     }
-    if (b.clear_fish_web_token === true) { settings.set('fish_web_token', ''); changed.push('fish_web_token'); }
+    if (b.clear_fish_web_token === true) {
+      settings.set('fish_web_token', '');
+      changed.push('fish_web_token');
+    }
     if (b.clear_api_key === true) settings.set('api_key', '');
     if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
     log('info', `设置已更新: ${changed.join(', ') || '无'}`);

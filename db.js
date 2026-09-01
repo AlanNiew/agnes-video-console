@@ -137,18 +137,23 @@ CREATE INDEX IF NOT EXISTS idx_rjobs_project ON render_jobs(project_id);
 `);
 
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
-const existingCols = new Set(db.prepare('PRAGMA table_info(tasks)').all().map((r) => r.name));
+const existingCols = new Set(
+  db
+    .prepare('PRAGMA table_info(tasks)')
+    .all()
+    .map((r) => r.name),
+);
 const MIGRATE_COLS = [
-  ['image', 'TEXT'],            // v2.0 图生视频：单张图片 URL
-  ['num_frames', 'INTEGER'],    // v2.0 帧数（8n+1，≤441）
-  ['frame_rate', 'REAL'],       // v2.0 帧率（1–60）
-  ['width', 'INTEGER'],         // v2.0 宽
-  ['height', 'INTEGER'],        // v2.0 高
-  ['negative_prompt', 'TEXT'],  // v2.0 反向提示词
-  ['project_id', 'INTEGER'],    // 流水线项目关联（M1）
-  ['shot_id', 'INTEGER'],       // 镜头溯源（M2）
-  ['text_id', 'INTEGER'],       // 提示词文本版本溯源（M2）
-  ['image_id', 'INTEGER'],      // 引用图片溯源（M2）
+  ['image', 'TEXT'], // v2.0 图生视频：单张图片 URL
+  ['num_frames', 'INTEGER'], // v2.0 帧数（8n+1，≤441）
+  ['frame_rate', 'REAL'], // v2.0 帧率（1–60）
+  ['width', 'INTEGER'], // v2.0 宽
+  ['height', 'INTEGER'], // v2.0 高
+  ['negative_prompt', 'TEXT'], // v2.0 反向提示词
+  ['project_id', 'INTEGER'], // 流水线项目关联（M1）
+  ['shot_id', 'INTEGER'], // 镜头溯源（M2）
+  ['text_id', 'INTEGER'], // 提示词文本版本溯源（M2）
+  ['image_id', 'INTEGER'], // 引用图片溯源（M2）
 ];
 for (const [name, type] of MIGRATE_COLS) {
   if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
@@ -159,32 +164,52 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_tasks_shot ON tasks(shot_id)');
 
 // 迁移：v1.3 提交队列 / 视频本地归档 / 分镜旁白 / 镜头引用开关 / TTS 镜头绑定
 for (const [name, type] of [
-  ['submitted_at', 'INTEGER'],       // 真正提交上游成功的时间（提交队列下 poller 超时以此为基准）
-  ['video_local_path', 'TEXT'],      // 完成视频的本地归档路径（远端 metadata_url 会过期）
+  ['submitted_at', 'INTEGER'], // 真正提交上游成功的时间（提交队列下 poller 超时以此为基准）
+  ['video_local_path', 'TEXT'], // 完成视频的本地归档路径（远端 metadata_url 会过期）
 ]) {
   if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
 }
-const shotCols = new Set(db.prepare('PRAGMA table_info(shots)').all().map((r) => r.name));
+const shotCols = new Set(
+  db
+    .prepare('PRAGMA table_info(shots)')
+    .all()
+    .map((r) => r.name),
+);
 for (const [name, type] of [
-  ['narration', 'TEXT'],                       // 镜头旁白文案
-  ['use_character_ref', 'INTEGER DEFAULT 1'],  // 是否引用角色定稿图（0 = 纯空镜，text 模式提交）
-  ['take_task_id', 'INTEGER'],                 // v1.7 重拍定稿：选定的 take 任务 id（NULL = 自动用最新完成条）
+  ['narration', 'TEXT'], // 镜头旁白文案
+  ['use_character_ref', 'INTEGER DEFAULT 1'], // 是否引用角色定稿图（0 = 纯空镜，text 模式提交）
+  ['take_task_id', 'INTEGER'], // v1.7 重拍定稿：选定的 take 任务 id（NULL = 自动用最新完成条）
 ]) {
   if (!shotCols.has(name)) db.exec(`ALTER TABLE shots ADD COLUMN ${name} ${type}`);
 }
-const rjobCols = new Set(db.prepare('PRAGMA table_info(render_jobs)').all().map((r) => r.name));
+const rjobCols = new Set(
+  db
+    .prepare('PRAGMA table_info(render_jobs)')
+    .all()
+    .map((r) => r.name),
+);
 if (!rjobCols.has('covers')) db.exec('ALTER TABLE render_jobs ADD COLUMN covers TEXT'); // v1.8 封面候选 JSON
 
-const ttsCols = new Set(db.prepare('PRAGMA table_info(project_tts)').all().map((r) => r.name));
+const ttsCols = new Set(
+  db
+    .prepare('PRAGMA table_info(project_tts)')
+    .all()
+    .map((r) => r.name),
+);
 if (!ttsCols.has('shot_id')) db.exec('ALTER TABLE project_tts ADD COLUMN shot_id INTEGER');
 // v1.4：项目背景音乐选择（JSON：song_id/name/artist/album/level/local_path 等）
-const projCols = new Set(db.prepare('PRAGMA table_info(projects)').all().map((r) => r.name));
+const projCols = new Set(
+  db
+    .prepare('PRAGMA table_info(projects)')
+    .all()
+    .map((r) => r.name),
+);
 if (!projCols.has('bgm')) db.exec('ALTER TABLE projects ADD COLUMN bgm TEXT');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
   setSetting: db.prepare(
-    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value'
+    'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ),
   insertTask: db.prepare(`
     INSERT INTO tasks (status, mode, model, prompt, seconds, size, aspect_ratio, seed,
@@ -259,7 +284,9 @@ const stmts = {
     VALUES (?, ?, ?, ?, ?, ?)
   `),
   listProjectTexts: db.prepare('SELECT * FROM project_texts WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
-  unselectProjectTexts: db.prepare('UPDATE project_texts SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
+  unselectProjectTexts: db.prepare(
+    'UPDATE project_texts SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?',
+  ),
   selectProjectText: db.prepare('UPDATE project_texts SET selected = 1 WHERE id = ?'),
   updateProjectText: db.prepare('UPDATE project_texts SET content = ? WHERE id = ?'),
   insertProjectImage: db.prepare(`
@@ -267,14 +294,16 @@ const stmts = {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   listProjectImages: db.prepare('SELECT * FROM project_images WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
-  unselectProjectImages: db.prepare('UPDATE project_images SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?'),
+  unselectProjectImages: db.prepare(
+    'UPDATE project_images SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?',
+  ),
   selectProjectImage: db.prepare('UPDATE project_images SET selected = 1 WHERE id = ?'),
   deleteProjectImage: db.prepare('DELETE FROM project_images WHERE id = ?'),
   getSelectedProjectImage: db.prepare(
-    "SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1"
+    'SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1',
   ),
   getSelectedProjectText: db.prepare(
-    "SELECT * FROM project_texts WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1"
+    'SELECT * FROM project_texts WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1',
   ),
   listProjectTasks: db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
   touchPoll: db.prepare(`
@@ -295,7 +324,9 @@ const stmts = {
   `),
   getShot: db.prepare('SELECT * FROM shots WHERE id = ?'),
   listShots: db.prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY seq ASC, id ASC'),
-  updateShotFull: db.prepare('UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, narration = ?, use_character_ref = ?, updated_at = ? WHERE id = ?'),
+  updateShotFull: db.prepare(
+    'UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, narration = ?, use_character_ref = ?, updated_at = ? WHERE id = ?',
+  ),
   updateShotSeq: db.prepare('UPDATE shots SET seq = ?, updated_at = ? WHERE id = ? AND project_id = ?'),
   deleteShot: db.prepare('DELETE FROM shots WHERE id = ?'),
   deleteShotsByProject: db.prepare('DELETE FROM shots WHERE project_id = ?'),
@@ -318,13 +349,13 @@ const stmts = {
 
   /* v1.3：成片渲染任务 */
   insertRenderJob: db.prepare(
-    'INSERT INTO render_jobs (project_id, status, params, created_at, updated_at) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO render_jobs (project_id, status, params, created_at, updated_at) VALUES (?, ?, ?, ?, ?)',
   ),
   getRenderJob: db.prepare('SELECT * FROM render_jobs WHERE id = ?'),
   listRenderJobsByProject: db.prepare('SELECT * FROM render_jobs WHERE project_id = ? ORDER BY id DESC'),
   queuedRenderJobs: db.prepare("SELECT * FROM render_jobs WHERE status = 'queued' ORDER BY id ASC"),
   updateRenderJob: db.prepare(
-    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, updated_at = ? WHERE id = ?'
+    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, updated_at = ? WHERE id = ?',
   ),
   deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
   deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
@@ -348,7 +379,11 @@ function tx(fn) {
     db.exec('COMMIT');
     return r;
   } catch (e) {
-    try { db.exec('ROLLBACK'); } catch { /* ignore */ }
+    try {
+      db.exec('ROLLBACK');
+    } catch {
+      /* ignore */
+    }
     throw e;
   }
 }
@@ -411,16 +446,47 @@ const settings = {
 };
 
 const tasks = {
-  insert({ status, mode, model, prompt, seconds, size, aspect_ratio, seed, first_frame,
-           last_frame, images, audios, videos, request_json,
-           image, num_frames, frame_rate, width, height, negative_prompt, project_id,
-           shot_id, text_id, image_id }) {
+  insert({
+    status,
+    mode,
+    model,
+    prompt,
+    seconds,
+    size,
+    aspect_ratio,
+    seed,
+    first_frame,
+    last_frame,
+    images,
+    audios,
+    videos,
+    request_json,
+    image,
+    num_frames,
+    frame_rate,
+    width,
+    height,
+    negative_prompt,
+    project_id,
+    shot_id,
+    text_id,
+    image_id,
+  }) {
     const now = Date.now();
     const r = stmts.insertTask.run(
-      status, mode, model, prompt, seconds, size, aspect_ratio,
+      status,
+      mode,
+      model,
+      prompt,
+      seconds,
+      size,
+      aspect_ratio,
       seed === null || seed === undefined ? null : Number(seed),
-      first_frame || null, last_frame || null,
-      JSON.stringify(images || []), JSON.stringify(audios || []), JSON.stringify(videos || []),
+      first_frame || null,
+      last_frame || null,
+      JSON.stringify(images || []),
+      JSON.stringify(audios || []),
+      JSON.stringify(videos || []),
       request_json ? JSON.stringify(request_json) : null,
       image || null,
       num_frames === null || num_frames === undefined ? null : Number(num_frames),
@@ -432,7 +498,8 @@ const tasks = {
       shot_id || null,
       text_id || null,
       image_id || null,
-      now, now
+      now,
+      now,
     );
     return Number(r.lastInsertRowid);
   },
@@ -512,12 +579,8 @@ const tasks = {
       p.progress !== undefined ? p.progress : cur.progress,
       now,
       p.completed_at !== undefined ? p.completed_at : cur.completed_at,
-      p.submit_response !== undefined
-        ? JSON.stringify(p.submit_response)
-        : cur.submit_response,
-      p.last_poll_response !== undefined
-        ? JSON.stringify(p.last_poll_response)
-        : cur.last_poll_response,
+      p.submit_response !== undefined ? JSON.stringify(p.submit_response) : cur.submit_response,
+      p.last_poll_response !== undefined ? JSON.stringify(p.last_poll_response) : cur.last_poll_response,
       p.metadata_url !== undefined ? p.metadata_url : cur.metadata_url,
       p.error_message !== undefined ? p.error_message : cur.error_message,
       p.poll_count !== undefined ? p.poll_count : cur.poll_count,
@@ -534,7 +597,7 @@ const tasks = {
       p.image_id !== undefined ? p.image_id : cur.image_id,
       p.submitted_at !== undefined ? p.submitted_at : cur.submitted_at,
       p.video_local_path !== undefined ? p.video_local_path : cur.video_local_path,
-      Number(id)
+      Number(id),
     );
     return true;
   },
@@ -553,7 +616,7 @@ const tasks = {
       last_poll_response ? JSON.stringify(last_poll_response) : null,
       metadata_url || null,
       error_message || null,
-      Number(id)
+      Number(id),
     );
   },
 
@@ -575,14 +638,14 @@ const DEFAULT_SETTINGS = {
   poll_interval_ms: '2000',
   max_active_minutes: '20',
   submit_interval_ms: '60000', // M2：批量分镜提交间隔（0 = 连续提交）
-  fish_api_key: '',            // TTS：Fish Audio API Key（可选；不配置则配音功能不可用）
-  fish_voice: 'default',       // TTS：默认音色（default = 平台默认；或 Fish 音色库模型 id）
-  fish_speed: '1',             // TTS：默认语速 0.5–2.0
-  music_api_base: '',          // v1.4 BGM：音乐接口地址（如 http://60.204.147.98:15001；留空则 BGM 功能不可用）
-  music_api_token: '',         // v1.4 BGM：音乐接口 Token（Authorization 头，仅服务端使用）
-  music_level: 'exhigh',       // v1.4 BGM：默认音质 standard/exhigh/lossless/hires
-  fish_web_token: '',          // v1.9 声音广场：fish.audio 网页端 Token（浏览社区音色；仅服务端使用）
-  tts_voice_pool: '[]',        // v1.9 音色备选池（JSON 数组：从声音广场收录的真实音色）
+  fish_api_key: '', // TTS：Fish Audio API Key（可选；不配置则配音功能不可用）
+  fish_voice: 'default', // TTS：默认音色（default = 平台默认；或 Fish 音色库模型 id）
+  fish_speed: '1', // TTS：默认语速 0.5–2.0
+  music_api_base: '', // v1.4 BGM：音乐接口地址（如 http://60.204.147.98:15001；留空则 BGM 功能不可用）
+  music_api_token: '', // v1.4 BGM：音乐接口 Token（Authorization 头，仅服务端使用）
+  music_level: 'exhigh', // v1.4 BGM：默认音质 standard/exhigh/lossless/hires
+  fish_web_token: '', // v1.9 声音广场：fish.audio 网页端 Token（浏览社区音色；仅服务端使用）
+  tts_voice_pool: '[]', // v1.9 音色备选池（JSON 数组：从声音广场收录的真实音色）
 };
 
 /* ---------------- 创作流水线（projects / texts / images） ---------------- */
@@ -614,7 +677,8 @@ function shotRowToApi(row) {
     narration: row.narration,
     seconds: row.seconds,
     mode: row.mode || 'reference',
-    use_character_ref: row.use_character_ref === null || row.use_character_ref === undefined ? 1 : Number(row.use_character_ref),
+    use_character_ref:
+      row.use_character_ref === null || row.use_character_ref === undefined ? 1 : Number(row.use_character_ref),
     take_task_id: row.take_task_id === null || row.take_task_id === undefined ? null : Number(row.take_task_id), // v1.7 重拍定稿
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -625,7 +689,14 @@ const projects = {
   insert({ name, idea, style, aspect_ratio, seconds }) {
     const now = Date.now();
     const r = stmts.insertProject.run(
-      name, idea || null, style || null, aspect_ratio || '16:9', seconds || '5', 'draft', now, now
+      name,
+      idea || null,
+      style || null,
+      aspect_ratio || '16:9',
+      seconds || '5',
+      'draft',
+      now,
+      now,
     );
     return Number(r.lastInsertRowid);
   },
@@ -649,7 +720,7 @@ const projects = {
       patch.seconds !== undefined ? patch.seconds : cur.seconds,
       patch.status !== undefined ? patch.status : cur.status,
       Date.now(),
-      Number(id)
+      Number(id),
     );
     return true;
   },
@@ -677,8 +748,12 @@ const projects = {
 
   texts(projectId) {
     return stmts.listProjectTexts.all(Number(projectId)).map((r) => ({
-      id: Number(r.id), project_id: Number(r.project_id), kind: r.kind,
-      content: r.content, model: r.model, selected: Boolean(r.selected),
+      id: Number(r.id),
+      project_id: Number(r.project_id),
+      kind: r.kind,
+      content: r.content,
+      model: r.model,
+      selected: Boolean(r.selected),
       created_at: Number(r.created_at),
     }));
   },
@@ -698,24 +773,46 @@ const projects = {
   selectedText(projectId, kind) {
     const row = stmts.getSelectedProjectText.get(Number(projectId), kind);
     if (!row) return null;
-    return { id: Number(row.id), project_id: Number(row.project_id), kind: row.kind,
-             content: row.content, model: row.model, selected: true, created_at: Number(row.created_at) };
+    return {
+      id: Number(row.id),
+      project_id: Number(row.project_id),
+      kind: row.kind,
+      content: row.content,
+      model: row.model,
+      selected: true,
+      created_at: Number(row.created_at),
+    };
   },
 
   images(projectId) {
     return stmts.listProjectImages.all(Number(projectId)).map((r) => ({
-      id: Number(r.id), project_id: Number(r.project_id), kind: r.kind, prompt: r.prompt,
-      remote_url: r.remote_url, local_path: r.local_path,
+      id: Number(r.id),
+      project_id: Number(r.project_id),
+      kind: r.kind,
+      prompt: r.prompt,
+      remote_url: r.remote_url,
+      local_path: r.local_path,
       local_url: r.local_path ? '/artifacts/' + path.basename(r.local_path) : null,
-      size: r.size, ratio: r.ratio,
-      model: r.model, selected: Boolean(r.selected), created_at: Number(r.created_at),
+      size: r.size,
+      ratio: r.ratio,
+      model: r.model,
+      selected: Boolean(r.selected),
+      created_at: Number(r.created_at),
     }));
   },
 
   addImage({ project_id, kind, prompt, remote_url, local_path, size, ratio, model }) {
     const r = stmts.insertProjectImage.run(
-      Number(project_id), kind, prompt || null, remote_url || null, local_path || null,
-      size || null, ratio || null, model || null, 0, Date.now()
+      Number(project_id),
+      kind,
+      prompt || null,
+      remote_url || null,
+      local_path || null,
+      size || null,
+      ratio || null,
+      model || null,
+      0,
+      Date.now(),
     );
     return Number(r.lastInsertRowid);
   },
@@ -731,9 +828,17 @@ const projects = {
     const row = stmts.getSelectedProjectImage.get(Number(projectId), kind);
     if (!row) return null;
     return {
-      id: Number(row.id), project_id: Number(row.project_id), kind: row.kind, prompt: row.prompt,
-      remote_url: row.remote_url, local_path: row.local_path, size: row.size, ratio: row.ratio,
-      model: row.model, selected: true, created_at: Number(row.created_at),
+      id: Number(row.id),
+      project_id: Number(row.project_id),
+      kind: row.kind,
+      prompt: row.prompt,
+      remote_url: row.remote_url,
+      local_path: row.local_path,
+      size: row.size,
+      ratio: row.ratio,
+      model: row.model,
+      selected: true,
+      created_at: Number(row.created_at),
     };
   },
 
@@ -767,11 +872,16 @@ const projects = {
   addShot({ project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref }) {
     const now = Date.now();
     const r = stmts.insertShot.run(
-      Number(project_id), Number(seq) || 0, title || null, video_prompt || '',
-      seconds || null, mode || 'reference',
+      Number(project_id),
+      Number(seq) || 0,
+      title || null,
+      video_prompt || '',
+      seconds || null,
+      mode || 'reference',
       narration || null,
-      use_character_ref === undefined || use_character_ref === null ? 1 : (use_character_ref ? 1 : 0),
-      now, now
+      use_character_ref === undefined || use_character_ref === null ? 1 : use_character_ref ? 1 : 0,
+      now,
+      now,
     );
     return Number(r.lastInsertRowid);
   },
@@ -785,10 +895,14 @@ const projects = {
       patch.video_prompt !== undefined ? patch.video_prompt : cur.video_prompt,
       patch.seconds !== undefined ? patch.seconds : cur.seconds,
       patch.mode !== undefined ? patch.mode : cur.mode,
-      patch.narration !== undefined ? (String(patch.narration || '').trim().slice(0, 200) || null) : cur.narration,
+      patch.narration !== undefined
+        ? String(patch.narration || '')
+            .trim()
+            .slice(0, 200) || null
+        : cur.narration,
       patch.use_character_ref !== undefined ? (patch.use_character_ref ? 1 : 0) : cur.use_character_ref,
       Date.now(),
-      Number(id)
+      Number(id),
     );
     return true;
   },
@@ -804,13 +918,20 @@ const projects = {
       stmts.deleteShotsByProject.run(pid);
       const now = Date.now();
       return shotsArr.map((s, i) =>
-        Number(stmts.insertShot.run(
-          pid, Number(s.seq ?? (i + 1)) || (i + 1), s.title || null, s.video_prompt || '',
-          s.seconds || null, s.mode || 'reference',
-          s.narration || null,
-          s.use_character_ref === undefined || s.use_character_ref === null ? 1 : (s.use_character_ref ? 1 : 0),
-          now, now
-        ).lastInsertRowid)
+        Number(
+          stmts.insertShot.run(
+            pid,
+            Number(s.seq ?? i + 1) || i + 1,
+            s.title || null,
+            s.video_prompt || '',
+            s.seconds || null,
+            s.mode || 'reference',
+            s.narration || null,
+            s.use_character_ref === undefined || s.use_character_ref === null ? 1 : s.use_character_ref ? 1 : 0,
+            now,
+            now,
+          ).lastInsertRowid,
+        ),
       );
     });
   },
@@ -832,17 +953,36 @@ const projects = {
     return stmts.listProjectTts.all(Number(projectId)).map(ttsRowToApi);
   },
 
-  addTts({ project_id, kind, shot_id, text, model, reference_id, voice_title, format, local_path, duration, size, error_message, selected }) {
+  addTts({
+    project_id,
+    kind,
+    shot_id,
+    text,
+    model,
+    reference_id,
+    voice_title,
+    format,
+    local_path,
+    duration,
+    size,
+    error_message,
+    selected,
+  }) {
     const r = stmts.insertTts.run(
-      Number(project_id), kind || 'narration',
+      Number(project_id),
+      kind || 'narration',
       shot_id === undefined || shot_id === null ? null : Number(shot_id),
-      String(text || ''), model || 's2.1-pro-free',
-      reference_id || null, voice_title || null, format || 'mp3',
-      local_path || null, duration === undefined || duration === null ? null : Number(duration),
+      String(text || ''),
+      model || 's2.1-pro-free',
+      reference_id || null,
+      voice_title || null,
+      format || 'mp3',
+      local_path || null,
+      duration === undefined || duration === null ? null : Number(duration),
       size === undefined || size === null ? null : Number(size),
       error_message || null,
       selected ? 1 : 0,
-      Date.now()
+      Date.now(),
     );
     return Number(r.lastInsertRowid);
   },
@@ -860,12 +1000,21 @@ const projects = {
 
   /** v1.5：绑定/解绑旁白到镜头（kind: 'shot'|'narration'，shotId 绑定时必填） */
   bindTts(id, kind, shotId) {
-    return stmts.bindTts.run(kind || 'narration', shotId === undefined || shotId === null ? null : Number(shotId), Number(id)).changes > 0;
+    return (
+      stmts.bindTts.run(
+        kind || 'narration',
+        shotId === undefined || shotId === null ? null : Number(shotId),
+        Number(id),
+      ).changes > 0
+    );
   },
 
   /** v1.7：镜头选定重拍定稿 take（taskId=null 恢复自动模式：用最新完成条） */
   setShotTake(id, taskId) {
-    return stmts.setShotTake.run(taskId === undefined || taskId === null ? null : Number(taskId), Date.now(), Number(id)).changes > 0;
+    return (
+      stmts.setShotTake.run(taskId === undefined || taskId === null ? null : Number(taskId), Date.now(), Number(id))
+        .changes > 0
+    );
   },
 
   /** v1.7：任务被删除时，清掉引用它的镜头定稿（回退自动模式） */
@@ -879,7 +1028,11 @@ const projects = {
     const removed = stmts.deleteTts.run(Number(id)).changes > 0;
     // 尽力删除本地音频文件（失败不阻塞）
     if (removed && row.local_path) {
-      try { fs.rmSync(row.local_path, { force: true }); } catch { /* ignore */ }
+      try {
+        fs.rmSync(row.local_path, { force: true });
+      } catch {
+        /* ignore */
+      }
     }
     return removed;
   },
@@ -951,7 +1104,7 @@ const renders = {
       patch.error_message !== undefined ? patch.error_message : cur.error_message,
       patch.covers !== undefined ? JSON.stringify(patch.covers) : cur.covers,
       Date.now(),
-      Number(id)
+      Number(id),
     );
     return true;
   },
@@ -969,7 +1122,11 @@ const renders = {
 const INSTANCE_LOCK_KEY = 'instance_lock';
 
 function getInstanceLock() {
-  try { return JSON.parse(settings.get(INSTANCE_LOCK_KEY) || 'null'); } catch { return null; }
+  try {
+    return JSON.parse(settings.get(INSTANCE_LOCK_KEY) || 'null');
+  } catch {
+    return null;
+  }
 }
 
 /** 锁是否被「其他存活进程」持有（心跳过期视为无主） */
@@ -977,7 +1134,12 @@ function instanceLockHeldByOther() {
   const l = getInstanceLock();
   if (!l || l.pid === process.pid) return false;
   if (Date.now() - (l.heartbeat || 0) > 15_000) return false;
-  try { process.kill(l.pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(l.pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function acquireInstanceLock() {
@@ -993,4 +1155,17 @@ function refreshInstanceLock() {
   }
 }
 
-module.exports = { db, settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR, acquireInstanceLock, instanceLockHeldByOther, refreshInstanceLock };
+module.exports = {
+  db,
+  settings,
+  tasks,
+  projects,
+  renders,
+  tx,
+  DEFAULT_SETTINGS,
+  DB_PATH,
+  DATA_DIR,
+  acquireInstanceLock,
+  instanceLockHeldByOther,
+  refreshInstanceLock,
+};

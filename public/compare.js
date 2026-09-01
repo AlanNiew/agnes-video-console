@@ -20,8 +20,13 @@
   function compare(o) {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
-    const renderText = o.renderText
-      || ((t) => String(t ?? '').split(/\n+/).map((p) => `<p>${esc(p)}</p>`).join(''));
+    const renderText =
+      o.renderText ||
+      ((t) =>
+        String(t ?? '')
+          .split(/\n+/)
+          .map((p) => `<p>${esc(p)}</p>`)
+          .join(''));
     overlay.innerHTML = `
       <div class="modal wide compare-modal">
         <div class="modal-head"><h2>${esc(o.title || '对比新旧版本')}</h2><button class="modal-close">✕</button></div>
@@ -43,9 +48,20 @@
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
     overlay.addEventListener('click', (e) => {
-      if (e.target === overlay || e.target.closest('.modal-close')) { close(); o.onKeep?.(); return; }
-      if (e.target.closest('[data-adopt]')) { close(); o.onAdopt?.(); return; }
-      if (e.target.closest('[data-keep]')) { close(); o.onKeep?.(); }
+      if (e.target === overlay || e.target.closest('.modal-close')) {
+        close();
+        o.onKeep?.();
+        return;
+      }
+      if (e.target.closest('[data-adopt]')) {
+        close();
+        o.onAdopt?.();
+        return;
+      }
+      if (e.target.closest('[data-keep]')) {
+        close();
+        o.onKeep?.();
+      }
     });
   }
 

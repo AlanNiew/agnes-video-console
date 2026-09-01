@@ -43,7 +43,10 @@ function createPipelineService(deps) {
         aspect_ratio: ratioFinal,
       });
       const task = await submitTask(payload, meta, { project_id: p.id, shot_id: shotId });
-      log('info', `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}（纯文生模式，未引用角色图）`);
+      log(
+        'info',
+        `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}（纯文生模式，未引用角色图）`,
+      );
       return task;
     }
 
@@ -52,9 +55,7 @@ function createPipelineService(deps) {
       throw new ApiError(400, '请先完成「角色设定」并定稿一张角色图（纯空镜镜头可在镜头中关闭「引用角色图」）');
     }
     // 提示词中必须引用角色图，显式保持外观一致
-    const finalPrompt = text.includes('<Picture 1>')
-      ? text
-      : `以 <Picture 1> 中的角色为参考，保持其外观一致。${text}`;
+    const finalPrompt = text.includes('<Picture 1>') ? text : `以 <Picture 1> 中的角色为参考，保持其外观一致。${text}`;
     const { payload, meta } = buildPayload({
       model: 'agnes-video-2.5-flash',
       prompt: finalPrompt,
@@ -69,7 +70,10 @@ function createPipelineService(deps) {
       shot_id: shotId,
       image_id: charImg.id,
     });
-    log('info', `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}（引用角色图 #${charImg.id}）`);
+    log(
+      'info',
+      `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}（引用角色图 #${charImg.id}）`,
+    );
     return task;
   }
 

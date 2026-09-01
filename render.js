@@ -29,12 +29,16 @@ const DIMS = { '16:9': { w: 1280, h: 720 }, '9:16': { w: 720, h: 1280 } };
 function resolveDims(aspect, projectRatio) {
   const a = ['16:9', '9:16'].includes(String(aspect))
     ? String(aspect)
-    : (String(projectRatio) === '9:16' ? '9:16' : '16:9');
+    : String(projectRatio) === '9:16'
+      ? '9:16'
+      : '16:9';
   return { aspect: a, ...DIMS[a] };
 }
 
 /** 简易中文字符检测（用于字体能力降级） */
-function hasCJK(s) { return /[\u4e00-\u9fff\u3400-\u4dbf]/.test(String(s || '')); }
+function hasCJK(s) {
+  return /[\u4e00-\u9fff\u3400-\u4dbf]/.test(String(s || ''));
+}
 
 /** 运行时可用的字体（优先中文字体；找不到返回 null） */
 function findFont() {
@@ -46,7 +50,11 @@ function findFont() {
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
   ];
   for (const f of candidates) {
-    try { if (fs.existsSync(f)) return f; } catch { /* ignore */ }
+    try {
+      if (fs.existsSync(f)) return f;
+    } catch {
+      /* ignore */
+    }
   }
   return null;
 }
@@ -65,8 +73,10 @@ function hasFfmpeg() {
 /** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
 function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {}) {
   return new Promise((resolve) => {
-    const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostats', ...args],
-      { windowsHide: true, cwd });
+    const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostats', ...args], {
+      windowsHide: true,
+      cwd,
+    });
     let err = '';
     let lastTick = 0;
     child.stderr.on('data', (d) => {
@@ -92,7 +102,10 @@ function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {
 
 /** drawtext 文本转义（滤镜参数内的 : ' \ 需转义；文本用单引号包裹由调用方负责） */
 function escDrawtext(s) {
-  return String(s || '').replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/:/g, '\\:');
+  return String(s || '')
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/:/g, '\\:');
 }
 
 /** 把字体复制到工作目录用相对路径引用（规避 Windows 盘符冒号与滤镜转义冲突） */
@@ -132,7 +145,10 @@ function assTime(t) {
 }
 
 function assEscape(text) {
-  return String(text || '').replace(/[{}]/g, '').replace(/\r?\n/g, ' ').trim();
+  return String(text || '')
+    .replace(/[{}]/g, '')
+    .replace(/\r?\n/g, ' ')
+    .trim();
 }
 
 /** 中文按字数预换行（libass 对无空格 CJK 长句不做自动换行，必须显式 \N）；标点不领头 */
@@ -156,7 +172,10 @@ function wrapCJK(text, maxChars) {
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
  * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number, marginV?:number}} [opts]
  */
-function buildSubtitleAss(lines, { fontsize = 42, family = 'Microsoft YaHei', playResX = 1280, playResY = 720, marginV = 52 } = {}) {
+function buildSubtitleAss(
+  lines,
+  { fontsize = 42, family = 'Microsoft YaHei', playResX = 1280, playResY = 720, marginV = 52 } = {},
+) {
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
@@ -302,11 +321,29 @@ class Renderer {
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const dest = path.join(tmpDir, `seg-${String(i + 1).padStart(2, '0')}.mp4`);
-        const r = await runFfmpeg(['-i', seg.src, '-vf',
+        const r = await runFfmpeg([
+          '-i',
+          seg.src,
+          '-vf',
           `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},setsar=1,fps=${OUT_FPS},format=yuv420p`,
-          '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest]);        if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
+          '-an',
+          '-c:v',
+          'libx264',
+          '-preset',
+          'veryfast',
+          '-crf',
+          '18',
+          dest,
+        ]);
+        if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
         const dur = probeDuration(dest) || seg.nominalSeconds;
-        norm.push({ file: dest, duration: dur, narrationPath: seg.narrationPath, narrationText: seg.narrationText, narrationDuration: seg.narrationDuration });
+        norm.push({
+          file: dest,
+          duration: dur,
+          narrationPath: seg.narrationPath,
+          narrationText: seg.narrationText,
+          narrationDuration: seg.narrationDuration,
+        });
         renders.update(job.id, { progress: 2 + Math.round((38 * (i + 1)) / segments.length) });
       }
 
@@ -318,7 +355,13 @@ class Renderer {
         if (card) cards.push({ kind: 'head', ...card });
       }
       if (wantEnd) {
-        const card = await this.makeEndCard(tmpDir, font, project.name, sceneImage?.local_path || sceneImage?.remote_url || null, dims);
+        const card = await this.makeEndCard(
+          tmpDir,
+          font,
+          project.name,
+          sceneImage?.local_path || sceneImage?.remote_url || null,
+          dims,
+        );
         if (card) cards.push({ kind: 'tail', ...card });
       }
 
@@ -338,10 +381,7 @@ class Renderer {
         for (const s of norm) {
           if (s.narrationText) {
             const start = st + narrOffset;
-            const end = Math.min(
-              start + (Number(s.narrationDuration) || 4),
-              st + s.duration - fade * 0.4
-            );
+            const end = Math.min(start + (Number(s.narrationDuration) || 4), st + s.duration - fade * 0.4);
             if (end > start + 0.2) subLines.push({ start, end, text: s.narrationText });
           }
           st += s.duration - fade;
@@ -368,10 +408,22 @@ class Renderer {
       const fl = [];
       // v1.6：烧录字幕时 xfade 链先输出 [vpre]，再挂 subtitles 滤镜得 [vout]
       const needSubFilter = subLines.length > 0;
-      log('info', `渲染任务 #${job.id} 字幕诊断：subLines=${subLines.length} needSubFilter=${needSubFilter} burn_subtitles=${wantSubs} narrText样本=${JSON.stringify((norm.find((s) => s.narrationText) || {}).narrationText || null).slice(0, 40)}`);
+      log(
+        'info',
+        `渲染任务 #${job.id} 字幕诊断：subLines=${subLines.length} needSubFilter=${needSubFilter} burn_subtitles=${wantSubs} narrText样本=${JSON.stringify((norm.find((s) => s.narrationText) || {}).narrationText || null).slice(0, 40)}`,
+      );
       if (needSubFilter) {
         const marginV = Math.round(OUT_H * (dims.aspect === '9:16' ? 0.15 : 0.072)); // 竖屏避开手机底部 UI 区
-        fs.writeFileSync(path.join(tmpDir, 'subs.ass'), buildSubtitleAss(subLines, { fontsize: subFontsize, family: font?.family || 'Arial', playResX: OUT_W, playResY: OUT_H, marginV }));
+        fs.writeFileSync(
+          path.join(tmpDir, 'subs.ass'),
+          buildSubtitleAss(subLines, {
+            fontsize: subFontsize,
+            family: font?.family || 'Arial',
+            playResX: OUT_W,
+            playResY: OUT_H,
+            marginV,
+          }),
+        );
       }
       let prev = '[0:v]';
       let cum = seqs[0].duration;
@@ -395,8 +447,8 @@ class Renderer {
           const label = `[n${ni}]`;
           fl.push(
             `[${narrIdxStart + ni}:a]highpass=f=90,` +
-            `acompressor=threshold=0.22:ratio=3:attack=8:release=220:makeup=1.15,` +
-            `volume=${narrVolume},adelay=${startMs}:all=1${label}`
+              `acompressor=threshold=0.22:ratio=3:attack=8:release=220:makeup=1.15,` +
+              `volume=${narrVolume},adelay=${startMs}:all=1${label}`,
           );
           narrLabels.push(label);
           ni += 1;
@@ -434,21 +486,39 @@ class Renderer {
       const outPath = path.join(ARTIFACTS_DIR, outName);
       fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
       const totalMs = total * 1000;
-      const r = await runFfmpeg([
-        ...inputs,
-        '-filter_complex', fl.join(';'),
-        '-map', '[vout]', '-map', aout,
-        '-t', total.toFixed(2),
-        '-c:v', 'libx264', '-preset', 'medium', '-crf', '18',
-        '-c:a', 'aac', '-b:a', '192k',
-        '-movflags', '+faststart',
-        '-progress', 'pipe:1',
-        outPath,
-      ], {
-        totalMs,
-        cwd: tmpDir, // subtitles=subs.ass 相对路径 + libass 字体目录
-        onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
-      });
+      const r = await runFfmpeg(
+        [
+          ...inputs,
+          '-filter_complex',
+          fl.join(';'),
+          '-map',
+          '[vout]',
+          '-map',
+          aout,
+          '-t',
+          total.toFixed(2),
+          '-c:v',
+          'libx264',
+          '-preset',
+          'medium',
+          '-crf',
+          '18',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          '-movflags',
+          '+faststart',
+          '-progress',
+          'pipe:1',
+          outPath,
+        ],
+        {
+          totalMs,
+          cwd: tmpDir, // subtitles=subs.ass 相对路径 + libass 字体目录
+          onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
+        },
+      );
       if (!r.ok) return this.fail(job.id, `终混失败：${r.err.slice(0, 400)}`);
 
       const outDur = probeDuration(outPath) || total;
@@ -457,20 +527,44 @@ class Renderer {
        * 实测综合响度与 -16 LUFS 目标偏差 >1.5dB 时，音轨直补（视频流免重编码），至多两轮 ---- */
       try {
         for (let pass = 0; pass < 2; pass++) {
-          const probe = spawnSync('ffmpeg', ['-hide_banner', '-nostats', '-i', outPath, '-af', 'ebur128', '-f', 'null', '-'],
-            { encoding: 'utf8', timeout: 180_000, windowsHide: true });
+          const probe = spawnSync(
+            'ffmpeg',
+            ['-hide_banner', '-nostats', '-i', outPath, '-af', 'ebur128', '-f', 'null', '-'],
+            { encoding: 'utf8', timeout: 180_000, windowsHide: true },
+          );
           const m = /Integrated loudness:\s*I:\s*(-?\d+\.?\d*)\s*LUFS/.exec(probe.stderr || '');
           if (!m) break;
           const delta = -16 - Number(m[1]);
-          if (Math.abs(delta) <= 1.5) { log('info', `渲染任务 #${job.id} 响度达标：${Number(m[1])} LUFS`); break; }
+          if (Math.abs(delta) <= 1.5) {
+            log('info', `渲染任务 #${job.id} 响度达标：${Number(m[1])} LUFS`);
+            break;
+          }
           const tmpA = outPath + '.loud.mp4';
-          const r2 = await runFfmpeg(['-i', outPath, '-c:v', 'copy',
-            '-af', `volume=${delta.toFixed(1)}dB,alimiter=limit=0.95`,
-            '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', tmpA]);
-          if (!r2.ok) { log('warn', `响度补偿失败：${r2.err.slice(0, 120)}`); break; }
+          const r2 = await runFfmpeg([
+            '-i',
+            outPath,
+            '-c:v',
+            'copy',
+            '-af',
+            `volume=${delta.toFixed(1)}dB,alimiter=limit=0.95`,
+            '-c:a',
+            'aac',
+            '-b:a',
+            '192k',
+            '-movflags',
+            '+faststart',
+            tmpA,
+          ]);
+          if (!r2.ok) {
+            log('warn', `响度补偿失败：${r2.err.slice(0, 120)}`);
+            break;
+          }
           fs.rmSync(outPath, { force: true });
           fs.renameSync(tmpA, outPath);
-          log('info', `渲染任务 #${job.id} 响度补偿 ${delta > 0 ? '+' : ''}${delta.toFixed(1)}dB（实测 ${Number(m[1])} LUFS → 目标 -16）`);
+          log(
+            'info',
+            `渲染任务 #${job.id} 响度补偿 ${delta > 0 ? '+' : ''}${delta.toFixed(1)}dB（实测 ${Number(m[1])} LUFS → 目标 -16）`,
+          );
         }
       } catch (e) {
         log('warn', `响度补偿异常（不影响成片）：${e.message}`);
@@ -485,7 +579,10 @@ class Renderer {
           const cpath = path.join(ARTIFACTS_DIR, name);
           const args = ['-i', outPath, '-ss', pickTimes[i].toFixed(2), '-frames:v', '1'];
           if (i === 0 && font) {
-            args.push('-vf', `drawtext=fontfile=${font.rel}:text='${escDrawtext(project.name)}':fontsize=${Math.round(dims.w * 0.052)}:fontcolor=0xF2ECDC:borderw=3:bordercolor=0x181410:x=(w-text_w)/2:y=h-text_h-${Math.round(dims.h * 0.06)}`);
+            args.push(
+              '-vf',
+              `drawtext=fontfile=${font.rel}:text='${escDrawtext(project.name)}':fontsize=${Math.round(dims.w * 0.052)}:fontcolor=0xF2ECDC:borderw=3:bordercolor=0x181410:x=(w-text_w)/2:y=h-text_h-${Math.round(dims.h * 0.06)}`,
+            );
           }
           args.push(cpath);
           const r = await runFfmpeg(args, { cwd: tmpDir });
@@ -497,9 +594,16 @@ class Renderer {
       }
 
       renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath, covers });
-      log('info', `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 → ${outPath}`);
+      log(
+        'info',
+        `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 → ${outPath}`,
+      );
     } finally {
-      try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try {
+        fs.rmSync(tmpDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
     }
   }
 
@@ -507,19 +611,52 @@ class Renderer {
   async makeTitleCard(tmpDir, font, title, dims = { w: 1280, h: 720 }) {
     const bg = path.join(tmpDir, 'title-bg.png');
     const r1 = await runFfmpeg([
-      '-f', 'lavfi', '-i', `nullsrc=s=${dims.w}x${dims.h},geq=lum='if(lt(random(2),0.0025),170+random(0)*85,14)':cb=128:cr=128`,
-      '-frames:v', '1', '-vf', 'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.3', bg,
+      '-f',
+      'lavfi',
+      '-i',
+      `nullsrc=s=${dims.w}x${dims.h},geq=lum='if(lt(random(2),0.0025),170+random(0)*85,14)':cb=128:cr=128`,
+      '-frames:v',
+      '1',
+      '-vf',
+      'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.3',
+      bg,
     ]);
     if (!r1.ok) return { file: null, duration: TITLE_DUR, failed: r1.err };
     const dest = path.join(tmpDir, 'card-title.mp4');
     const vf = ['fade=t=in:st=0:d=0.9,fade=t=out:st=' + (TITLE_DUR - 0.6).toFixed(1) + ':d=0.6', 'format=yuv420p'];
     if (font && (font.cjk || !hasCJK(title))) {
-      vf.unshift('drawtext=fontfile=' + font.rel + `:text='${escDrawtext(title)}':fontsize=${Math.round(dims.w * 0.1)}:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2`);
+      vf.unshift(
+        'drawtext=fontfile=' +
+          font.rel +
+          `:text='${escDrawtext(title)}':fontsize=${Math.round(dims.w * 0.1)}:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2`,
+      );
     }
-    const r2 = await runFfmpeg([
-      '-loop', '1', '-i', bg, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
-      '-t', String(TITLE_DUR), '-r', String(OUT_FPS), '-vf', vf.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest,
-    ], { cwd: tmpDir });
+    const r2 = await runFfmpeg(
+      [
+        '-loop',
+        '1',
+        '-i',
+        bg,
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=44100:cl=stereo',
+        '-t',
+        String(TITLE_DUR),
+        '-r',
+        String(OUT_FPS),
+        '-vf',
+        vf.join(','),
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '18',
+        dest,
+      ],
+      { cwd: tmpDir },
+    );
     if (!r2.ok) return { file: null, duration: TITLE_DUR, failed: r2.err };
     return { file: dest, duration: TITLE_DUR };
   }
@@ -532,17 +669,44 @@ class Renderer {
       'eq=brightness=-0.12:saturation=0.9',
     ];
     if (font && (font.cjk || !hasCJK(title))) {
-      vf.push('drawtext=fontfile=' + font.rel + `:text='— 完 —':fontsize=54:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2-30`);
-      vf.push('drawtext=fontfile=' + font.rel + `:text='${escDrawtext(title)}':fontsize=26:fontcolor=0xC9CFDB:x=(w-text_w)/2:y=h-120`);
+      vf.push(
+        'drawtext=fontfile=' +
+          font.rel +
+          `:text='— 完 —':fontsize=54:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2-30`,
+      );
+      vf.push(
+        'drawtext=fontfile=' +
+          font.rel +
+          `:text='${escDrawtext(title)}':fontsize=26:fontcolor=0xC9CFDB:x=(w-text_w)/2:y=h-120`,
+      );
     }
     vf.push(`fade=t=in:st=0:d=0.8,fade=t=out:st=${(END_DUR - 0.6).toFixed(1)}:d=0.6`, 'format=yuv420p');
     const inputArgs = sceneSrc
       ? ['-loop', '1', '-i', sceneSrc]
       : ['-f', 'lavfi', '-i', `color=c=0x060A14:s=${dims.w}x${dims.h}`];
-    const r = await runFfmpeg([
-      ...inputArgs, '-f', 'lavfi', '-i', 'anullsrc=r=44100:cl=stereo',
-      '-t', String(END_DUR), '-r', String(OUT_FPS), '-vf', vf.join(','), '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '18', dest,
-    ], { cwd: tmpDir });
+    const r = await runFfmpeg(
+      [
+        ...inputArgs,
+        '-f',
+        'lavfi',
+        '-i',
+        'anullsrc=r=44100:cl=stereo',
+        '-t',
+        String(END_DUR),
+        '-r',
+        String(OUT_FPS),
+        '-vf',
+        vf.join(','),
+        '-c:v',
+        'libx264',
+        '-preset',
+        'veryfast',
+        '-crf',
+        '18',
+        dest,
+      ],
+      { cwd: tmpDir },
+    );
     if (!r.ok) return { file: null, duration: END_DUR, failed: r.err };
     return { file: dest, duration: END_DUR };
   }

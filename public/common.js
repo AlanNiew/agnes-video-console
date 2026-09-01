@@ -11,7 +11,10 @@
 
   /** HTML 转义（插值进 innerHTML 前必须调用） */
   const esc = (s) =>
-    String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    String(s ?? '').replace(
+      /[&<>"']/g,
+      (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c],
+    );
 
   /** 时间戳 → 'YYYY-MM-DD HH:mm' */
   const fmtTime = (ts) => {
@@ -42,7 +45,11 @@
       body: opts.body ? JSON.stringify(opts.body) : undefined,
     });
     let data = null;
-    try { data = await res.json(); } catch { /* ignore */ }
+    try {
+      data = await res.json();
+    } catch {
+      /* ignore */
+    }
     if (!res.ok) {
       const err = new Error(data?.error || `HTTP ${res.status}`);
       err.status = res.status;

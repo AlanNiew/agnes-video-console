@@ -7,8 +7,13 @@ const { DB_PATH } = require('../db');
 const { buildOpenApi } = require('../openapi');
 const { recent: recentLogs } = require('../logger');
 const {
-  MODELS, ASPECT_RATIOS, SECONDS_OK,
-  IMAGE_MODEL, IMAGE_SIZES, IMAGE_RATIOS, LLM_MODEL,
+  MODELS,
+  ASPECT_RATIOS,
+  SECONDS_OK,
+  IMAGE_MODEL,
+  IMAGE_SIZES,
+  IMAGE_RATIOS,
+  LLM_MODEL,
 } = require('../constants');
 
 module.exports = function registerMetaRoutes(app) {
@@ -36,7 +41,13 @@ module.exports = function registerMetaRoutes(app) {
 
   // 健康检查
   app.get('/api/health', (req, res) => {
-    res.json({ ok: true, app: 'agnes-video-console', uptime_s: Math.round(process.uptime()), db: DB_PATH, node: process.version });
+    res.json({
+      ok: true,
+      app: 'agnes-video-console',
+      uptime_s: Math.round(process.uptime()),
+      db: DB_PATH,
+      node: process.version,
+    });
   });
 
   // API 自描述（v1.3）：机器可读的端点文档，自动化脚本 / Agent 无需读源码即可对接

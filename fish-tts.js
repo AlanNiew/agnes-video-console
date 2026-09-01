@@ -20,8 +20,8 @@ const REQUEST_TIMEOUT_MS = 180_000; // TTS 同步合成，最长 180s（官方�
 /** 归一化代理配置：支持 'host:port' 或分环境变量 */
 function proxyConfig() {
   const raw = process.env.FISH_PROXY || ''; // 形如 "127.0.0.1:7897"
-  const host = process.env.FISH_PROXY_HOST || (raw.split(':')[0] || '');
-  const port = Number(process.env.FISH_PROXY_PORT || (raw.split(':')[1] || 0));
+  const host = process.env.FISH_PROXY_HOST || raw.split(':')[0] || '';
+  const port = Number(process.env.FISH_PROXY_PORT || raw.split(':')[1] || 0);
   return host && port ? { host, port } : null;
 }
 
@@ -61,7 +61,15 @@ function tunnel(host, port) {
  * @param {string} [o.format]  'mp3'(默认) | 'wav' | 'opus' | 'pcm'
  * @returns {Promise<{ok:boolean,status:number,contentType:string,buf:Buffer,raw:string}>}
  */
-async function synthesize({ apiKey, text, referenceId = null, model = 's2.1-pro-free', speed, temperature, format = 'mp3' }) {
+async function synthesize({
+  apiKey,
+  text,
+  referenceId = null,
+  model = 's2.1-pro-free',
+  speed,
+  temperature,
+  format = 'mp3',
+}) {
   const body = { text, normalize: true, format };
   if (referenceId) body.reference_id = referenceId;
   if (speed !== undefined && Number.isFinite(Number(speed))) {
@@ -100,12 +108,15 @@ async function synthesize({ apiKey, text, referenceId = null, model = 's2.1-pro-
 
 function directRequest(headers, payload) {
   return new Promise((resolve) => {
-    const req = https.request(
-      { hostname: BASE_HOST, path: '/v1/tts', method: 'POST', headers },
-      (res) => collect(res).then((r) => resolve(r))
+    const req = https.request({ hostname: BASE_HOST, path: '/v1/tts', method: 'POST', headers }, (res) =>
+      collect(res).then((r) => resolve(r)),
     );
-    req.on('error', (e) => resolve({ ok: false, status: 0, contentType: '', buf: null, raw: `网络异常: ${e.message}` }));
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => { req.destroy(new Error('请求超时')); });
+    req.on('error', (e) =>
+      resolve({ ok: false, status: 0, contentType: '', buf: null, raw: `网络异常: ${e.message}` }),
+    );
+    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+      req.destroy(new Error('请求超时'));
+    });
     req.write(payload);
     req.end();
   });
@@ -116,7 +127,7 @@ function proxiedRequest(tlsSock, headers, payload) {
     // 隧道已是 TLS 加密流 → 用 http.request 在加密 socket 上发应用层请求（避免二次握手）
     const req = http.request(
       { host: BASE_HOST, path: '/v1/tts', method: 'POST', headers, createConnection: () => tlsSock, agent: false },
-      (res) => collect(res).then(resolve)
+      (res) => collect(res).then(resolve),
     );
     req.on('error', reject);
     req.setTimeout(REQUEST_TIMEOUT_MS, () => req.destroy(new Error('请求超时')));
@@ -141,7 +152,9 @@ function collect(res) {
         raw: isJson ? buf.toString('utf8').slice(0, 2000) : '',
       });
     });
-    res.on('error', (e) => resolve({ ok: false, status: 0, contentType: '', buf: null, raw: `响应异常: ${e.message}` }));
+    res.on('error', (e) =>
+      resolve({ ok: false, status: 0, contentType: '', buf: null, raw: `响应异常: ${e.message}` }),
+    );
   });
 }
 
@@ -150,7 +163,14 @@ function collect(res) {
  * GET https://api.fish.audio/model/web?page_size=&page_number=&sort_by=trending|task_count|created_at&language=zh&tag=male&tag=young
  * 认证：Authorization: Bearer <web token>（与 TTS API Key 不同，来自 fish.audio 网页端会话）
  */
-async function listWebModels({ token, sortBy = 'trending', language = 'zh', tags = [], pageNumber = 1, pageSize = 20 }) {
+async function listWebModels({
+  token,
+  sortBy = 'trending',
+  language = 'zh',
+  tags = [],
+  pageNumber = 1,
+  pageSize = 20,
+}) {
   const url = new URL('https://api.fish.audio/model/web');
   url.searchParams.set('page_size', String(Math.min(Math.max(Number(pageSize) || 20, 1), 30)));
   url.searchParams.set('page_number', String(Math.max(Number(pageNumber) || 1, 1)));

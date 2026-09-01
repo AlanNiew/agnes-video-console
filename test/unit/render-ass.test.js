@@ -72,7 +72,12 @@ describe('buildSubtitleAss', () => {
   });
 
   test('自定义 fontsize / playResX 生效于 Style 与换行宽度', () => {
-    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { fontsize: 56, playResX: 720, playResY: 1280, marginV: 80 });
+    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], {
+      fontsize: 56,
+      playResX: 720,
+      playResY: 1280,
+      marginV: 80,
+    });
     expect(ass).toContain('Style: Narr,Microsoft YaHei,56,');
     expect(ass).toContain('PlayResX: 720');
     expect(ass).toContain('PlayResY: 1280');

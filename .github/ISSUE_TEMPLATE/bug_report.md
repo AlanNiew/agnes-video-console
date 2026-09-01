@@ -10,6 +10,7 @@ assignees: ''
 清晰简洁地描述问题现象。
 
 **复现步骤 / To Reproduce**
+
 1. 使用的模型与模式：
 2. 操作步骤：
 3. 期望行为：
@@ -19,6 +20,7 @@ assignees: ''
 如有，请附加界面截图或「日志」面板内容（注意隐去 API Key）。
 
 **环境 / Environment**
+
 - 操作系统：Windows / macOS / Linux
 - Node 版本：`node -v`
 - 浏览器：Chrome / Edge / Firefox / 其他

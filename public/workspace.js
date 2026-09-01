@@ -4,7 +4,13 @@
 
   // 公共工具统一来自 common.js（须先于本文件加载）
   const { $, esc, fmtTime, toast, api } = window.__common;
-  const STATUS_LABEL = { queued: '队列中', in_progress: '生成中', completed: '已完成', failed: '失败', submit_error: '提交失败' };
+  const STATUS_LABEL = {
+    queued: '队列中',
+    in_progress: '生成中',
+    completed: '已完成',
+    failed: '失败',
+    submit_error: '提交失败',
+  };
   const KIND_LABEL = {
     script: '故事梗概',
     video_prompt: '视频提示词',
@@ -15,12 +21,12 @@
   let currentProjectId = null;
   let imgGenBusy = false;
   let scriptBusy = false;
-  let storyBusy = false;      // M2：分镜生成中
-  let currentShotCount = 0;   // M2：当前项目镜头数（供重生成确认判断）
-  let batchBusy = false;      // M2：批量提交进行中
-  let batchStop = false;      // M2：批量提交停止标记
-  let batchHint = '';         // M2：批量提交进度提示
-  let currentStep = 1;        // 当前视区所在步骤（步骤条高亮跟随）
+  let storyBusy = false; // M2：分镜生成中
+  let currentShotCount = 0; // M2：当前项目镜头数（供重生成确认判断）
+  let batchBusy = false; // M2：批量提交进行中
+  let batchStop = false; // M2：批量提交停止标记
+  let batchHint = ''; // M2：批量提交进度提示
+  let currentStep = 1; // 当前视区所在步骤（步骤条高亮跟随）
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -37,9 +43,21 @@
     }, 1000);
     return () => clearInterval(timer);
   }
-  const STAGES_SCRIPT = [[0, '正在分析创意，梳理故事结构…'], [8, '正在撰写梗概与角色设定…'], [18, '即将完成，正在润色提示词…']];
-  const STAGES_STORY = [[0, '正在拆解叙事节奏…'], [8, '正在设计镜头与运镜…'], [18, '即将完成，正在对齐镜头衔接…']];
-  const STAGES_IMG = [[0, '正在生成候选图（约 10–90 秒），完成后在下方挑选…'], [30, '模型仍在绘制，请稍候…'], [60, '复杂画风耗时较长，马上好…']];
+  const STAGES_SCRIPT = [
+    [0, '正在分析创意，梳理故事结构…'],
+    [8, '正在撰写梗概与角色设定…'],
+    [18, '即将完成，正在润色提示词…'],
+  ];
+  const STAGES_STORY = [
+    [0, '正在拆解叙事节奏…'],
+    [8, '正在设计镜头与运镜…'],
+    [18, '即将完成，正在对齐镜头衔接…'],
+  ];
+  const STAGES_IMG = [
+    [0, '正在生成候选图（约 10–90 秒），完成后在下方挑选…'],
+    [30, '模型仍在绘制，请稍候…'],
+    [60, '复杂画风耗时较长，马上好…'],
+  ];
 
   /** 滚动时步骤条高亮跟随（只绑定一次；点击跳转后短暂抑制，避免覆盖用户选择） */
   let wsScrollBound = false;
@@ -48,28 +66,41 @@
     if (wsScrollBound) return;
     wsScrollBound = true;
     let timer = null;
-    window.addEventListener('scroll', () => {
-      if (timer) return;
-      timer = setTimeout(() => {
-        timer = null;
-        if (!currentProjectId || $('#workspaceView')?.hidden) return;
-        if (Date.now() < stepFollowUntil) return;
-        const marks = [['#wsVideoSection', 4], ['#wsCharSection', 3], ['#wsCopySections', 2]];
-        let cur = 1;
-        const doc = document.documentElement;
-        // 页面已滚到底 → 最后一步；否则取「顶部越过视口上沿 300px 内」的最近区块
-        if (window.innerHeight + window.scrollY >= doc.scrollHeight - 60) {
-          cur = 4;
-        } else {
-          for (const [sel, n] of marks) {
-            const el = document.querySelector(sel);
-            if (el && el.getBoundingClientRect().top <= 300) { cur = n; break; }
+    window.addEventListener(
+      'scroll',
+      () => {
+        if (timer) return;
+        timer = setTimeout(() => {
+          timer = null;
+          if (!currentProjectId || $('#workspaceView')?.hidden) return;
+          if (Date.now() < stepFollowUntil) return;
+          const marks = [
+            ['#wsVideoSection', 4],
+            ['#wsCharSection', 3],
+            ['#wsCopySections', 2],
+          ];
+          let cur = 1;
+          const doc = document.documentElement;
+          // 页面已滚到底 → 最后一步；否则取「顶部越过视口上沿 300px 内」的最近区块
+          if (window.innerHeight + window.scrollY >= doc.scrollHeight - 60) {
+            cur = 4;
+          } else {
+            for (const [sel, n] of marks) {
+              const el = document.querySelector(sel);
+              if (el && el.getBoundingClientRect().top <= 300) {
+                cur = n;
+                break;
+              }
+            }
           }
-        }
-        currentStep = cur;
-        document.querySelectorAll('.steps .step').forEach((s) => s.classList.toggle('active', s.dataset.step === String(cur)));
-      }, 150);
-    }, { passive: true });
+          currentStep = cur;
+          document
+            .querySelectorAll('.steps .step')
+            .forEach((s) => s.classList.toggle('active', s.dataset.step === String(cur)));
+        }, 150);
+      },
+      { passive: true },
+    );
   }
   let META = null; // 模型/画幅/时长元数据（GET /api/meta，与任务中心同源）
   async function getMeta() {
@@ -84,7 +115,8 @@
       if (currentProjectId) await renderProject(currentProjectId);
       else await renderList();
     } catch (e) {
-      $('#workspaceView').innerHTML = `<div class="ws-pad"><div class="ws-loading">加载失败：${esc(e.message)}</div></div>`;
+      $('#workspaceView').innerHTML =
+        `<div class="ws-pad"><div class="ws-loading">加载失败：${esc(e.message)}</div></div>`;
     }
   }
 
@@ -99,13 +131,18 @@
           <span class="spacer"></span>
           <button class="btn primary" id="wsNewProject">＋ 新建项目</button>
         </div>
-        ${items.length
-          ? `<div class="ws-grid">${items.map(cardHTML).join('')}</div>`
-          : `<div class="empty-box" style="margin:40px auto;max-width:480px"><h3>还没有创作项目</h3><p>一句话想法 → AI 出文案 → 生成角色设定图 → 一键发起视频任务，全部免费。</p></div>`}
+        ${
+          items.length
+            ? `<div class="ws-grid">${items.map(cardHTML).join('')}</div>`
+            : `<div class="empty-box" style="margin:40px auto;max-width:480px"><h3>还没有创作项目</h3><p>一句话想法 → AI 出文案 → 生成角色设定图 → 一键发起视频任务，全部免费。</p></div>`
+        }
       </div>`;
     $('#wsNewProject').onclick = () => openNewProject().catch((e) => toast('打开新建项目失败：' + e.message, 'err'));
     ws.querySelectorAll('.ws-card').forEach((c) =>
-      c.addEventListener('click', () => { currentProjectId = Number(c.dataset.id); renderProject(currentProjectId); })
+      c.addEventListener('click', () => {
+        currentProjectId = Number(c.dataset.id);
+        renderProject(currentProjectId);
+      }),
     );
   }
 
@@ -154,17 +191,35 @@
       </div>`;
     document.body.appendChild(overlay);
     const close = () => overlay.remove();
-    overlay.addEventListener('click', (e) => { if (e.target === overlay || e.target.closest('[data-close]') || e.target.classList.contains('modal-close') || e.target.closest('.btn.ghost')) close(); });
+    overlay.addEventListener('click', (e) => {
+      if (
+        e.target === overlay ||
+        e.target.closest('[data-close]') ||
+        e.target.classList.contains('modal-close') ||
+        e.target.closest('.btn.ghost')
+      )
+        close();
+    });
     $('#npCreate', overlay).onclick = async () => {
       const name = $('#npName', overlay).value.trim();
       const idea = $('#npIdea', overlay).value.trim();
-      if (!name || !idea) { toast('请填写项目名称与创意', 'err'); return; }
+      if (!name || !idea) {
+        toast('请填写项目名称与创意', 'err');
+        return;
+      }
       const btn = $('#npCreate', overlay);
-      btn.disabled = true; btn.textContent = '创建中…';
+      btn.disabled = true;
+      btn.textContent = '创建中…';
       try {
         const p = await api('/api/projects', {
           method: 'POST',
-          body: { name, idea, style: $('#npStyle', overlay).value.trim(), aspect_ratio: $('#npAspect', overlay).value, seconds: $('#npSeconds', overlay).value },
+          body: {
+            name,
+            idea,
+            style: $('#npStyle', overlay).value.trim(),
+            aspect_ratio: $('#npAspect', overlay).value,
+            seconds: $('#npSeconds', overlay).value,
+          },
         });
         const autoStoryboard = $('#npAutoStoryboard', overlay)?.checked !== false;
         close();
@@ -184,16 +239,18 @@
         });
       } catch (e) {
         toast('创建失败：' + e.message, 'err');
-        btn.disabled = false; btn.textContent = '创建并生成文案';
+        btn.disabled = false;
+        btn.textContent = '创建并生成文案';
       }
     };
   }
 
   /* 步骤④的模型标签：与流水线实际使用的免费视频模型保持同源 */
   function videoModelTag(meta) {
-    const m = meta.models.find((x) => x.id === 'agnes-video-2.5-flash')
-      || meta.models.find((x) => !x.deprecated && x.free)
-      || meta.models[0];
+    const m =
+      meta.models.find((x) => x.id === 'agnes-video-2.5-flash') ||
+      meta.models.find((x) => !x.deprecated && x.free) ||
+      meta.models[0];
     return `${m.short}（${m.free ? '免费' : '付费'} · ${(m.sizes || ['-'])[0] || '-'}）`;
   }
 
@@ -206,12 +263,16 @@
     const tasks = d.tasks || [];
     const shots = d.shots || [];
     currentShotCount = shots.length;
-    const selVideo = (t) => t.find((x) => x.kind === 'video_prompt' && x.selected) || t.find((x) => x.kind === 'video_prompt');
-    const selChar = images.find((x) => x.kind === 'character' && x.selected) || images.find((x) => x.kind === 'character');
+    const selVideo = (t) =>
+      t.find((x) => x.kind === 'video_prompt' && x.selected) || t.find((x) => x.kind === 'video_prompt');
+    const selChar =
+      images.find((x) => x.kind === 'character' && x.selected) || images.find((x) => x.kind === 'character');
     const selVideoText = selVideo(texts);
     const completedShots = tasks.filter((t) => t.status === 'completed').length;
     // v1.5：已绑定镜头配音的镜头数（渲染时旁白覆盖率提示）
-    const narratedShots = shots.filter((s) => (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message)).length;
+    const narratedShots = shots.filter((s) =>
+      (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message),
+    ).length;
     const stepsDone = {
       1: Boolean(p.idea),
       2: texts.some((t) => t.kind === 'video_prompt' || t.kind === 'storyboard') || shots.length > 0,
@@ -222,7 +283,11 @@
     };
     const stepState = (n) => (stepsDone[n] ? 'done' : '');
     let renderJobs = [];
-    try { renderJobs = (await api(`/api/projects/${id}/render/jobs`)).data.items || []; } catch { /* 旧后端兼容 */ }
+    try {
+      renderJobs = (await api(`/api/projects/${id}/render/jobs`)).data.items || [];
+    } catch {
+      /* 旧后端兼容 */
+    }
     // 下一步引导：按当前产物状态给出唯一建议动作
     const guideInfo = (() => {
       if (!SCRIPT_FIELDS.some(([k]) => texts.some((t) => t.kind === k)) && !shots.length) {
@@ -258,9 +323,13 @@
         <!-- ② 文案与分镜 -->
         <div class="copy-sect">
           <h4>📝 文案与提示词 <span class="badge-selected" hidden id="wsCopyDone">已生成</span></h4>
-          ${scriptBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在分析创意，梳理故事结构…</span></div>' : `
+          ${
+            scriptBusy
+              ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在分析创意，梳理故事结构…</span></div>'
+              : `
           <button class="btn primary sm" id="wsGenScript">✨ 生成 / 重新生成文案</button>
-          <div class="hint mt">梗概、角色描述、场景描述一次生成；分镜在下方独立生成与编辑。</div>`}
+          <div class="hint mt">梗概、角色描述、场景描述一次生成；分镜在下方独立生成与编辑。</div>`
+          }
           <div id="wsCopySections" class="mt">
             ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta)}
             ${renderTextSections(texts, ['script', 'character_desc', 'scene_desc'])}
@@ -284,18 +353,23 @@
                 <select id="wsImgRatio">${meta.image.ratios.map((a) => `<option value="${esc(a)}" ${a === '1:1' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
                 <select id="wsImgSize">${meta.image.sizes.map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
               </div>
-              ${imgGenBusy
-                ? '<div class="ws-loading mt"><span class="spinner"></span> <span class="ws-loading-text">正在生成候选图（约 10–90 秒），完成后在下方挑选…</span></div>'
-                : `<div class="row mt" style="display:flex;gap:8px;align-items:center">
+              ${
+                imgGenBusy
+                  ? '<div class="ws-loading mt"><span class="spinner"></span> <span class="ws-loading-text">正在生成候选图（约 10–90 秒），完成后在下方挑选…</span></div>'
+                  : `<div class="row mt" style="display:flex;gap:8px;align-items:center">
                     <select id="wsImgCount" class="meta-tag" style="background:var(--bg)" title="一次生成的候选图数量">
                       <option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option>
                     </select>
                     <button class="btn primary sm" id="wsGenChar">🎨 生成角色图</button>
-                  </div>`}
+                  </div>`
+              }
               <div class="hint mt">生成多张时点击其一作为种子图（绿色边框定稿）；不满意可再生成。</div>
             </div>
           </div>
-          <div class="img-wall mt" id="wsCharWall">${images.filter((x) => x.kind === 'character').map(imgCell).join('')}</div>
+          <div class="img-wall mt" id="wsCharWall">${images
+            .filter((x) => x.kind === 'character')
+            .map(imgCell)
+            .join('')}</div>
         </div>
 
         <!-- ④ 视频 -->
@@ -305,12 +379,17 @@
             <div class="ref-row">
               <div class="ref-img">${selChar ? `<img src="${esc(selChar.local_url || selChar.remote_url)}" alt="角色定稿图" />` : '<div class="muted" style="padding:30px 8px;text-align:center">未定稿</div>'}</div>
               <div class="ref-txt">
-                ${shots.length
-                  ? `<b>角色定稿图：</b>${selChar ? '已就绪，所有镜头将引用该图（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）' : '未定稿——请先在上方完成角色图定稿'}`
-                  : `<b>分镜提示词：</b>${esc(selVideoText?.content || '（请先完成文案步骤）')}`}
+                ${
+                  shots.length
+                    ? `<b>角色定稿图：</b>${selChar ? '已就绪，所有镜头将引用该图（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）' : '未定稿——请先在上方完成角色图定稿'}`
+                    : `<b>分镜提示词：</b>${esc(selVideoText?.content || '（请先完成文案步骤）')}`
+                }
               </div>
             </div>
-            ${shots.length ? renderShotSubmitBlock(shots, tasks, selChar) : `
+            ${
+              shots.length
+                ? renderShotSubmitBlock(shots, tasks, selChar)
+                : `
             <div class="row mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
               <select id="wsVSeconds" class="meta-tag" title="视频时长" style="background:var(--bg)">
                 ${meta.seconds.map((s) => `<option value="${esc(s)}" ${s === String(p.seconds || 5) ? 'selected' : ''}>${esc(s)} 秒</option>`).join('')}
@@ -322,7 +401,8 @@
               <span class="spacer" style="flex:1"></span>
               <button class="btn primary" id="wsSubmitVideo" ${selChar && selVideoText ? '' : 'disabled'}>🚀 提交视频任务</button>
             </div>
-            <div class="hint mt">将用：定稿角色图 + 分镜提示词（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）</div>`}
+            <div class="hint mt">将用：定稿角色图 + 分镜提示词（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）</div>`
+            }
           </div>
           ${`<div id="wsTaskList">${renderTaskList(tasks, shots)}</div>`}
         </div>
@@ -424,9 +504,19 @@
         </div>
       </div>`;
 
-    $('#wsBack').onclick = () => { currentProjectId = null; renderList(); };
+    $('#wsBack').onclick = () => {
+      currentProjectId = null;
+      renderList();
+    };
     // 步骤条点击跳转 + 下一步引导
-    const stepTargets = { 1: '#wsCopySections', 2: '#wsCopySections', 3: '#wsCharSection', 4: '#wsVideoSection', 5: '#wsTtsSection', 6: '#wsRenderSection' };
+    const stepTargets = {
+      1: '#wsCopySections',
+      2: '#wsCopySections',
+      3: '#wsCharSection',
+      4: '#wsVideoSection',
+      5: '#wsTtsSection',
+      6: '#wsRenderSection',
+    };
     ws.querySelectorAll('.step[data-step]').forEach((el) => {
       el.onclick = () => {
         currentStep = Number(el.dataset.step);
@@ -437,7 +527,8 @@
     });
     const guideBtn = ws.querySelector('[data-guide-goto]');
     if (guideBtn) {
-      guideBtn.onclick = () => document.querySelector(guideBtn.dataset.guideGoto)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      guideBtn.onclick = () =>
+        document.querySelector(guideBtn.dataset.guideGoto)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     bindStepScrollFollow();
     $('#wsDel').onclick = async () => {
@@ -486,19 +577,29 @@
     document.querySelectorAll('#wsShotSubmit [data-take-pick]').forEach((b) => {
       b.onclick = async () => {
         try {
-          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takePick)}/select-take`, { method: 'POST', body: { task_id: Number(b.dataset.task) } });
+          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takePick)}/select-take`, {
+            method: 'POST',
+            body: { task_id: Number(b.dataset.task) },
+          });
           toast('已选定定稿 take，成片渲染将优先使用这条', 'ok');
           await renderProject(p.id);
-        } catch (e) { toast('选定失败：' + e.message, 'err'); }
+        } catch (e) {
+          toast('选定失败：' + e.message, 'err');
+        }
       };
     });
     document.querySelectorAll('#wsShotSubmit [data-take-auto]').forEach((b) => {
       b.onclick = async () => {
         try {
-          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takeAuto)}/select-take`, { method: 'POST', body: { task_id: null } });
+          await api(`/api/projects/${p.id}/shots/${Number(b.dataset.takeAuto)}/select-take`, {
+            method: 'POST',
+            body: { task_id: null },
+          });
           toast('已恢复自动模式（渲染用最新完成条）', 'ok');
           await renderProject(p.id);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       };
     });
     const batchBtn = $('#wsBatchSubmit');
@@ -557,14 +658,20 @@
           const r = await api(`/api/music/search?limit=8&keyword=${encodeURIComponent(q)}`);
           const box = $('#wsBgmResults');
           const items = r.items || [];
-          box.innerHTML = items.length ? items.map((s) => `
+          box.innerHTML = items.length
+            ? items
+                .map(
+                  (s) => `
             <div class="ver-item" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span><b>${esc(s.name)}</b> ${esc(s.artist)}${s.album ? ` · <span class="muted">${esc(s.album)}</span>` : ''}</span>
               <span class="meta-tag">${fmtSecs(s.duration_s)}</span>
               <span class="spacer" style="flex:1"></span>
               <button class="btn ghost sm" data-bgm-play="${s.id}" data-level="${esc(s.levels?.[1] || 'exhigh')}">▶ 试听</button>
               <button class="btn ghost sm" data-bgm-pick="${s.id}" data-name="${esc(s.name)}" data-artist="${esc(s.artist)}" data-album="${esc(s.album)}">选用</button>
-            </div>`).join('') : '<span class="hint">没有找到结果</span>';
+            </div>`,
+                )
+                .join('')
+            : '<span class="hint">没有找到结果</span>';
           box.querySelectorAll('[data-bgm-play]').forEach((b) => {
             b.onclick = () => {
               if (!bgmAudio) bgmAudio = new Audio();
@@ -583,9 +690,15 @@
             b.onclick = async () => {
               b.disabled = true;
               try {
-                await api(`/api/projects/${p.id}/bgm`, { method: 'POST', body: {
-                  song_id: b.dataset.bgmPick, name: b.dataset.name, artist: b.dataset.artist, album: b.dataset.album,
-                } });
+                await api(`/api/projects/${p.id}/bgm`, {
+                  method: 'POST',
+                  body: {
+                    song_id: b.dataset.bgmPick,
+                    name: b.dataset.name,
+                    artist: b.dataset.artist,
+                    album: b.dataset.album,
+                  },
+                });
                 toast('BGM 已选用（已下载到本地缓存）', 'ok');
                 await renderProject(p.id);
               } catch (e) {
@@ -608,7 +721,9 @@
           await api(`/api/projects/${p.id}/bgm`, { method: 'DELETE' });
           toast('已清除 BGM 选择', 'ok');
           await renderProject(p.id);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       };
     }
     const volRange = $('#wsRBgmVol');
@@ -636,9 +751,14 @@
       const r = await api('/api/tts/pool');
       const items = r.items || [];
       box.innerHTML = items.length
-        ? `<span class="hint">⭐ 备选池（${items.length}）：</span>` + items.map((v) => `
+        ? `<span class="hint">⭐ 备选池（${items.length}）：</span>` +
+          items
+            .map(
+              (v) => `
           <span class="meta-tag" style="border-color:#2b8a5a;color:#2b8a5a">⭐ ${esc(v.title)}${v.author ? ' · ' + esc(v.author) : ''}</span>
-          <button class="btn ghost sm" data-pool-del="${esc(v.id)}" title="移出备选池">✕</button>`).join(' ')
+          <button class="btn ghost sm" data-pool-del="${esc(v.id)}" title="移出备选池">✕</button>`,
+            )
+            .join(' ')
         : '<span class="hint">备选池为空——从下方声音广场收录喜欢的音色。</span>';
       box.querySelectorAll('[data-pool-del]').forEach((b) => {
         b.onclick = async () => {
@@ -646,10 +766,14 @@
             await api(`/api/tts/pool/${b.dataset.poolDel}`, { method: 'DELETE' });
             toast('已移出备选池', 'ok');
             await refreshVoicePool();
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (e) {
+            toast(e.message, 'err');
+          }
         };
       });
-    } catch { box.innerHTML = '<span class="hint">备选池加载失败</span>'; }
+    } catch {
+      box.innerHTML = '<span class="hint">备选池加载失败</span>';
+    }
   }
 
   function bindVoiceMarket(projectId) {
@@ -661,12 +785,19 @@
       searchBtn.onclick = async () => {
         searchBtn.disabled = true;
         try {
-          const tags = [$('#wsMkGender')?.value, $('#wsMkAge')?.value].filter(Boolean)
-            .map((t) => '&tag=' + encodeURIComponent(t)).join('');
-          const r = await api(`/api/tts/market?sort_by=${$('#wsMkSort')?.value || 'trending'}&page_size=12&language=zh${tags}`);
+          const tags = [$('#wsMkGender')?.value, $('#wsMkAge')?.value]
+            .filter(Boolean)
+            .map((t) => '&tag=' + encodeURIComponent(t))
+            .join('');
+          const r = await api(
+            `/api/tts/market?sort_by=${$('#wsMkSort')?.value || 'trending'}&page_size=12&language=zh${tags}`,
+          );
           const box = $('#wsMkResults');
           const items = r.items || [];
-          box.innerHTML = items.length ? items.map((m) => `
+          box.innerHTML = items.length
+            ? items
+                .map(
+                  (m) => `
             <div class="ver-item" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span><b>${esc(m.title)}</b> <span class="muted">${esc(m.author || '')}</span></span>
               ${m.like_count ? `<span class="meta-tag" title="点赞数">♥${m.like_count}</span>` : ''}
@@ -675,12 +806,18 @@
               <span class="spacer" style="flex:1"></span>
               ${m.sample ? `<button class="btn ghost sm" data-mk-play="${esc(m.sample)}">▶ 试听</button>` : ''}
               <button class="btn ghost sm" ${m.in_pool ? 'disabled' : ''} data-mk-add="${esc(m.id)}" data-title="${esc(m.title)}" data-author="${esc(m.author || '')}" data-likes="${m.like_count || 0}" data-tasks="${m.task_count || 0}" data-tags="${esc((m.tags || []).join(','))}">${m.in_pool ? '✓ 已在池' : '＋备选'}</button>
-            </div>`).join('') : '<span class="hint">没有找到结果</span>';
+            </div>`,
+                )
+                .join('')
+            : '<span class="hint">没有找到结果</span>';
           box.querySelectorAll('[data-mk-play]').forEach((b) => {
             b.onclick = () => {
               if (!mkAudio) mkAudio = new Audio();
               const url = b.dataset.mkPlay;
-              if (mkUrl === url) { mkAudio.paused ? mkAudio.play().catch(() => {}) : mkAudio.pause(); return; }
+              if (mkUrl === url) {
+                mkAudio.paused ? mkAudio.play().catch(() => {}) : mkAudio.pause();
+                return;
+              }
               mkUrl = url;
               mkAudio.src = url;
               mkAudio.play().catch(() => toast('试听加载失败', 'err'));
@@ -690,16 +827,28 @@
             b.onclick = async () => {
               b.disabled = true;
               try {
-                await api('/api/tts/pool', { method: 'POST', body: {
-                  id: b.dataset.mkAdd, title: b.dataset.title, author: b.dataset.author,
-                  like_count: Number(b.dataset.likes) || 0, task_count: Number(b.dataset.tasks) || 0,
-                  tags: (b.dataset.tags || '').split(',').filter(Boolean),
-                } });
+                await api('/api/tts/pool', {
+                  method: 'POST',
+                  body: {
+                    id: b.dataset.mkAdd,
+                    title: b.dataset.title,
+                    author: b.dataset.author,
+                    like_count: Number(b.dataset.likes) || 0,
+                    task_count: Number(b.dataset.tasks) || 0,
+                    tags: (b.dataset.tags || '').split(',').filter(Boolean),
+                  },
+                });
                 toast('已加入备选池，可在「默认音色」下拉中选用', 'ok');
                 await refreshVoicePool();
                 const inPool = box.querySelector(`[data-mk-add="${b.dataset.mkAdd}"]`);
-                if (inPool) { inPool.disabled = true; inPool.textContent = '✓ 已在池'; }
-              } catch (e) { toast('加入失败：' + e.message, 'err'); b.disabled = false; }
+                if (inPool) {
+                  inPool.disabled = true;
+                  inPool.textContent = '✓ 已在池';
+                }
+              } catch (e) {
+                toast('加入失败：' + e.message, 'err');
+                b.disabled = false;
+              }
             };
           });
         } catch (e) {
@@ -724,7 +873,7 @@
         .filter(Boolean);
       if (lines.length) return lines.join('\n');
     }
-    const script = (texts.find((t) => t.kind === 'script' && t.selected) || texts.find((t) => t.kind === 'script'));
+    const script = texts.find((t) => t.kind === 'script' && t.selected) || texts.find((t) => t.kind === 'script');
     return script ? script.content : '';
   }
 
@@ -733,8 +882,13 @@
     let voices = [];
     try {
       const r = await fetch('/api/tts/voices');
-      if (r.ok) { const j = await r.json(); voices = j.voices || []; }
-    } catch { /* ignore */ }
+      if (r.ok) {
+        const j = await r.json();
+        voices = j.voices || [];
+      }
+    } catch {
+      /* ignore */
+    }
     return voices;
   }
 
@@ -749,7 +903,9 @@
       const s = await api('/api/settings');
       wsSettingsCache = s;
       curVoice = s.fish_voice || 'default';
-    } catch { /* ignore */ }
+    } catch {
+      /* ignore */
+    }
     if (voiceSel) {
       voiceSel.innerHTML = voices
         .map((v) => `<option value="${esc(v.id)}" ${v.id === curVoice ? 'selected' : ''}>${esc(v.title)}</option>`)
@@ -769,7 +925,9 @@
           await api(`/api/tts/${id}/bind`, { method: 'POST', body: { project_id: projectId, shot_id: shotId } });
           toast(shotId ? '已绑定镜头：成片渲染时按镜头对齐混入' : '已解绑为整片旁白素材', 'ok');
           if (currentProjectId === projectId) await renderProject(projectId);
-        } catch (e) { toast('绑定失败：' + e.message, 'err'); }
+        } catch (e) {
+          toast('绑定失败：' + e.message, 'err');
+        }
       });
       wall.onclick = async (ev) => {
         const playBtn = ev.target.closest('[data-tts-play]');
@@ -778,7 +936,11 @@
           const url = playBtn.dataset.ttsPlay;
           if (window.__audio?.preview) return window.__audio.preview(url, playBtn);
           const au = playBtn._au || (playBtn._au = new Audio(url));
-          if (au.paused && !au.ended) au.play(); else { au.currentTime = 0; au.play(); }
+          if (au.paused && !au.ended) au.play();
+          else {
+            au.currentTime = 0;
+            au.play();
+          }
           return;
         }
         const selBtn = ev.target.closest('[data-tts-select]');
@@ -791,7 +953,9 @@
             await api(`/api/tts/${id}/select`, { method: 'POST', body: { project_id: projectId } });
             toast('已选用该配音', 'ok');
             if (currentProjectId === projectId) await renderProject(projectId);
-          } catch (e) { toast('选用失败：' + e.message, 'err'); }
+          } catch (e) {
+            toast('选用失败：' + e.message, 'err');
+          }
           return;
         }
         const delBtn = ev.target.closest('[data-tts-del]');
@@ -805,37 +969,49 @@
             await api(`/api/tts/${id}`, { method: 'DELETE' });
             toast('已删除配音', 'ok');
             if (currentProjectId === projectId) await renderProject(projectId);
-          } catch (e) { toast('删除失败：' + e.message, 'err'); }
+          } catch (e) {
+            toast('删除失败：' + e.message, 'err');
+          }
         }
       };
     }
     const fillN = $('#wsTtsFillNarration');
-    if (fillN) fillN.onclick = async () => {
-      const d = await api(`/api/projects/${projectId}`);
-      const ta = $('#wsTtsText');
-      if (ta) ta.value = defaultTtsText(d.texts || [], d.shots || []);
-      toast('已用分镜填充旁白文稿，可再编辑', 'ok');
-    };
+    if (fillN)
+      fillN.onclick = async () => {
+        const d = await api(`/api/projects/${projectId}`);
+        const ta = $('#wsTtsText');
+        if (ta) ta.value = defaultTtsText(d.texts || [], d.shots || []);
+        toast('已用分镜填充旁白文稿，可再编辑', 'ok');
+      };
     const fillS = $('#wsTtsFillScript');
-    if (fillS) fillS.onclick = async () => {
-      const d = await api(`/api/projects/${projectId}`);
-      const s = (d.texts || []).find((t) => t.kind === 'script' && t.selected) || (d.texts || []).find((t) => t.kind === 'script');
-      const ta = $('#wsTtsText');
-      if (ta && s) ta.value = s.content;
-      toast('已用故事梗概填充', 'ok');
-    };
+    if (fillS)
+      fillS.onclick = async () => {
+        const d = await api(`/api/projects/${projectId}`);
+        const s =
+          (d.texts || []).find((t) => t.kind === 'script' && t.selected) ||
+          (d.texts || []).find((t) => t.kind === 'script');
+        const ta = $('#wsTtsText');
+        if (ta && s) ta.value = s.content;
+        toast('已用故事梗概填充', 'ok');
+      };
     genBtn.onclick = () => genTts(projectId);
   }
 
   async function genTts(projectId) {
     const ta = $('#wsTtsText');
     const text = ta ? ta.value.trim() : '';
-    if (!text) { toast('请先输入配音文稿', 'err'); return; }
+    if (!text) {
+      toast('请先输入配音文稿', 'err');
+      return;
+    }
     const voice = $('#wsTtsVoice')?.value || 'default';
     const speed = Number($('#wsTtsSpeed')?.value || 1);
     const genBtn = $('#wsTtsGen');
     const hint = $('#wsTtsHint');
-    if (genBtn) { genBtn.disabled = true; genBtn.textContent = '生成中…'; }
+    if (genBtn) {
+      genBtn.disabled = true;
+      genBtn.textContent = '生成中…';
+    }
     if (hint) hint.textContent = '正在合成，可能需要 10–60 秒…';
     try {
       const r = await api('/api/tts/generate', {
@@ -848,21 +1024,31 @@
       toast('配音生成失败：' + e.message, 'err');
       if (hint) hint.textContent = '';
     } finally {
-      if (genBtn) { genBtn.disabled = false; genBtn.textContent = '🗣️ 生成配音'; }
+      if (genBtn) {
+        genBtn.disabled = false;
+        genBtn.textContent = '🗣️ 生成配音';
+      }
     }
   }
 
   function renderTtsWall(list, shots = []) {
     if (!list || !list.length) return '<div class="hint">还没有配音记录。填入文稿后点「🗣️ 生成配音」。</div>';
-    const shotOpts = (cur) => ['<option value="">旁白（未绑镜头）</option>']
-      .concat(shots.map((s) => `<option value="${s.id}" ${cur === s.id ? 'selected' : ''}>镜头 ${s.seq}${s.title ? ' · ' + esc(s.title) : ''}</option>`))
-      .join('');
+    const shotOpts = (cur) =>
+      ['<option value="">旁白（未绑镜头）</option>']
+        .concat(
+          shots.map(
+            (s) =>
+              `<option value="${s.id}" ${cur === s.id ? 'selected' : ''}>镜头 ${s.seq}${s.title ? ' · ' + esc(s.title) : ''}</option>`,
+          ),
+        )
+        .join('');
     return `
       <div class="tts-wall">
-        ${list.map((t) => {
-          const bound = t.kind === 'shot' && t.shot_id;
-          const boundShot = bound ? shots.find((s) => s.id === t.shot_id) : null;
-          return `
+        ${list
+          .map((t) => {
+            const bound = t.kind === 'shot' && t.shot_id;
+            const boundShot = bound ? shots.find((s) => s.id === t.shot_id) : null;
+            return `
           <div class="tts-item ${t.selected ? 'selected' : ''}" data-tts-id="${t.id}" style="border:1px solid ${t.selected ? 'var(--accent,#2b8a5a)' : 'var(--line,#e3e3e3)'};border-radius:8px;padding:10px 12px;margin-bottom:8px;background:${t.selected ? 'var(--bg-soft,#f2f8f4)' : 'transparent'}">
             <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
               <span class="meta-tag">${esc(t.voice_title || t.reference_id || '默认音色')}</span>
@@ -877,14 +1063,19 @@
               <button class="btn ghost sm danger" data-tts-del title="删除记录与本地音频">删除</button>
             </div>
             <div style="margin-top:6px;color:var(--muted,#888);font-size:12px">${esc(t.text || '')}</div>
-            ${t.local_url && !t.error_message && shots.length ? `
+            ${
+              t.local_url && !t.error_message && shots.length
+                ? `
             <div style="margin-top:6px;display:flex;gap:6px;align-items:center;font-size:12px;color:var(--muted,#888)">
               绑定到镜头（成片渲染按镜头对齐混入）：
               <select class="meta-tag" data-tts-bind style="background:var(--bg)">${shotOpts(bound ? t.shot_id : null)}</select>
-            </div>` : ''}
+            </div>`
+                : ''
+            }
             ${t.error_message ? `<div style="margin-top:4px;color:var(--danger,#c0392b);font-size:12px">失败：${esc(t.error_message)}</div>` : ''}
           </div>`;
-        }).join('')}
+          })
+          .join('')}
       </div>
       <div class="hint mt">提示：「绑定到镜头」的配音会在成片渲染时按镜头起幅点自动对齐混入（同一镜头多次绑定以最新一条为准）；未绑定的记录仅作整片旁白素材保留。</div>`;
   }
@@ -897,19 +1088,28 @@
       const d = await api(`/api/projects/${currentProjectId}`);
       box.innerHTML = renderTaskList(d.tasks || [], d.shots || []);
       bindGotoTaskLinks();
-    } catch { /* 静默：下次轮询自愈 */ }
+    } catch {
+      /* 静默：下次轮询自愈 */
+    }
   }
 
   /* 角色描述 AI 优化（用户自主选择是否采用，优化后先对比） */
-  const CHAR_OPTIMIZE_PROMPT = '你是角色设定师。把用户的角色描述优化为适合 AI 角色立绘生成的设定文本，100 字内，必含要素：性别年龄、发型发色、五官特征、表情气质、服装款式与颜色、体型、有辨识度的配饰。规则：不添加用户未提及的职业、背景等设定；保持原描述的核心特征不变；只输出设定文本本身，不要任何解释或前缀。';
+  const CHAR_OPTIMIZE_PROMPT =
+    '你是角色设定师。把用户的角色描述优化为适合 AI 角色立绘生成的设定文本，100 字内，必含要素：性别年龄、发型发色、五官特征、表情气质、服装款式与颜色、体型、有辨识度的配饰。规则：不添加用户未提及的职业、背景等设定；保持原描述的核心特征不变；只输出设定文本本身，不要任何解释或前缀。';
 
   async function optimizeCharDesc(projectId) {
     const ta = $('#wsCharDesc');
     if (!ta) return;
     const cur = ta.value.trim();
-    if (!cur) { toast('请先填写角色外观描述', 'err'); return; }
+    if (!cur) {
+      toast('请先填写角色外观描述', 'err');
+      return;
+    }
     const btn = $('#wsOptimizeChar');
-    if (btn) { btn.disabled = true; btn.textContent = '优化中…'; }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '优化中…';
+    }
     try {
       const r = await api('/api/llm/chat', {
         method: 'POST',
@@ -935,7 +1135,10 @@
     } catch (e) {
       toast('优化失败：' + e.message, 'err');
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '✨ AI 优化描述'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '✨ AI 优化描述';
+      }
     }
   }
 
@@ -961,11 +1164,14 @@
     return `
       <div class="hint mt">镜头默认引用定稿角色图（自动添加「以 &lt;Picture 1&gt; 为参考，保持外观一致」）；纯空镜镜头可在上方分镜卡片中取消勾选「引用角色图」。</div>
       <div id="wsShotSubmit" class="mt">
-        ${shots.map((s) => {
-          const t = shotLatestTask(tasks, s.id);
-          const active = t && (t.status === 'queued' || t.status === 'in_progress');
-          const takes = tasks.filter((x) => x.shot_id === s.id && x.status === 'completed').sort((a, b) => b.id - a.id);
-          return `
+        ${shots
+          .map((s) => {
+            const t = shotLatestTask(tasks, s.id);
+            const active = t && (t.status === 'queued' || t.status === 'in_progress');
+            const takes = tasks
+              .filter((x) => x.shot_id === s.id && x.status === 'completed')
+              .sort((a, b) => b.id - a.id);
+            return `
           <div class="ver-item shot-submit-row">
             <b>镜头 ${s.seq}</b>${s.title ? ` · ${esc(s.title)}` : ''}
             <span class="meta-tag">${esc(String(s.seconds || '5'))}s</span>
@@ -973,18 +1179,29 @@
             <span class="spacer" style="flex:1"></span>
             <button class="btn ghost sm" data-shot-retake="${s.id}" ${batchBusy ? 'disabled' : ''} title="为该镜头再生成一条候选（提交队列自动按分钟节流）">📸 重拍</button>
             <button class="btn primary sm" data-shot-submit="${s.id}" ${selChar && !active && !batchBusy ? '' : 'disabled'}>🚀 提交</button>
-            ${takes.length ? `
+            ${
+              takes.length
+                ? `
             <div style="width:100%;margin-top:6px;display:flex;gap:6px;align-items:center;flex-wrap:wrap;font-size:12px">
               <span class="hint">候选 ${takes.length} 条（渲染${s.take_task_id ? '用 ✓定稿' : '默认用最新'}）：</span>
-              ${takes.map((tk) => `
+              ${takes
+                .map(
+                  (tk) => `
                 <span class="meta-tag" style="${tk.id === s.take_task_id ? 'border-color:#2b8a5a;color:#2b8a5a' : ''}">#${tk.id}${tk.id === s.take_task_id ? ' ✓定稿' : ''}</span>
-                ${tk.id === s.take_task_id
-                  ? `<button class="btn ghost sm" data-take-auto="${s.id}" title="恢复自动模式（渲染用最新完成条）">取消定稿</button>`
-                  : `<button class="btn ghost sm" data-take-pick="${s.id}" data-task="${tk.id}" title="渲染时优先使用这条">用这条</button>`}
-              `).join('')}
-            </div>` : ''}
+                ${
+                  tk.id === s.take_task_id
+                    ? `<button class="btn ghost sm" data-take-auto="${s.id}" title="恢复自动模式（渲染用最新完成条）">取消定稿</button>`
+                    : `<button class="btn ghost sm" data-take-pick="${s.id}" data-task="${tk.id}" title="渲染时优先使用这条">用这条</button>`
+                }
+              `,
+                )
+                .join('')}
+            </div>`
+                : ''
+            }
           </div>`;
-        }).join('')}
+          })
+          .join('')}
       </div>
       <div class="row mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
         <button class="btn primary" id="wsBatchSubmit" ${batchBusy || !selChar ? 'disabled' : ''}>
@@ -1026,10 +1243,17 @@
         const t = shotLatestTask(d.tasks || [], s.id);
         return !t || t.status === 'failed' || t.status === 'submit_error';
       });
-    } catch (e) { toast(e.message, 'err'); return; }
-    if (!targets.length) { toast('所有镜头都已有进行中或已完成的任务', 'ok'); return; }
+    } catch (e) {
+      toast(e.message, 'err');
+      return;
+    }
+    if (!targets.length) {
+      toast('所有镜头都已有进行中或已完成的任务', 'ok');
+      return;
+    }
     const interval = Math.max(0, Number(window.__app?.getSettings?.()?.submit_interval_ms ?? 60000) || 0);
-    if (!confirm(`将按间隔 ${Math.round(interval / 1000)} 秒依次提交 ${targets.length} 个镜头的视频任务，继续？`)) return;
+    if (!confirm(`将按间隔 ${Math.round(interval / 1000)} 秒依次提交 ${targets.length} 个镜头的视频任务，继续？`))
+      return;
     batchBusy = true;
     batchStop = false;
     batchHint = '准备提交…';
@@ -1039,7 +1263,10 @@
     for (let i = 0; i < targets.length; i++) {
       const s = targets[i];
       if (batchStop) break;
-      const hintEl = () => { const el = $('#wsBatchHint'); if (el) el.textContent = batchHint; };
+      const hintEl = () => {
+        const el = $('#wsBatchHint');
+        if (el) el.textContent = batchHint;
+      };
       batchHint = `正在提交镜头 ${s.seq}（${i + 1}/${targets.length}）…`;
       hintEl();
       try {
@@ -1070,12 +1297,20 @@
 
   function renderStoryboardArea(texts, shots, p, meta) {
     const sbVersions = texts.filter((t) => t.kind === 'storyboard');
-    const secondsOpts = (sel) => meta.seconds
-      .map((s) => `<option value="${esc(s)}" ${s === String(sel || p.seconds || 5) ? 'selected' : ''}>${esc(s)} 秒</option>`).join('');
+    const secondsOpts = (sel) =>
+      meta.seconds
+        .map(
+          (s) =>
+            `<option value="${esc(s)}" ${s === String(sel || p.seconds || 5) ? 'selected' : ''}>${esc(s)} 秒</option>`,
+        )
+        .join('');
     const countSelect = `<select id="wsShotCount" class="meta-tag" style="background:var(--bg)" title="镜头数量">
       <option value="auto">自动</option><option value="3">3 镜</option><option value="5">5 镜</option><option value="8">8 镜</option>
     </select>`;
-    const hasLegacyPrompt = Boolean((texts.find((t) => t.kind === 'video_prompt' && t.selected) || texts.find((t) => t.kind === 'video_prompt') || {}).content);
+    const hasLegacyPrompt = Boolean(
+      (texts.find((t) => t.kind === 'video_prompt' && t.selected) || texts.find((t) => t.kind === 'video_prompt') || {})
+        .content,
+    );
 
     if (!shots.length) {
       // 尚无分镜：保留旧的单条「视频提示词」卡，提供生成/升级入口
@@ -1088,7 +1323,10 @@
             <button class="btn ghost sm" id="wsPromoteShot" ${hasLegacyPrompt ? '' : 'disabled'} title="把下方当前视频提示词变成 1 个镜头">升级为分镜</button>
           </div>
           <div class="hint mt">生成分镜后，每个镜头可独立编辑、排序、单独提交视频。</div>
-          ${renderTextSections(texts.filter((t) => t.kind === 'video_prompt'), ['video_prompt'])}
+          ${renderTextSections(
+            texts.filter((t) => t.kind === 'video_prompt'),
+            ['video_prompt'],
+          )}
         </div>`;
     }
 
@@ -1102,13 +1340,19 @@
           ${countSelect}
           <button class="btn primary sm" id="wsGenStoryboard">✨ 重新生成分镜</button>
           <button class="btn ghost sm" id="wsAddShot">＋ 添加镜头</button>
-          ${sbVersions.length > 1 ? `<details class="hint" style="display:inline-block"><summary>历史版本</summary><div class="ver-list mt">
+          ${
+            sbVersions.length > 1
+              ? `<details class="hint" style="display:inline-block"><summary>历史版本</summary><div class="ver-list mt">
             ${sbVersions.map((t) => `<div class="ver-item">#${t.id} · ${fmtTime(t.created_at)}${t.selected ? ' · <b>使用中</b>' : ''} ${t.selected ? '' : `<button class="btn ghost sm" data-apply-sb="${t.id}">选用</button>`}</div>`).join('')}
-          </div></details>` : ''}
+          </div></details>`
+              : ''
+          }
         </div>
         <div class="hint mt">每个镜头可独立编辑保存、排序、删除；提交视频在下方第 ④ 步。</div>
         <div id="wsShotList">
-          ${shots.map((s, i) => `
+          ${shots
+            .map(
+              (s, i) => `
           <div class="copy-sect shot-card" data-shot-id="${s.id}">
             <div class="shot-head">
               <span class="badge">镜头 ${s.seq}</span>
@@ -1127,7 +1371,9 @@
               <select data-shot-seconds class="meta-tag" style="background:var(--bg)">${secondsOpts(s.seconds)}</select>
               <button class="btn ghost sm" data-shot-save>保存修改</button>
             </div>
-          </div>`).join('')}
+          </div>`,
+            )
+            .join('')}
         </div>
       </div>`;
   }
@@ -1146,18 +1392,25 @@
             body: { title: '新镜头', video_prompt: '（请填写本镜头的画面描述与镜头语言）' },
           });
           await renderProject(projectId);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       };
     }
     document.querySelectorAll('#wsShotList [data-apply-sb]').forEach((b) =>
       b.addEventListener('click', async () => {
         if (!confirm('选用该历史分镜版本？当前镜头列表将被覆盖（可再次选用其他版本恢复）。')) return;
         try {
-          await api(`/api/projects/${projectId}/storyboard/apply`, { method: 'POST', body: { text_id: Number(b.dataset.applySb) } });
+          await api(`/api/projects/${projectId}/storyboard/apply`, {
+            method: 'POST',
+            body: { text_id: Number(b.dataset.applySb) },
+          });
           toast('已选用该分镜版本', 'ok');
           await renderProject(projectId);
-        } catch (e) { toast(e.message, 'err'); }
-      })
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      }),
     );
     document.querySelectorAll('#wsShotList .shot-card').forEach((card) => {
       const id = Number(card.dataset.shotId);
@@ -1165,7 +1418,7 @@
       if (save) {
         save.onclick = async () => {
           try {
-              await api(`/api/projects/${projectId}/shots/${id}`, {
+            await api(`/api/projects/${projectId}/shots/${id}`, {
               method: 'PATCH',
               body: {
                 title: card.querySelector('[data-shot-title]').value,
@@ -1177,7 +1430,9 @@
             });
             toast('镜头已保存', 'ok');
             await renderProject(projectId);
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (e) {
+            toast(e.message, 'err');
+          }
         };
       }
       const del = card.querySelector('[data-shot-del]');
@@ -1188,7 +1443,9 @@
             await api(`/api/projects/${projectId}/shots/${id}`, { method: 'DELETE' });
             toast('镜头已删除', 'ok');
             await renderProject(projectId);
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (e) {
+            toast(e.message, 'err');
+          }
         };
       }
       const up = card.querySelector('[data-shot-up]');
@@ -1207,12 +1464,15 @@
     try {
       await api(`/api/projects/${projectId}/shots/reorder`, { method: 'POST', body: { ids: list } });
       await renderProject(projectId);
-    } catch (e) { toast(e.message, 'err'); }
+    } catch (e) {
+      toast(e.message, 'err');
+    }
   }
 
   async function genStoryboard(projectId) {
     if (storyBusy) return; // 防重入
-    if (currentShotCount > 0 && !confirm('重新生成分镜：将先与当前分镜对比，由你选择采用（历史版本保留），继续？')) return;
+    if (currentShotCount > 0 && !confirm('重新生成分镜：将先与当前分镜对比，由你选择采用（历史版本保留），继续？'))
+      return;
     storyBusy = true;
     await renderProject(projectId);
     let stopHints = null;
@@ -1243,9 +1503,13 @@
         return;
       }
       // 新旧分镜对比：采用 = 选中新版本并重建镜头；保留 = 新版本仅入历史
-      const renderShots = (arr) => (arr || [])
-        .map((s, i) => `<div class="cmp-field"><b>镜头 ${esc(String(s.seq ?? i + 1))}${s.title ? ` · ${esc(s.title)}` : ''}</b><p>${esc(s.video_prompt || '')}</p></div>`)
-        .join('');
+      const renderShots = (arr) =>
+        (arr || [])
+          .map(
+            (s, i) =>
+              `<div class="cmp-field"><b>镜头 ${esc(String(s.seq ?? i + 1))}${s.title ? ` · ${esc(s.title)}` : ''}</b><p>${esc(s.video_prompt || '')}</p></div>`,
+          )
+          .join('');
       window.__ui.compare({
         title: '新生成分镜与当前分镜对比',
         oldLabel: `当前分镜（${oldShots.length} 镜）`,
@@ -1257,7 +1521,9 @@
           try {
             await api(`/api/projects/${projectId}/storyboard/apply`, { method: 'POST', body: { text_id: r.text_id } });
             toast('已采用新分镜', 'ok');
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (e) {
+            toast(e.message, 'err');
+          }
           if (currentProjectId === projectId) await renderProject(projectId);
         },
         onKeep: async () => {
@@ -1277,13 +1543,23 @@
   async function promoteToStoryboard(projectId) {
     try {
       const d = await api(`/api/projects/${projectId}`);
-      const sel = (d.texts || []).find((t) => t.kind === 'video_prompt' && t.selected) || (d.texts || []).find((t) => t.kind === 'video_prompt');
+      const sel =
+        (d.texts || []).find((t) => t.kind === 'video_prompt' && t.selected) ||
+        (d.texts || []).find((t) => t.kind === 'video_prompt');
       const content = sel?.content?.trim();
-      if (!content) { toast('没有可用的视频提示词，请先生成文案或手写', 'err'); return; }
-      await api(`/api/projects/${projectId}/shots`, { method: 'POST', body: { title: '镜头 1', video_prompt: content } });
+      if (!content) {
+        toast('没有可用的视频提示词，请先生成文案或手写', 'err');
+        return;
+      }
+      await api(`/api/projects/${projectId}/shots`, {
+        method: 'POST',
+        body: { title: '镜头 1', video_prompt: content },
+      });
       toast('已把当前视频提示词升级为 1 个镜头', 'ok');
       await renderProject(projectId);
-    } catch (e) { toast(e.message, 'err'); }
+    } catch (e) {
+      toast(e.message, 'err');
+    }
   }
 
   /* 项目任务列表（独立渲染，供局部刷新；M2 起按镜头分组） */
@@ -1300,12 +1576,15 @@
       </div>`;
     };
     const shotMap = new Map(shots.map((s) => [s.id, s]));
-    const groups = [];   // 有镜头归属的任务
-    const others = [];   // 无归属（旧流程/镜头已删）
+    const groups = []; // 有镜头归属的任务
+    const others = []; // 无归属（旧流程/镜头已删）
     for (const t of tasks) {
       if (t.shot_id && shotMap.has(t.shot_id)) {
         let g = groups.find((x) => x.shotId === t.shot_id);
-        if (!g) { g = { shotId: t.shot_id, items: [] }; groups.push(g); }
+        if (!g) {
+          g = { shotId: t.shot_id, items: [] };
+          groups.push(g);
+        }
         g.items.push(t);
       } else {
         others.push(t);
@@ -1315,10 +1594,12 @@
     return `
       <div class="mt"><b>本项目视频任务：</b></div>
       <div class="ver-list mt">
-        ${groups.map((g) => {
-          const s = shotMap.get(g.shotId);
-          return `<div class="mt"><span class="badge">镜头 ${s.seq}</span>${s.title ? ` <span class="muted">${esc(s.title)}</span>` : ''}</div>${g.items.map(row).join('')}`;
-        }).join('')}
+        ${groups
+          .map((g) => {
+            const s = shotMap.get(g.shotId);
+            return `<div class="mt"><span class="badge">镜头 ${s.seq}</span>${s.title ? ` <span class="muted">${esc(s.title)}</span>` : ''}</div>${g.items.map(row).join('')}`;
+          })
+          .join('')}
         ${others.length ? `<div class="mt"><span class="badge">其他</span></div>${others.map(row).join('')}` : ''}
       </div>`;
   }
@@ -1350,12 +1631,20 @@
     <div class="ver-item" data-render-job="${j.id}">
       <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%` : ''} · ${fmtTime(j.created_at)}
       ${active ? `<div style="height:6px;background:var(--bg,#1a1f2b);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${j.progress || 0}%;background:#4f7cff;transition:width .5s"></div></div>` : ''}
-      ${j.status === 'completed' && j.output_url ? `<div style="margin-top:6px"><video controls preload="metadata" src="${esc(j.output_url)}" style="max-width:100%;border-radius:6px"></video>
-        <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>` : ''}
-      ${(j.covers || []).length ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+      ${
+        j.status === 'completed' && j.output_url
+          ? `<div style="margin-top:6px"><video controls preload="metadata" src="${esc(j.output_url)}" style="max-width:100%;border-radius:6px"></video>
+        <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>`
+          : ''
+      }
+      ${
+        (j.covers || []).length
+          ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
         <span class="hint">封面候选：</span>
         ${j.covers.map((c) => `<a href="${esc(c.url)}" download title="点击下载封面"><img src="${esc(c.url)}" style="height:72px;border-radius:4px;border:1px solid #333" /></a>`).join('')}
-      </div>` : ''}
+      </div>`
+          : ''
+      }
       ${j.error_message ? `<div class="hint" style="color:#e5484d;margin-top:4px">✗ ${esc(j.error_message)}</div>` : ''}
     </div>`;
   }
@@ -1371,7 +1660,11 @@
         return;
       }
       let jobs = [];
-      try { jobs = (await api(`/api/projects/${projectId}/render/jobs`)).data.items || []; } catch { return; }
+      try {
+        jobs = (await api(`/api/projects/${projectId}/render/jobs`)).data.items || [];
+      } catch {
+        return;
+      }
       const box = $('#wsRenderJobs');
       if (box) box.innerHTML = jobs.map(renderJobItem).join('');
       if (!jobs.some((j) => j.status === 'queued' || j.status === 'rendering')) {
@@ -1389,7 +1682,7 @@
         $('#navTasks')?.click();
         const card = document.querySelector(`.card[data-id="${a.dataset.gotoTask}"]`);
         if (card) card.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      })
+      }),
     );
   }
 
@@ -1397,26 +1690,42 @@
   function renderTextSections(texts, kinds = ['script', 'character_desc', 'scene_desc']) {
     const byKind = {};
     for (const t of texts) (byKind[t.kind] = byKind[t.kind] || []).push(t);
-    return kinds.map((kind) => {
-      const list = byKind[kind] || [];
-      const latest = list[0] || null;
-      const sel = list.find((x) => x.selected) || latest;
-      return `
+    return kinds
+      .map((kind) => {
+        const list = byKind[kind] || [];
+        const latest = list[0] || null;
+        const sel = list.find((x) => x.selected) || latest;
+        return `
         <div class="copy-sect" data-kind="${kind}">
           <h4>${KIND_LABEL[kind] || kind}
             ${list.length ? `<span class="badge-ver">${list.length} 版</span>` : ''}
             ${sel?.selected ? '<span class="badge-selected">使用中</span>' : ''}
           </h4>
-          ${sel ? `<textarea data-text-id="${sel.id}" rows="3">${esc(sel.content)}</textarea>
+          ${
+            sel
+              ? `<textarea data-text-id="${sel.id}" rows="3">${esc(sel.content)}</textarea>
             <div class="row">
               <button class="btn ghost sm" data-save-text="${sel.id}">保存修改</button>
               <button class="btn ghost sm" data-use-text="${sel.id}">选用此版本</button>
-              ${list.length > 1 ? `<details class="hint" style="display:inline-block"><summary>历史版本</summary><div class="ver-list mt">
-                ${list.slice(1).map((t) => `<div class="ver-item">#${t.id} · ${fmtTime(t.created_at)} · ${esc(t.content.slice(0, 40))}… <button class="btn ghost sm" data-use-text="${t.id}">选用</button></div>`).join('')}
-              </div></details>` : ''}
-            </div>` : '<div class="muted">（暂无内容，点上方「生成文案」）</div>'}
+              ${
+                list.length > 1
+                  ? `<details class="hint" style="display:inline-block"><summary>历史版本</summary><div class="ver-list mt">
+                ${list
+                  .slice(1)
+                  .map(
+                    (t) =>
+                      `<div class="ver-item">#${t.id} · ${fmtTime(t.created_at)} · ${esc(t.content.slice(0, 40))}… <button class="btn ghost sm" data-use-text="${t.id}">选用</button></div>`,
+                  )
+                  .join('')}
+              </div></details>`
+                  : ''
+              }
+            </div>`
+              : '<div class="muted">（暂无内容，点上方「生成文案」）</div>'
+          }
         </div>`;
-    }).join('');
+      })
+      .join('');
   }
 
   function bindTextSectionEvents(projectId) {
@@ -1425,20 +1734,30 @@
         const ta = b.closest('.copy-sect').querySelector('textarea');
         if (!ta) return;
         try {
-          await api(`/api/projects/${projectId}/texts/${b.dataset.saveText}`, { method: 'PATCH', body: { content: ta.value } });
+          await api(`/api/projects/${projectId}/texts/${b.dataset.saveText}`, {
+            method: 'PATCH',
+            body: { content: ta.value },
+          });
           toast('已保存', 'ok');
           renderProject(projectId);
-        } catch (e) { toast(e.message, 'err'); }
-      })
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      }),
     );
     document.querySelectorAll('#wsCopySections [data-use-text]').forEach((b) =>
       b.addEventListener('click', async () => {
         try {
-          await api(`/api/projects/${projectId}/select-text`, { method: 'POST', body: { text_id: Number(b.dataset.useText) } });
+          await api(`/api/projects/${projectId}/select-text`, {
+            method: 'POST',
+            body: { text_id: Number(b.dataset.useText) },
+          });
           toast('已选用该版本', 'ok');
           renderProject(projectId);
-        } catch (e) { toast(e.message, 'err'); }
-      })
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      }),
     );
   }
 
@@ -1457,10 +1776,15 @@
       cell.addEventListener('click', async () => {
         if (cell.classList.contains('selected')) return;
         try {
-          await api(`/api/projects/${projectId}/select-image`, { method: 'POST', body: { image_id: Number(cell.dataset.imgId) } });
+          await api(`/api/projects/${projectId}/select-image`, {
+            method: 'POST',
+            body: { image_id: Number(cell.dataset.imgId) },
+          });
           toast('已定稿，后续视频将引用该角色图', 'ok');
           renderProject(projectId);
-        } catch (e) { toast(e.message, 'err'); }
+        } catch (e) {
+          toast(e.message, 'err');
+        }
       });
       const del = cell.querySelector('.del');
       del.addEventListener('click', async (e) => {
@@ -1470,7 +1794,9 @@
           await api(`/api/images/${cell.dataset.imgId}`, { method: 'DELETE' });
           toast('已删除', 'ok');
           renderProject(projectId);
-        } catch (e2) { toast(e2.message, 'err'); }
+        } catch (e2) {
+          toast(e2.message, 'err');
+        }
       });
     });
   }
@@ -1497,9 +1823,12 @@
       const r = await api('/api/llm/script', {
         method: 'POST',
         body: {
-          idea: project.idea, style: project.style,
-          aspect_ratio: project.aspect_ratio, seconds: project.seconds,
-          project_id: projectId, auto_select: !hasOld,
+          idea: project.idea,
+          style: project.style,
+          aspect_ratio: project.aspect_ratio,
+          seconds: project.seconds,
+          project_id: projectId,
+          auto_select: !hasOld,
         },
       });
       if (!r.parsed) {
@@ -1517,9 +1846,10 @@
         newMap[k] = r.result?.[k] || '';
         oldMap[k] = r.previous?.[k]?.content || '';
       }
-      const renderSide = (map) => SCRIPT_FIELDS
-        .map(([k, label]) => `<div class="cmp-field"><b>${esc(label)}</b><p>${esc(map[k] || '（无）')}</p></div>`)
-        .join('');
+      const renderSide = (map) =>
+        SCRIPT_FIELDS.map(
+          ([k, label]) => `<div class="cmp-field"><b>${esc(label)}</b><p>${esc(map[k] || '（无）')}</p></div>`,
+        ).join('');
       window.__ui.compare({
         title: '新生成文案与当前文案对比',
         oldLabel: '当前使用中',
@@ -1534,7 +1864,9 @@
               if (tid) await api(`/api/projects/${projectId}/select-text`, { method: 'POST', body: { text_id: tid } });
             }
             toast('已采用新生成的文案', 'ok');
-          } catch (e) { toast(e.message, 'err'); }
+          } catch (e) {
+            toast(e.message, 'err');
+          }
           if (currentProjectId === projectId) await renderProject(projectId);
         },
         onKeep: async () => {
@@ -1557,7 +1889,10 @@
   async function genCharacterImage(projectId) {
     if (imgGenBusy) return; // 防双击并发
     const desc = $('#wsCharDesc')?.value.trim();
-    if (!desc) { toast('请先填写角色外观描述', 'err'); return; }
+    if (!desc) {
+      toast('请先填写角色外观描述', 'err');
+      return;
+    }
     imgGenBusy = true;
     await renderProject(projectId);
     let stopHints = null;

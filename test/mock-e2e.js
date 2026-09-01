@@ -21,8 +21,8 @@ const TEST_ARTIFACTS = path.join(DATA_DIR_ROOT, 'e2e-artifacts'); // 测试专�
 const mockJobs = new Map(); // video_id -> job
 let seq = 0;
 let rateLimitRemaining = 0; // v1.3：429 模拟计数器（>0 时 POST /v1/videos 返回 429）
-let fixtureFile = null;     // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
-let bgmFixture = null;      // v1.4：BGM 渲染用的可解码测试音频（有 ffmpeg 时生成）
+let fixtureFile = null; // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
+let bgmFixture = null; // v1.4：BGM 渲染用的可解码测试音频（有 ffmpeg 时生成）
 
 function mockResult(job) {
   const completed = job.status === 'completed';
@@ -82,7 +82,7 @@ const mockServer = http.createServer(async (req, res) => {
   // 否则会命中视频兜底分支，无 ffmpeg 时只返回 12 字节 mp4 header，
   // 导致 downloadBGM 报「BGM 下载数据异常（过小）」）
   if (req.method === 'GET' && u.pathname === '/out/bgm.mp3') {
-    const buf = (bgmFixture && fs.existsSync(bgmFixture)) ? fs.readFileSync(bgmFixture) : Buffer.alloc(4096, 7);
+    const buf = bgmFixture && fs.existsSync(bgmFixture) ? fs.readFileSync(bgmFixture) : Buffer.alloc(4096, 7);
     res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length });
     return res.end(buf);
   }
@@ -111,11 +111,19 @@ const mockServer = http.createServer(async (req, res) => {
   // v1.4：模拟音乐接口（BGM）
   if (req.method === 'GET' && u.pathname === '/search') {
     return send(200, {
-      code: 200, message: 'success',
-      data: [{
-        music_id: 12345, music_name: '测试曲', artist: '测试歌手', album: '测试专辑',
-        duration: 180, pic_url: '', levels: [{ level: 'standard' }, { level: 'exhigh' }],
-      }],
+      code: 200,
+      message: 'success',
+      data: [
+        {
+          music_id: 12345,
+          music_name: '测试曲',
+          artist: '测试歌手',
+          album: '测试专辑',
+          duration: 180,
+          pic_url: '',
+          levels: [{ level: 'standard' }, { level: 'exhigh' }],
+        },
+      ],
     });
   }
   if (req.method === 'GET' && u.pathname === '/player') {
@@ -152,23 +160,42 @@ const mockServer = http.createServer(async (req, res) => {
       // M2 分镜生成契约（system 中要求输出 shots 数组）
       content = JSON.stringify({
         shots: [
-          { seq: 1, title: '开场：麦田远景', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声', narration: '黄昏的麦田在风里起伏，少年把影子留在了土路上。', seconds: '5' },
-          { seq: 2, title: '近景：脚步与麦浪', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头，暖金色逆光，脚步声与麦浪沙沙声', narration: '他数着自己的脚步，像数着一整个夏天。', seconds: '6' },
+          {
+            seq: 1,
+            title: '开场：麦田远景',
+            video_prompt:
+              '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声',
+            narration: '黄昏的麦田在风里起伏，少年把影子留在了土路上。',
+            seconds: '5',
+          },
+          {
+            seq: 2,
+            title: '近景：脚步与麦浪',
+            video_prompt:
+              '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头，暖金色逆光，脚步声与麦浪沙沙声',
+            narration: '他数着自己的脚步，像数着一整个夏天。',
+            seconds: '6',
+          },
         ],
       });
     } else if (sys.includes('JSON 对象')) {
       content = JSON.stringify({
         script: '测试梗概：夏日黄昏，穿黄胶鞋的少年沿着麦田土路走向远方，镜头跟随他的背影，暖金色逆光，宁静而怀念。',
-        video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。少年沿麦田土路走向远方，麦浪随风起伏，暖金色逆光，镜头缓慢横摇，电影写实风格，自然环境声',
+        video_prompt:
+          '以 <Picture 1> 中的角色为参考，保持其外观一致。少年沿麦田土路走向远方，麦浪随风起伏，暖金色逆光，镜头缓慢横摇，电影写实风格，自然环境声',
         character_desc: '十五岁少年，黑色短发，穿旧蓝白校服与黄色胶鞋，清瘦，腼腆，电影写实',
         scene_desc: '黄昏麦田土路，麦浪起伏，暖金色逆光，天边晚霞',
       });
     } else if (sys.includes('优化')) {
-      content = '雨后的未来城市街道，霓虹灯倒映在湿漉漉的地面，一辆银色跑车缓缓驶过，镜头缓慢横摇跟随，电影级写实风格，自然环境声，高细节';
+      content =
+        '雨后的未来城市街道，霓虹灯倒映在湿漉漉的地面，一辆银色跑车缓缓驶过，镜头缓慢横摇跟随，电影级写实风格，自然环境声，高细节';
     } else {
       content = '（mock）通用文本回复';
     }
-    return send(200, { choices: [{ message: { role: 'assistant', content } }], model: body.model || 'agnes-2.5-flash' });
+    return send(200, {
+      choices: [{ message: { role: 'assistant', content } }],
+      model: body.model || 'agnes-2.5-flash',
+    });
   }
 
   // 模拟图片模型 /v1/images/generations（返回 CDN URL）
@@ -182,7 +209,7 @@ const mockServer = http.createServer(async (req, res) => {
   if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
     const png = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-      'base64'
+      'base64',
     );
     res.writeHead(200, { 'Content-Type': 'image/png' });
     return res.end(png);
@@ -192,7 +219,10 @@ const mockServer = http.createServer(async (req, res) => {
 });
 
 /* ---------------- 工具 ---------------- */
-const err = (msg) => { console.error('\n✗ FAIL: ' + msg); process.exit(1); };
+const err = (msg) => {
+  console.error('\n✗ FAIL: ' + msg);
+  process.exit(1);
+};
 const ok = (msg) => console.log('  ✓ ' + msg);
 
 async function api(method, p, body) {
@@ -244,7 +274,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 /* ---------------- 主流程 ---------------- */
 (async () => {
   console.log('== Agnes Video 任务控制台 端到端冒烟测试 ==');
-  try { fs.rmSync(TEST_DB, { force: true }); fs.rmSync(TEST_DB + '-wal', { force: true }); fs.rmSync(TEST_DB + '-shm', { force: true }); } catch {}
+  try {
+    fs.rmSync(TEST_DB, { force: true });
+    fs.rmSync(TEST_DB + '-wal', { force: true });
+    fs.rmSync(TEST_DB + '-shm', { force: true });
+  } catch {}
 
   // 启动 Mock Agnes API
   await new Promise((r) => mockServer.listen(MOCK_PORT, r));
@@ -254,21 +288,62 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   try {
     const { spawnSync } = require('node:child_process');
     fixtureFile = path.join(DATA_DIR_ROOT, 'e2e-fixture.mp4');
-    const ff = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
-      '-f', 'lavfi', '-i', 'testsrc=size=320x240:rate=15:duration=2',
-      '-f', 'lavfi', '-i', 'sine=frequency=440:duration=2',
-      '-shortest', '-c:v', 'libx264', '-preset', 'ultrafast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', fixtureFile],
-      { encoding: 'utf8', timeout: 60_000 });
+    const ff = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=320x240:rate=15:duration=2',
+        '-f',
+        'lavfi',
+        '-i',
+        'sine=frequency=440:duration=2',
+        '-shortest',
+        '-c:v',
+        'libx264',
+        '-preset',
+        'ultrafast',
+        '-pix_fmt',
+        'yuv420p',
+        '-c:a',
+        'aac',
+        fixtureFile,
+      ],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
     if (ff.status !== 0 || !fs.existsSync(fixtureFile)) fixtureFile = null;
     // v1.4：BGM 测试音频（真实 mp3，供渲染混音）
     if (fixtureFile) {
       bgmFixture = path.join(DATA_DIR_ROOT, 'e2e-bgm.mp3');
-      const fb = spawnSync('ffmpeg', ['-y', '-hide_banner', '-loglevel', 'error',
-        '-f', 'lavfi', '-i', 'sine=frequency=220:duration=6', '-c:a', 'libmp3lame', '-b:a', '64k', bgmFixture],
-        { encoding: 'utf8', timeout: 60_000 });
+      const fb = spawnSync(
+        'ffmpeg',
+        [
+          '-y',
+          '-hide_banner',
+          '-loglevel',
+          'error',
+          '-f',
+          'lavfi',
+          '-i',
+          'sine=frequency=220:duration=6',
+          '-c:a',
+          'libmp3lame',
+          '-b:a',
+          '64k',
+          bgmFixture,
+        ],
+        { encoding: 'utf8', timeout: 60_000 },
+      );
       if (fb.status !== 0 || !fs.existsSync(bgmFixture)) bgmFixture = null;
     }
-  } catch { fixtureFile = null; }
+  } catch {
+    fixtureFile = null;
+  }
 
   // 配置并启动控制台（独立端口 + 独立数据库 + 独立 artifacts 目录）
   process.env.PORT = String(APP_PORT);
@@ -279,7 +354,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   // 轮询等待就绪（取代固定 sleep，消除慢机器/CI 上首检 ECONNREFUSED 的 flaky）
   let up = false;
   for (let i = 0; i < 50 && !up; i++) {
-    try { up = (await fetch(APP_BASE + '/api/health')).ok; } catch { await sleep(200); }
+    try {
+      up = (await fetch(APP_BASE + '/api/health')).ok;
+    } catch {
+      await sleep(200);
+    }
   }
   if (!up) err('控制台未能在 10 秒内完成启动');
   console.log(`[app] 控制台已启动于 :${APP_PORT}`);
@@ -344,10 +423,12 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 3.3 v1.3：API 自描述
   const oas = await api('GET', '/api/openapi.json');
-  if (oas.status !== 200
-    || !oas.data.paths?.['/api/tasks']?.post
-    || !oas.data.paths?.['/api/projects/{id}/render']?.post
-    || !oas.data.paths?.['/api/tts/generate']?.post) {
+  if (
+    oas.status !== 200 ||
+    !oas.data.paths?.['/api/tasks']?.post ||
+    !oas.data.paths?.['/api/projects/{id}/render']?.post ||
+    !oas.data.paths?.['/api/tts/generate']?.post
+  ) {
     err('openapi.json 缺少关键端点描述');
   }
   if (!String(oas.data.info?.description || '').includes('入队')) err('openapi 描述未说明入队语义');
@@ -391,7 +472,9 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (!final.metadata_url) err('completed 但缺少 metadata_url');
   // pending 兜底 + 两次推进：至少轮询 3 次（pending → in_progress → completed）
   if (final.poll_count < 3) err(`轮询次数异常: ${final.poll_count}`);
-  ok(`轮询闭环完成：${final.status} @ ${final.progress}%，轮询 ${final.poll_count} 次（含 pending 状态兜底），视频: ${final.metadata_url}`);
+  ok(
+    `轮询闭环完成：${final.status} @ ${final.progress}%，轮询 ${final.poll_count} 次（含 pending 状态兜底），视频: ${final.metadata_url}`,
+  );
 
   // 5.1 v1.3 本地归档：完成后自动下载到 artifacts（远端链接过期也有本地兜底）
   let archived = null;
@@ -408,7 +491,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   // 5.2 v1.3 提交队列：连续 429 后自动退避重试，最终提交成功（不再产生 submit_error 死记录）
   await mockRateLimit(2);
   const rl = await api('POST', '/api/tasks', {
-    model: 'agnes-video-2.5-flash', prompt: '限流重试测试：雨夜霓虹街道空镜', mode: 'text', seconds: '5',
+    model: 'agnes-video-2.5-flash',
+    prompt: '限流重试测试：雨夜霓虹街道空镜',
+    mode: 'text',
+    seconds: '5',
   });
   if (rl.status !== 201) err(`429 测试任务创建失败: ${JSON.stringify(rl.data)}`);
   const rlSub = await waitSubmitted(rl.data.id, 30_000);
@@ -427,23 +513,31 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 6. 校验规则：text 模式带媒体 → 400
   const bad1 = await api('POST', '/api/tasks', {
-    model: 'agnes-video-2.5-flash', prompt: 'x', mode: 'text',
+    model: 'agnes-video-2.5-flash',
+    prompt: 'x',
+    mode: 'text',
     images: ['https://example.com/a.png'],
   });
-  if (bad1.status !== 400 || !String(bad1.data.error).includes('text 模式')) err(`text 模式携带图片未被拦截: ${JSON.stringify(bad1.data)}`);
+  if (bad1.status !== 400 || !String(bad1.data.error).includes('text 模式'))
+    err(`text 模式携带图片未被拦截: ${JSON.stringify(bad1.data)}`);
   ok('校验：text 模式携带媒体被 400 拒绝（含错误信息）');
 
   // 7. 校验规则：flash + 视频参考 → 400
   const bad2 = await api('POST', '/api/tasks', {
-    model: 'agnes-video-2.5-flash', prompt: 'x', mode: 'reference',
+    model: 'agnes-video-2.5-flash',
+    prompt: 'x',
+    mode: 'reference',
     videos: ['https://example.com/a.mp4'],
   });
-  if (bad2.status !== 400 || !String(bad2.data.error).includes('videos')) err(`flash 视频参考未被拦截: ${JSON.stringify(bad2.data)}`);
+  if (bad2.status !== 400 || !String(bad2.data.error).includes('videos'))
+    err(`flash 视频参考未被拦截: ${JSON.stringify(bad2.data)}`);
   ok('校验：Flash 模型 videos 被 400 拒绝（含错误信息）');
 
   // 8. 校验规则：reference 无素材 → 400
   const bad3 = await api('POST', '/api/tasks', {
-    model: 'agnes-video-2.5-flash', prompt: 'x', mode: 'reference',
+    model: 'agnes-video-2.5-flash',
+    prompt: 'x',
+    mode: 'reference',
   });
   if (bad3.status !== 400) err('reference 无素材未被拦截');
   ok('校验：reference 模式无素材被 400 拒绝');
@@ -473,8 +567,13 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 9. V2.0：文生视频
   const v2a = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'cat walking on the beach at sunset',
-    mode: 'text', num_frames: 121, frame_rate: 24, width: 1280, height: 720,
+    model: 'agnes-video-v2.0',
+    prompt: 'cat walking on the beach at sunset',
+    mode: 'text',
+    num_frames: 121,
+    frame_rate: 24,
+    width: 1280,
+    height: 720,
   });
   if (v2a.status !== 201) err(`V2.0 文生创建失败: ${JSON.stringify(v2a.data)}`);
   const rqa = v2a.data.request_json;
@@ -484,12 +583,19 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (v2a.data.size !== '1280x720' || v2a.data.aspect_ratio !== '16:9') {
     err(`V2.0 尺寸/画幅计算异常: ${v2a.data.size}/${v2a.data.aspect_ratio}`);
   }
-  ok(`V2.0 文生创建成功 #${v2a.data.id}（size=${v2a.data.size}，aspect=${v2a.data.aspect_ratio}，seconds=${v2a.data.seconds}）`);
+  ok(
+    `V2.0 文生创建成功 #${v2a.data.id}（size=${v2a.data.size}，aspect=${v2a.data.aspect_ratio}，seconds=${v2a.data.seconds}）`,
+  );
 
   // 10. V2.0：图生视频
   const v2b = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'animate the character with subtle breathing',
-    mode: 'image', num_frames: 81, frame_rate: 24, width: 720, height: 720,
+    model: 'agnes-video-v2.0',
+    prompt: 'animate the character with subtle breathing',
+    mode: 'image',
+    num_frames: 81,
+    frame_rate: 24,
+    width: 720,
+    height: 720,
     image: 'https://example.com/char.png',
   });
   if (v2b.status !== 201) err(`V2.0 图生创建失败: ${JSON.stringify(v2b.data)}`);
@@ -498,8 +604,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 11. V2.0：关键帧动画（extra_body）
   const v2c = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'smooth transition between keyframes',
-    mode: 'keyframes', num_frames: 121, frame_rate: 24,
+    model: 'agnes-video-v2.0',
+    prompt: 'smooth transition between keyframes',
+    mode: 'keyframes',
+    num_frames: 121,
+    frame_rate: 24,
     images: ['https://example.com/kf1.png', 'https://example.com/kf2.png'],
   });
   if (v2c.status !== 201) err(`V2.0 关键帧创建失败: ${JSON.stringify(v2c.data)}`);
@@ -511,14 +620,20 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 12. V2.0 校验：num_frames 不满足 8n+1 → 400
   const badV2 = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'x', mode: 'text', num_frames: 100,
+    model: 'agnes-video-v2.0',
+    prompt: 'x',
+    mode: 'text',
+    num_frames: 100,
   });
   if (badV2.status !== 400) err('num_frames=100 未被拦截');
   ok('校验：V2.0 num_frames 不满足 8n+1 被 400 拒绝');
 
   // 13. V2.0 校验：关键帧少于 2 张 → 400
   const badV2b = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'x', mode: 'keyframes', num_frames: 121,
+    model: 'agnes-video-v2.0',
+    prompt: 'x',
+    mode: 'keyframes',
+    num_frames: 121,
     images: ['https://example.com/kf1.png'],
   });
   if (badV2b.status !== 400) err('关键帧 1 张未被拦截');
@@ -526,7 +641,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 14. V2.0 校验：图生缺 image → 400
   const badV2c = await api('POST', '/api/tasks', {
-    model: 'agnes-video-v2.0', prompt: 'x', mode: 'image', num_frames: 121,
+    model: 'agnes-video-v2.0',
+    prompt: 'x',
+    mode: 'image',
+    num_frames: 121,
   });
   if (badV2c.status !== 400) err('图生缺 image 未被拦截');
   ok('校验：V2.0 图生视频缺 image 被 400 拒绝');
@@ -547,8 +665,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   // ================= 流水线全链路（创意→文案→角色图→视频） =================
   // 16. 创建项目
   const proj = await api('POST', '/api/projects', {
-    name: '黄昏麦田少年', idea: '黄昏麦田，穿黄胶鞋的少年走向远方', style: '电影写实',
-    aspect_ratio: '16:9', seconds: '8',
+    name: '黄昏麦田少年',
+    idea: '黄昏麦田，穿黄胶鞋的少年走向远方',
+    style: '电影写实',
+    aspect_ratio: '16:9',
+    seconds: '8',
   });
   if (proj.status !== 201 || !proj.data.id) err(`创建项目失败: ${JSON.stringify(proj.data)}`);
   const pid = proj.data.id;
@@ -556,7 +677,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17. 文案生成（文本模型 → 结构化 JSON 落库）
   const scr = await api('POST', '/api/llm/script', {
-    idea: '黄昏麦田少年走向远方', style: '电影写实', aspect_ratio: '16:9', seconds: '8', project_id: pid,
+    idea: '黄昏麦田少年走向远方',
+    style: '电影写实',
+    aspect_ratio: '16:9',
+    seconds: '8',
+    project_id: pid,
   });
   if (scr.status !== 200 || !scr.data.parsed) err(`文案生成失败: ${JSON.stringify(scr.data).slice(0, 300)}`);
   if (!scr.data.result?.video_prompt || !scr.data.result?.character_desc) err('文案缺少 video_prompt/character_desc');
@@ -576,9 +701,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17.2 项目校验：空名称 / 非法画幅 → 400
   const pBad1 = await api('POST', '/api/projects', { name: '', idea: 'x' });
-  if (pBad1.status !== 400 || !String(pBad1.data.error).includes('名称')) err(`项目空名称未被拦截: ${JSON.stringify(pBad1.data)}`);
+  if (pBad1.status !== 400 || !String(pBad1.data.error).includes('名称'))
+    err(`项目空名称未被拦截: ${JSON.stringify(pBad1.data)}`);
   const pBad2 = await api('POST', '/api/projects', { name: 'x', aspect_ratio: '7:3' });
-  if (pBad2.status !== 400 || !String(pBad2.data.error).includes('aspect_ratio')) err(`项目非法画幅未被拦截: ${JSON.stringify(pBad2.data)}`);
+  if (pBad2.status !== 400 || !String(pBad2.data.error).includes('aspect_ratio'))
+    err(`项目非法画幅未被拦截: ${JSON.stringify(pBad2.data)}`);
   ok('校验：项目空名称 / 非法画幅被 400 拒绝');
 
   // 17.3 文案编辑 + 版本选用
@@ -607,22 +734,29 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err(`项目 PATCH 异常: ${JSON.stringify(pPatch.data)}`);
   }
   const pBad3 = await api('PATCH', `/api/projects/${pid}`, { status: 'hacked' });
-  if (pBad3.status !== 400 || !String(pBad3.data.error).includes('status')) err(`非法 status 未被拦截: ${JSON.stringify(pBad3.data)}`);
+  if (pBad3.status !== 400 || !String(pBad3.data.error).includes('status'))
+    err(`非法 status 未被拦截: ${JSON.stringify(pBad3.data)}`);
   const pBad4 = await api('PATCH', `/api/projects/${pid}`, { name: '   ' });
   if (pBad4.status !== 400) err('空名称 PATCH 未被拦截');
   ok('项目 PATCH：正常更新生效，非法 status / 空 name 被 400 拒绝');
 
   // 17.6 分镜生成（M2）：storyboard 文本版本落库 + shots 工作副本重建
   const sb = await api('POST', '/api/llm/storyboard', {
-    idea: '黄昏麦田少年走向远方', style: '电影写实', shot_count: '2',
-    aspect_ratio: '16:9', seconds: '5', project_id: pid,
+    idea: '黄昏麦田少年走向远方',
+    style: '电影写实',
+    shot_count: '2',
+    aspect_ratio: '16:9',
+    seconds: '5',
+    project_id: pid,
   });
   if (sb.status !== 200 || !sb.data.parsed) err(`分镜生成失败: ${JSON.stringify(sb.data).slice(0, 300)}`);
-  if (!Array.isArray(sb.data.shots) || sb.data.shots.length !== 2) err(`分镜镜头数异常: ${JSON.stringify(sb.data.shots)?.length}`);
+  if (!Array.isArray(sb.data.shots) || sb.data.shots.length !== 2)
+    err(`分镜镜头数异常: ${JSON.stringify(sb.data.shots)?.length}`);
   if (!sb.data.shots[0].video_prompt.includes('<Picture 1>')) err('分镜提示词未包含 <Picture 1> 角色引用');
   const sbDetail = await api('GET', `/api/projects/${pid}`);
   const shotsPid = sbDetail.data.shots;
-  if (shotsPid.length !== 2 || shotsPid.map((s) => s.seq).join(',') !== '1,2') err(`shots 工作副本异常: ${JSON.stringify(shotsPid)}`);
+  if (shotsPid.length !== 2 || shotsPid.map((s) => s.seq).join(',') !== '1,2')
+    err(`shots 工作副本异常: ${JSON.stringify(shotsPid)}`);
   const sbText = sbDetail.data.texts.find((t) => t.kind === 'storyboard');
   if (!sbText?.selected) err('storyboard 文本版本未落库或未选中');
   // v1.3：分镜旁白随 LLM 输出落库；引用开关默认开启
@@ -632,10 +766,15 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17.7 镜头 CRUD / 排序 / 校验 / 跨项目越权
   const addShot = await api('POST', `/api/projects/${pid}/shots`, {
-    title: '手动补充镜头', video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。手动补充的第三个镜头', seconds: '6',
+    title: '手动补充镜头',
+    video_prompt: '以 <Picture 1> 中的角色为参考，保持其外观一致。手动补充的第三个镜头',
+    seconds: '6',
   });
   if (addShot.status !== 201 || addShot.data.seq !== 3) err(`手动加镜头失败: ${JSON.stringify(addShot.data)}`);
-  const patchShot = await api('PATCH', `/api/projects/${pid}/shots/${addShot.data.id}`, { title: '手动镜头（改）', seconds: '7' });
+  const patchShot = await api('PATCH', `/api/projects/${pid}/shots/${addShot.data.id}`, {
+    title: '手动镜头（改）',
+    seconds: '7',
+  });
   if (patchShot.status !== 200 || patchShot.data.title !== '手动镜头（改）' || patchShot.data.seconds !== '7') {
     err(`镜头 PATCH 异常: ${JSON.stringify(patchShot.data)}`);
   }
@@ -660,7 +799,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   // 17.8 分镜重新生成：覆盖工作副本（新镜头 id），storyboard 版本累计
   const oldShotIds = shotsPid.map((s) => s.id);
   const sb2 = await api('POST', '/api/llm/storyboard', {
-    idea: '黄昏麦田少年走向远方（改）', project_id: pid,
+    idea: '黄昏麦田少年走向远方（改）',
+    project_id: pid,
   });
   if (sb2.status !== 200 || !sb2.data.parsed || sb2.data.shots.length !== 2) {
     err(`分镜重新生成异常: ${JSON.stringify(sb2.data).slice(0, 200)}`);
@@ -675,7 +815,12 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   // 17.9 选用历史 storyboard 版本 → 重建镜头工作副本
   const v1 = sbVersions.find((t) => !t.selected) || sbVersions[0];
   const applySb = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: v1.id });
-  if (applySb.status !== 200 || !applySb.data.ok || !Array.isArray(applySb.data.shots) || applySb.data.shots.length !== 2) {
+  if (
+    applySb.status !== 200 ||
+    !applySb.data.ok ||
+    !Array.isArray(applySb.data.shots) ||
+    applySb.data.shots.length !== 2
+  ) {
     err(`选用历史版本异常: ${JSON.stringify(applySb.data).slice(0, 200)}`);
   }
   const apply404 = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: 999999 });
@@ -709,10 +854,15 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17.12 文案 auto_select=false：新版只落库不选中（前端对比窗决策模式）
   const scr2 = await api('POST', '/api/llm/script', {
-    idea: '黄昏麦田少年走向远方', style: '电影写实', aspect_ratio: '16:9', seconds: '8',
-    project_id: pid, auto_select: false,
+    idea: '黄昏麦田少年走向远方',
+    style: '电影写实',
+    aspect_ratio: '16:9',
+    seconds: '8',
+    project_id: pid,
+    auto_select: false,
   });
-  if (scr2.status !== 200 || !scr2.data.parsed) err(`auto_select=false 文案生成失败: ${JSON.stringify(scr2.data).slice(0, 200)}`);
+  if (scr2.status !== 200 || !scr2.data.parsed)
+    err(`auto_select=false 文案生成失败: ${JSON.stringify(scr2.data).slice(0, 200)}`);
   if (!scr2.data.previous?.script?.content) err('auto_select=false 未返回 previous 旧内容');
   if (!scr2.data.new_text_ids?.script) err('auto_select=false 未返回 new_text_ids');
   {
@@ -726,10 +876,16 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17.13 分镜 auto_select=false：shots 不变 + 新版本未选中；apply 后采用
   const shotsBeforeSb = (await api('GET', `/api/projects/${pid}`)).data.shots.map((s) => s.id);
-  const sb3 = await api('POST', '/api/llm/storyboard', { idea: '黄昏麦田少年走向远方', project_id: pid, auto_select: false });
-  if (sb3.status !== 200 || !sb3.data.parsed) err(`auto_select=false 分镜生成失败: ${JSON.stringify(sb3.data).slice(0, 200)}`);
+  const sb3 = await api('POST', '/api/llm/storyboard', {
+    idea: '黄昏麦田少年走向远方',
+    project_id: pid,
+    auto_select: false,
+  });
+  if (sb3.status !== 200 || !sb3.data.parsed)
+    err(`auto_select=false 分镜生成失败: ${JSON.stringify(sb3.data).slice(0, 200)}`);
   if (sb3.data.auto_selected !== false || !sb3.data.text_id) err('auto_select=false 分镜响应异常');
-  if (JSON.stringify(sb3.data.current_shots.map((s) => s.id)) !== JSON.stringify(shotsBeforeSb)) err('auto_select=false 不应重建 shots');
+  if (JSON.stringify(sb3.data.current_shots.map((s) => s.id)) !== JSON.stringify(shotsBeforeSb))
+    err('auto_select=false 不应重建 shots');
   const applySb2 = await api('POST', `/api/projects/${pid}/storyboard/apply`, { text_id: sb3.data.text_id });
   if (applySb2.status !== 200 || applySb2.data.shots.some((s) => shotsBeforeSb.includes(s.id))) {
     err('apply 采用新版本后 shots 未重建');
@@ -738,10 +894,16 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 17.14 图片 count=3：一次三张候选，全部落库，首张自动选中
   const imgMulti = await api('POST', '/api/images/generate', {
-    prompt: '角色立绘：多张候选测试', size: '1K', ratio: '1:1', project_id: pid, kind: 'character', count: 3,
+    prompt: '角色立绘：多张候选测试',
+    size: '1K',
+    ratio: '1:1',
+    project_id: pid,
+    kind: 'character',
+    count: 3,
   });
   if (imgMulti.status !== 200) err(`count=3 图片生成失败: ${JSON.stringify(imgMulti.data).slice(0, 200)}`);
-  if (!Array.isArray(imgMulti.data.results) || imgMulti.data.results.length !== 3) err(`count=3 应返回 3 张: ${imgMulti.data.results?.length}`);
+  if (!Array.isArray(imgMulti.data.results) || imgMulti.data.results.length !== 3)
+    err(`count=3 应返回 3 张: ${imgMulti.data.results?.length}`);
   if (imgMulti.data.failed !== 0) err(`count=3 不应有失败: ${imgMulti.data.failed}`);
   if (!imgMulti.data.image?.selected) err('count 多张时首张应自动选中');
   if (imgMulti.data.remote_url !== imgMulti.data.results[0].remote_url) err('首张字段与 results[0] 不一致');
@@ -751,7 +913,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
   const img = await api('POST', '/api/images/generate', {
-    prompt: '角色立绘：银发少年', size: '1K', ratio: '1:1', project_id: pid, kind: 'character',
+    prompt: '角色立绘：银发少年',
+    size: '1K',
+    ratio: '1:1',
+    project_id: pid,
+    kind: 'character',
   });
   if (img.status !== 200 || !img.data.remote_url) err(`角色图生成失败: ${JSON.stringify(img.data).slice(0, 300)}`);
   if (!img.data.image?.selected) err('角色图未自动定稿');
@@ -761,9 +927,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   const selI = await api('POST', `/api/projects/${pid}/select-image`, { image_id: img.data.image.id });
   if (selI.status !== 200 || !selI.data.ok) err(`选用图片失败: ${JSON.stringify(selI.data)}`);
   const img2 = await api('POST', '/api/images/generate', {
-    prompt: '场景概念图：黄昏麦田', size: '1K', ratio: '16:9', project_id: pid, kind: 'scene',
+    prompt: '场景概念图：黄昏麦田',
+    size: '1K',
+    ratio: '16:9',
+    project_id: pid,
+    kind: 'scene',
   });
-  if (img2.status !== 200 || !img2.data.image?.id) err(`第二张图片生成失败: ${JSON.stringify(img2.data).slice(0, 200)}`);
+  if (img2.status !== 200 || !img2.data.image?.id)
+    err(`第二张图片生成失败: ${JSON.stringify(img2.data).slice(0, 200)}`);
   const delImg = await api('DELETE', `/api/images/${img2.data.image.id}`);
   if (delImg.status !== 200 || !delImg.data.ok) err(`删除图片失败: ${JSON.stringify(delImg.data)}`);
   const imgsAfter = (await api('GET', `/api/projects/${pid}`)).data.images;
@@ -815,7 +986,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   ok(`单镜头提交视频任务 #${sv.data.id}（shot_id=${sv.data.shot_id}，提示词与溯源正确）`);
 
   // 20.2 v1.3：镜头旁白/引用开关 —— 纯空镜走 text 模式，恢复后回到 reference
-  const pn = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, { narration: '旁白测试句子', use_character_ref: false });
+  const pn = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, {
+    narration: '旁白测试句子',
+    use_character_ref: false,
+  });
   if (pn.status !== 200 || pn.data.narration !== '旁白测试句子' || pn.data.use_character_ref !== 0) {
     err(`镜头 narration/use_character_ref PATCH 未生效: ${JSON.stringify(pn.data)}`);
   }
@@ -867,7 +1041,12 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (bgmEmptyKw.status !== 400) err('空关键词搜索未被 400 拦截');
   const bgmSelBad = await api('POST', `/api/projects/${pid}/bgm`, { song_id: 'abc' });
   if (bgmSelBad.status !== 400) err('非数字 song_id 未被 400 拦截');
-  const bgmSel = await api('POST', `/api/projects/${pid}/bgm`, { song_id: '12345', name: '测试曲', artist: '测试歌手', album: '测试专辑' });
+  const bgmSel = await api('POST', `/api/projects/${pid}/bgm`, {
+    song_id: '12345',
+    name: '测试曲',
+    artist: '测试歌手',
+    album: '测试专辑',
+  });
   if (bgmSel.status !== 200 || !bgmSel.data.ok || !bgmSel.data.bgm?.local_url) {
     err(`BGM 选用失败: ${JSON.stringify(bgmSel.data).slice(0, 200)}`);
   }
@@ -882,9 +1061,11 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const tdb = new DatabaseSync(TEST_DB);
     tdb.exec('PRAGMA busy_timeout = 5000');
     const now = Date.now();
-    const ins = tdb.prepare(`INSERT INTO project_tts (project_id, kind, shot_id, text, model, voice_title, format, local_path, duration, size, selected, created_at)
+    const ins =
+      tdb.prepare(`INSERT INTO project_tts (project_id, kind, shot_id, text, model, voice_title, format, local_path, duration, size, selected, created_at)
       VALUES (?, 'shot', ?, ?, 's2.1-pro-free', '测试音色', 'mp3', ?, 6, 100000, 1, ?)`);
-    const audioPath = (bgmFixture && fs.existsSync(bgmFixture)) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3');
+    const audioPath =
+      bgmFixture && fs.existsSync(bgmFixture) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3');
     if (!fs.existsSync(audioPath)) fs.writeFileSync(audioPath, Buffer.alloc(4096, 3));
     ins.run(pid, shot1.id, '镜头一旁白测试', audioPath, now);
     ins.run(pid, projDetail.data.shots[1].id, '镜头二旁白测试', audioPath, now + 1);
@@ -901,25 +1082,39 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (done1?.status !== 'completed' || done2?.status !== 'completed') {
     err(`渲染素材未就绪: shot1=${done1?.status} shot2=${done2?.status}`);
   }
-  const ren = await api('POST', `/api/projects/${pid}/render`, { transition_ms: 400, title_card: true, end_card: true, aspect: '9:16', burn_subtitles: true, subtitle_fontsize: 42 });
+  const ren = await api('POST', `/api/projects/${pid}/render`, {
+    transition_ms: 400,
+    title_card: true,
+    end_card: true,
+    aspect: '9:16',
+    burn_subtitles: true,
+    subtitle_fontsize: 42,
+  });
   if (ren.status === 400 && String(ren.data.error).includes('ffmpeg')) {
     ok('成片渲染：本环境无 ffmpeg，跳过真实渲染（校验通过）');
   } else {
     if (ren.status !== 201) err(`渲染任务创建失败: ${JSON.stringify(ren.data)}`);
     if (ren.data.status !== 'queued') err('渲染任务应从 queued 开始');
-    if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined) err('渲染参数缺少 BGM 字段');
+    if (ren.data.params?.bgm_volume === undefined || ren.data.params?.bgm_duck === undefined)
+      err('渲染参数缺少 BGM 字段');
     if (ren.data.params?.narration_volume === undefined) err('渲染参数缺少 narration_volume');
-    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined) err('渲染参数缺少字幕烧录字段');
+    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined)
+      err('渲染参数缺少字幕烧录字段');
     if (ren.data.params?.aspect !== '9:16') err(`竖屏 aspect 参数未生效: ${ren.data.params?.aspect}`);
-    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined) err('渲染参数缺少字幕烧录字段');
+    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined)
+      err('渲染参数缺少字幕烧录字段');
     // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
     {
       const { buildSubtitleAss } = require('../render');
       const ass = buildSubtitleAss(
-        [{ start: 3.3, end: 7.05, text: '测试,字幕{文本}' }, { start: 8, end: 7, text: '无效区间应被剔除' }],
-        { fontsize: 42 }
+        [
+          { start: 3.3, end: 7.05, text: '测试,字幕{文本}' },
+          { start: 8, end: 7, text: '无效区间应被剔除' },
+        ],
+        { fontsize: 42 },
       );
-      if (!ass.includes('Dialogue: 0,0:00:03.30,0:00:07.05,Narr')) err(`ASS 时间轴格式错误: ${ass.split('\n').find((l) => l.startsWith('Dialogue')) || ''}`);
+      if (!ass.includes('Dialogue: 0,0:00:03.30,0:00:07.05,Narr'))
+        err(`ASS 时间轴格式错误: ${ass.split('\n').find((l) => l.startsWith('Dialogue')) || ''}`);
       if (!ass.includes('测试,字幕文本')) err('ASS 文本丢失或转义错误（花括号应被剔除、逗号应保留）');
       if (!ass.includes('\\fad(150,150)')) err('ASS 缺少淡入淡出标记');
       if (ass.includes('无效区间')) err('end<=start 的无效字幕行未剔除');
@@ -938,18 +1133,40 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (!renJob.output_url || !fs.existsSync(renJob.output_path)) err('渲染产物缺失');
     // v1.8：竖屏尺寸 + 封面候选
     const { spawnSync: ss } = require('node:child_process');
-    const fp = ss('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-show_entries', 'stream=width,height', '-of', 'json', renJob.output_path], { encoding: 'utf8' });
-    let dur = NaN, vw = 0, vh = 0;
+    const fp = ss(
+      'ffprobe',
+      [
+        '-v',
+        'error',
+        '-show_entries',
+        'format=duration',
+        '-show_entries',
+        'stream=width,height',
+        '-of',
+        'json',
+        renJob.output_path,
+      ],
+      { encoding: 'utf8' },
+    );
+    let dur = NaN,
+      vw = 0,
+      vh = 0;
     try {
       const meta = JSON.parse(fp.stdout || '{}');
       dur = Number(meta.format?.duration);
       const v = (meta.streams || []).find((s) => s.width);
-      vw = v?.width; vh = v?.height;
-    } catch { /* ignore */ }
+      vw = v?.width;
+      vh = v?.height;
+    } catch {
+      /* ignore */
+    }
     if (Number.isFinite(dur) && (dur < 6 || dur > 20)) err(`成片时长异常: ${dur}s`);
     if (vw !== 720 || vh !== 1280) err(`竖屏尺寸异常: ${vw}x${vh}（应为 720x1280）`);
-    if (!Array.isArray(renJob.covers) || !renJob.covers.length || !fs.existsSync(renJob.covers[0].path)) err('封面候选未生成');
-    ok(`一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '?'} · 竖屏 ${vw}x${vh} · 封面 ${renJob.covers.length} 张 · 含片头/片尾卡与叠化）`);
+    if (!Array.isArray(renJob.covers) || !renJob.covers.length || !fs.existsSync(renJob.covers[0].path))
+      err('封面候选未生成');
+    ok(
+      `一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '?'} · 竖屏 ${vw}x${vh} · 封面 ${renJob.covers.length} 张 · 含片头/片尾卡与叠化）`,
+    );
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');
@@ -979,9 +1196,16 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const tdb = new DatabaseSync(TEST_DB);
     tdb.exec('PRAGMA busy_timeout = 5000');
     const now = Date.now();
-    const r = tdb.prepare(`INSERT INTO project_tts (project_id, kind, text, model, voice_title, format, local_path, duration, size, selected, created_at)
-      VALUES (?, 'narration', '整片旁白测试', 's2.1-pro-free', '测试音色', 'mp3', ?, 6, 100000, 0, ?)`)
-      .run(pid, (bgmFixture && fs.existsSync(bgmFixture)) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3'), now);
+    const r = tdb
+      .prepare(
+        `INSERT INTO project_tts (project_id, kind, text, model, voice_title, format, local_path, duration, size, selected, created_at)
+      VALUES (?, 'narration', '整片旁白测试', 's2.1-pro-free', '测试音色', 'mp3', ?, 6, 100000, 0, ?)`,
+      )
+      .run(
+        pid,
+        bgmFixture && fs.existsSync(bgmFixture) ? bgmFixture : path.join(DATA_DIR_ROOT, 'e2e-bgm-fake.mp3'),
+        now,
+      );
     tdb.close();
     const ttsId = Number(r.lastInsertRowid);
     const b1 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: pid, shot_id: shot1.id });
@@ -992,38 +1216,40 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const shot1Bound = pdBind.data.tts.filter((t) => t.kind === 'shot' && t.shot_id === shot1.id);
     if (shot1Bound.length !== 1 || shot1Bound[0].id !== ttsId) err('同镜头互斥失败：旧绑定未自动让位');
     const b2 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: pid, shot_id: null });
-    if (b2.status !== 200 || b2.data.tts?.kind !== 'narration' || b2.data.tts?.shot_id !== null) err(`解绑失败: ${JSON.stringify(b2.data)}`);
+    if (b2.status !== 200 || b2.data.tts?.kind !== 'narration' || b2.data.tts?.shot_id !== null)
+      err(`解绑失败: ${JSON.stringify(b2.data)}`);
     const b3 = await api('POST', `/api/tts/${ttsId}/bind`, { project_id: 999999, shot_id: 1 });
     if (b3.status !== 404) err('跨项目绑定未被 404 拦截');
     ok('旁白绑定：绑定 / 同镜头互斥让位 / 解绑 / 跨项目 404 全部正常');
 
-  // 20.7 v1.7：多镜头重拍 —— 重拍候选 / 定稿选定 / 渲染优先用定稿 / 删除回退自动
-  {
-    const rt = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/retakes`, { count: 1 });
-    if (rt.status !== 201 || !rt.data.retakes?.length) err(`重拍提交失败: ${JSON.stringify(rt.data).slice(0, 200)}`);
-    const rtTask = rt.data.retakes[0];
-    const rtDone = await waitCompleted(rtTask.id, 30_000);
-    if (rtDone?.status !== 'completed') err(`重拍任务未完成: ${rtDone?.status}`);
-    // 选一条「较旧」的完成条为定稿（若渲染仍取最新即可判定未生效）
-    const oldTake = (await api('GET', `/api/projects/${pid}`)).data.tasks
-      .filter((t) => t.shot_id === shot1.id && t.status === 'completed' && t.id !== rtTask.id)
-      .sort((a, b) => b.id - a.id)[0];
-    const pick = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: oldTake.id });
-    if (pick.status !== 200 || pick.data.shot?.take_task_id !== oldTake.id) err(`选定 take 失败: ${JSON.stringify(pick.data).slice(0, 200)}`);
-    // collectSegments 应优先取定稿条
-    const { collectSegments } = require('../render');
-    const seg1 = collectSegments(pid).segments.find((s) => s.shot.id === shot1.id);
-    if (!seg1 || seg1.src !== oldTake.video_local_path) err('渲染素材未优先使用选定定稿 take');
-    // 校验：非本镜头任务不可选
-    const badSel = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: 999999 });
-    if (badSel.status !== 404) err('跨镜头任务选定未被 404 拦截');
-    // 删除定稿任务 → 清引用回退自动模式
-    const delPicked = await api('DELETE', `/api/tasks/${oldTake.id}`);
-    if (delPicked.status !== 200) err('删除定稿任务失败');
-    const afterDel = (await api('GET', `/api/projects/${pid}`)).data.shots.find((s) => s.id === shot1.id);
-    if (afterDel.take_task_id !== null) err('删除定稿任务后未回退自动模式');
-    ok('多镜头重拍：候选提交 / 定稿选定 / 渲染优先定稿 / 删除回退自动 全部正常');
-  }
+    // 20.7 v1.7：多镜头重拍 —— 重拍候选 / 定稿选定 / 渲染优先用定稿 / 删除回退自动
+    {
+      const rt = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/retakes`, { count: 1 });
+      if (rt.status !== 201 || !rt.data.retakes?.length) err(`重拍提交失败: ${JSON.stringify(rt.data).slice(0, 200)}`);
+      const rtTask = rt.data.retakes[0];
+      const rtDone = await waitCompleted(rtTask.id, 30_000);
+      if (rtDone?.status !== 'completed') err(`重拍任务未完成: ${rtDone?.status}`);
+      // 选一条「较旧」的完成条为定稿（若渲染仍取最新即可判定未生效）
+      const oldTake = (await api('GET', `/api/projects/${pid}`)).data.tasks
+        .filter((t) => t.shot_id === shot1.id && t.status === 'completed' && t.id !== rtTask.id)
+        .sort((a, b) => b.id - a.id)[0];
+      const pick = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: oldTake.id });
+      if (pick.status !== 200 || pick.data.shot?.take_task_id !== oldTake.id)
+        err(`选定 take 失败: ${JSON.stringify(pick.data).slice(0, 200)}`);
+      // collectSegments 应优先取定稿条
+      const { collectSegments } = require('../render');
+      const seg1 = collectSegments(pid).segments.find((s) => s.shot.id === shot1.id);
+      if (!seg1 || seg1.src !== oldTake.video_local_path) err('渲染素材未优先使用选定定稿 take');
+      // 校验：非本镜头任务不可选
+      const badSel = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/select-take`, { task_id: 999999 });
+      if (badSel.status !== 404) err('跨镜头任务选定未被 404 拦截');
+      // 删除定稿任务 → 清引用回退自动模式
+      const delPicked = await api('DELETE', `/api/tasks/${oldTake.id}`);
+      if (delPicked.status !== 200) err('删除定稿任务失败');
+      const afterDel = (await api('GET', `/api/projects/${pid}`)).data.shots.find((s) => s.id === shot1.id);
+      if (afterDel.take_task_id !== null) err('删除定稿任务后未回退自动模式');
+      ok('多镜头重拍：候选提交 / 定稿选定 / 渲染优先定稿 / 删除回退自动 全部正常');
+    }
   }
 
   // 21. 删除项目（级联清理 + 任务解绑）
@@ -1035,7 +1261,9 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (afterDel.status !== 404) err('删除后项目详情仍可访问');
   const pvAfterDel = await api('GET', `/api/tasks/${pv.data.id}`);
   if (pvAfterDel.status !== 200 || pvAfterDel.data.project_id !== null) {
-    err(`删除项目后视频任务应保留且解除关联: ${JSON.stringify({ status: pvAfterDel.status, project_id: pvAfterDel.data?.project_id })}`);
+    err(
+      `删除项目后视频任务应保留且解除关联: ${JSON.stringify({ status: pvAfterDel.status, project_id: pvAfterDel.data?.project_id })}`,
+    );
   }
   ok('删除项目：级联清理文案/角色图，视频任务保留并解绑（project_id=null）');
 
@@ -1074,7 +1302,12 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 10.4 删除任务：删除后 GET 404
   const delTask = await api('POST', '/api/tasks', {
-    model: 'agnes-video-2.5-flash', prompt: '待删除任务', mode: 'text', seconds: '5', size: '720P', aspect_ratio: '16:9',
+    model: 'agnes-video-2.5-flash',
+    prompt: '待删除任务',
+    mode: 'text',
+    seconds: '5',
+    size: '720P',
+    aspect_ratio: '16:9',
   });
   if (delTask.status !== 201) err(`创建待删除任务失败: ${JSON.stringify(delTask.data)}`);
   const delT = await api('DELETE', `/api/tasks/${delTask.data.id}`);
@@ -1087,7 +1320,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
 
   // 10.5 批量清空：先清失败（可能 0 条），再清已完成（应 ≥3 条）
   const bulkF = await api('POST', '/api/tasks/bulk/clear-failed', {});
-  if (bulkF.status !== 200 || typeof bulkF.data.removed !== 'number') err(`清空失败任务异常: ${JSON.stringify(bulkF.data)}`);
+  if (bulkF.status !== 200 || typeof bulkF.data.removed !== 'number')
+    err(`清空失败任务异常: ${JSON.stringify(bulkF.data)}`);
   const bulkC = await api('POST', '/api/tasks/bulk/clear-completed', {});
   if (bulkC.status !== 200 || bulkC.data.removed < 3) err(`清空已完成任务异常: ${JSON.stringify(bulkC.data)}`);
   const statsAfter = await api('GET', '/api/stats');
@@ -1103,8 +1337,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   console.log('\n== 全部通过 ✔ ==');
   mockServer.close();
   // 清理测试产物（测试库与测试专用 artifacts 目录），生产 data/agnes-console.db 与 data/artifacts 不受影响
-  for (const f of [TEST_DB, TEST_DB + '-wal', TEST_DB + '-shm']) { try { fs.rmSync(f, { force: true }); } catch {} }
-  try { fs.rmSync(TEST_ARTIFACTS, { recursive: true, force: true }); } catch {}
+  for (const f of [TEST_DB, TEST_DB + '-wal', TEST_DB + '-shm']) {
+    try {
+      fs.rmSync(f, { force: true });
+    } catch {}
+  }
+  try {
+    fs.rmSync(TEST_ARTIFACTS, { recursive: true, force: true });
+  } catch {}
   process.exit(0);
 })().catch((e) => {
   console.error('\n✗ 测试崩溃:', e);

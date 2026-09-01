@@ -55,11 +55,7 @@ describe('normalizeStoryboardShots', () => {
   });
 
   test('空提示词镜头被丢弃且 seq 连续', () => {
-    const out = normalizeStoryboardShots([
-      { video_prompt: '' },
-      { video_prompt: '   ' },
-      { video_prompt: '有效镜头' },
-    ]);
+    const out = normalizeStoryboardShots([{ video_prompt: '' }, { video_prompt: '   ' }, { video_prompt: '有效镜头' }]);
     expect(out).toHaveLength(1);
     expect(out[0].seq).toBe(1);
   });

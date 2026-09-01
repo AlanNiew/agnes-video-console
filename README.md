@@ -10,11 +10,11 @@
 
 支持三个模型（异步任务 API，`POST /v1/videos` 创建、`GET /agnesapi` 轮询）：
 
-| 模型 | 生成模式 | 参数体系 | 价格 | 界面 |
-| --- | --- | --- | --- | --- |
-| `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio` | 限时免费 | ✅ 默认 |
-| `agnes-video-2.5` | 文生 / 首尾帧 / 多模态参考 | `seconds` + `size` + `aspect_ratio` | 付费 | ✅ 高级分组 |
-| `agnes-video-v2.0` | 文生 / 图生 / 关键帧动画 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | ⛔ 已下架（后端兼容保留，历史任务正常显示） |
+| 模型                    | 生成模式                                 | 参数体系                                                                   | 价格     | 界面                                        |
+| ----------------------- | ---------------------------------------- | -------------------------------------------------------------------------- | -------- | ------------------------------------------- |
+| `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio`                                        | 限时免费 | ✅ 默认                                     |
+| `agnes-video-2.5`       | 文生 / 首尾帧 / 多模态参考               | `seconds` + `size` + `aspect_ratio`                                        | 付费     | ✅ 高级分组                                 |
+| `agnes-video-v2.0`      | 文生 / 图生 / 关键帧动画                 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | ⛔ 已下架（后端兼容保留，历史任务正常显示） |
 
 > 价格与能力以 [Agnes AI 官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准，当前 Flash 与 V2.0 模型限时 `$0 / 秒`。
 

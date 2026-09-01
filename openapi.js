@@ -73,7 +73,9 @@ const paths = {
     get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), output_path, output_url}',
     delete: '删除渲染任务（渲染中不可删；产物文件一并清理）',
   },
-  '/api/music/search': { get: 'BGM 在线曲库搜索 ?keyword=&limit= → {items:[{id,name,artist,album,duration_s,cover,levels[]}]}（需设置 music_api_base）' },
+  '/api/music/search': {
+    get: 'BGM 在线曲库搜索 ?keyword=&limit= → {items:[{id,name,artist,album,duration_s,cover,levels[]}]}（需设置 music_api_base）',
+  },
   '/api/music/stream': { get: '歌曲试听流代理 ?id=&level=（播放地址有时效性，服务端现取现转发）' },
   '/api/projects/{id}/bgm': {
     post: '项目选用 BGM {song_id(纯数字), name, artist?, album?, level?} → 立即下载缓存到 artifacts 并落库 projects.bgm',
@@ -83,14 +85,18 @@ const paths = {
     post: 'Fish Audio 配音合成 {text, project_id?, shot_id?(提供时 kind 自动为 shot，成片渲染按镜头取用), kind?(narration|shot), voice?(预设 id 或备选池音色 id), speed?, model?} → mp3 落地 artifacts',
   },
   '/api/tts/voices': { get: '音色清单（默认预设 + 声音广场备选池合并）与可用模型' },
-  '/api/tts/market': { get: '声音广场浏览 ?sort_by=(trending|task_count|created_at)&language=zh&tag=male&tag=young&page_number=&page_size= → {items:[{id,title,author,tags,like_count,task_count,sample,in_pool}]}（需设置 fish_web_token）' },
+  '/api/tts/market': {
+    get: '声音广场浏览 ?sort_by=(trending|task_count|created_at)&language=zh&tag=male&tag=young&page_number=&page_size= → {items:[{id,title,author,tags,like_count,task_count,sample,in_pool}]}（需设置 fish_web_token）',
+  },
   '/api/tts/pool': {
     get: '音色备选池列表',
     post: '加入备选池 {id(32位模型id), title, author?, like_count?, task_count?, tags?}（去重）',
   },
   '/api/tts/pool/{id}': { delete: '从备选池移除' },
   '/api/tts/{id}/select': { post: '选用配音记录' },
-  '/api/tts/{id}/bind': { post: '绑定/解绑旁白到镜头 {project_id?, shot_id(数字=绑定并转 shot kind；null=解绑为 narration)}；同镜头互斥自动让位，成片渲染按镜头对齐混入' },
+  '/api/tts/{id}/bind': {
+    post: '绑定/解绑旁白到镜头 {project_id?, shot_id(数字=绑定并转 shot kind；null=解绑为 narration)}；同镜头互斥自动让位，成片渲染按镜头对齐混入',
+  },
   '/api/tts/{id}': { delete: '删除配音记录（本地文件一并清理）' },
   '/artifacts/*': { get: '本地产物静态服务（图片/视频/音频/成片）' },
 };
@@ -103,7 +109,9 @@ function buildOpenApi(baseUrl) {
       pathsOut[p][m] = {
         summary,
         description: summary,
-        tags: [p.includes('/render') ? 'render' : p.includes('/tts') ? 'tts' : p.includes('/projects') ? 'projects' : 'core'],
+        tags: [
+          p.includes('/render') ? 'render' : p.includes('/tts') ? 'tts' : p.includes('/projects') ? 'projects' : 'core',
+        ],
       };
     }
   }
@@ -112,7 +120,8 @@ function buildOpenApi(baseUrl) {
     info: {
       title: 'Agnes Video Console API',
       version: pkg.version,
-      description: '本地 AI 视频创作控制台。要点：① 任务创建为「入队」语义，后台提交器按 submit_interval_ms 服务端节流并自动重试 429；② 完成视频自动归档本地，播放/下载优先 video_local_url；③ 成片渲染把镜头视频与逐镜旁白合成为完整短片。',
+      description:
+        '本地 AI 视频创作控制台。要点：① 任务创建为「入队」语义，后台提交器按 submit_interval_ms 服务端节流并自动重试 429；② 完成视频自动归档本地，播放/下载优先 video_local_url；③ 成片渲染把镜头视频与逐镜旁白合成为完整短片。',
     },
     servers: [{ url: baseUrl }],
     paths: pathsOut,

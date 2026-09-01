@@ -2,13 +2,8 @@
 /**
  * config 单元测试 —— 单源常量契约（防止各处默认值再次漂移）
  */
-const {
-  DEFAULT_BASE_URL,
-  RENDER_PARAMS_DEFAULTS,
-  probeDuration,
-} = require('../../config');
+const { DEFAULT_BASE_URL, RENDER_PARAMS_DEFAULTS, probeDuration } = require('../../config');
 const { DEFAULT_SETTINGS } = require('../../db');
-const { submitter } = require('../../submitter');
 
 describe('DEFAULT_BASE_URL 单源', () => {
   test('格式为 https 上游地址', () => {
@@ -50,7 +45,9 @@ describe('probeDuration', () => {
     const fs = require('node:fs');
     // 生成 0.5s 静音音频作为已知时长的媒体
     const tmp = path.join(os.tmpdir(), `probe-test-${Date.now()}.wav`);
-    const r = spawnSync('ffmpeg', ['-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '0.5', tmp], { windowsHide: true });
+    const r = spawnSync('ffmpeg', ['-f', 'lavfi', '-i', 'anullsrc=r=8000:cl=mono', '-t', '0.5', tmp], {
+      windowsHide: true,
+    });
     if (r.status !== 0) return;
     const d = probeDuration(tmp);
     fs.rmSync(tmp, { force: true });

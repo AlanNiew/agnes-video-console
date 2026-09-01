@@ -23,9 +23,11 @@ const RENDER_PARAMS_DEFAULTS = {
 /** ffprobe 探测媒体时长（秒，保留两位小数）；ffprobe 不存在/失败时返回 null 不阻塞 */
 function probeDuration(filePath) {
   try {
-    const r = spawnSync('ffprobe',
-      ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath],
-      { encoding: 'utf8', timeout: 15_000, windowsHide: true });
+    const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath], {
+      encoding: 'utf8',
+      timeout: 15_000,
+      windowsHide: true,
+    });
     if (r.status === 0 && r.stdout) {
       const d = Number(r.stdout.trim());
       return Number.isFinite(d) && d > 0 ? Math.round(d * 100) / 100 : null;

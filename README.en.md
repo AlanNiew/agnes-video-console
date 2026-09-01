@@ -12,11 +12,11 @@ A local web console for the [Agnes AI video generation API](https://www.agnes-ai
 
 Supports three models (async task API — `POST /v1/videos` to create, `GET /agnesapi` to poll):
 
-| Model | Modes | Parameters | Price | UI |
-| --- | --- | --- | --- | --- |
-| `agnes-video-2.5-flash` | text / keyframe / reference (image·audio·video) | `seconds` + `size` + `aspect_ratio` | free (limited time) | ✅ default |
-| `agnes-video-2.5` | text / keyframe / reference | `seconds` + `size` + `aspect_ratio` | paid | ✅ advanced |
-| `agnes-video-v2.0` | text / image-to-video / keyframes animation | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | free (limited time) | ⛔ retired from UI (backend kept for compatibility) |
+| Model                   | Modes                                           | Parameters                                                                   | Price               | UI                                                  |
+| ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------- | ------------------- | --------------------------------------------------- |
+| `agnes-video-2.5-flash` | text / keyframe / reference (image·audio·video) | `seconds` + `size` + `aspect_ratio`                                          | free (limited time) | ✅ default                                          |
+| `agnes-video-2.5`       | text / keyframe / reference                     | `seconds` + `size` + `aspect_ratio`                                          | paid                | ✅ advanced                                         |
+| `agnes-video-v2.0`      | text / image-to-video / keyframes animation     | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | free (limited time) | ⛔ retired from UI (backend kept for compatibility) |
 
 > Pricing and capabilities follow the [official Agnes AI docs](https://www.agnes-ai.com/en/docs/agnes-video-25-flash); both Flash and V2.0 are currently `$0 / second`.
 

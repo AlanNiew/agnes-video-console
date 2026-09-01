@@ -18,7 +18,11 @@ const { ApiError } = require('../../errors');
 /** 断言给定调用抛出指定状态的 ApiError */
 function expectApiError(status, fn) {
   let err = null;
-  try { fn(); } catch (e) { err = e; }
+  try {
+    fn();
+  } catch (e) {
+    err = e;
+  }
   expect(err).toBeInstanceOf(ApiError);
   expect(err.status).toBe(status);
 }
@@ -55,8 +59,10 @@ describe('cleanUrlList', () => {
   });
 
   test('过滤空串、保留合法 URL', () => {
-    expect(cleanUrlList(['https://a.com/1.jpg', '', '  ', 'https://a.com/2.jpg'], 'images'))
-      .toEqual(['https://a.com/1.jpg', 'https://a.com/2.jpg']);
+    expect(cleanUrlList(['https://a.com/1.jpg', '', '  ', 'https://a.com/2.jpg'], 'images')).toEqual([
+      'https://a.com/1.jpg',
+      'https://a.com/2.jpg',
+    ]);
   });
 
   test('非数组与非法 URL 抛 400', () => {
@@ -89,7 +95,15 @@ describe('buildV25Payload（2.5 家族）', () => {
 
   test('text 模式正常构建', () => {
     const { payload, meta } = buildV25Payload({ ...base, seconds: '6' });
-    expect(payload).toMatchObject({ model: 'agnes-video-2.5-flash', prompt: base.prompt, mode: 'text', seconds: '6', size: '720P', aspect_ratio: '16:9', n: 1 });
+    expect(payload).toMatchObject({
+      model: 'agnes-video-2.5-flash',
+      prompt: base.prompt,
+      mode: 'text',
+      seconds: '6',
+      size: '720P',
+      aspect_ratio: '16:9',
+      n: 1,
+    });
     expect(payload.seed).toBeUndefined();
     expect(meta.mode).toBe('text');
   });
@@ -115,7 +129,14 @@ describe('buildV25Payload（2.5 家族）', () => {
   test('keyframe 模式：需要首尾帧至少一个，且不允许 images', () => {
     expectApiError(400, () => buildV25Payload({ ...base, mode: 'keyframe' }));
     expectApiError(400, () => buildV25Payload({ ...base, mode: 'keyframe', first_frame: 'ftp://bad.com/f.jpg' }));
-    expectApiError(400, () => buildV25Payload({ ...base, mode: 'keyframe', first_frame: 'https://a.com/f.jpg', images: ['https://a.com/i.jpg'] }));
+    expectApiError(400, () =>
+      buildV25Payload({
+        ...base,
+        mode: 'keyframe',
+        first_frame: 'https://a.com/f.jpg',
+        images: ['https://a.com/i.jpg'],
+      }),
+    );
     const { payload } = buildV25Payload({ ...base, mode: 'keyframe', first_frame: 'https://a.com/f.jpg' });
     expect(payload.first_frame).toBe('https://a.com/f.jpg');
     expect(payload.last_frame).toBeUndefined();
@@ -124,16 +145,24 @@ describe('buildV25Payload（2.5 家族）', () => {
   test('reference 模式：Flash 不允许视频参考、图片最多 5 张', () => {
     expectApiError(400, () => buildV25Payload({ ...base, mode: 'reference' }));
     expectApiError(400, () => buildV25Payload({ ...base, mode: 'reference', videos: ['https://a.com/v.mp4'] }));
-    expectApiError(400, () => buildV25Payload({
-      ...base, mode: 'reference',
-      images: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`),
-    }));
+    expectApiError(400, () =>
+      buildV25Payload({
+        ...base,
+        mode: 'reference',
+        images: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`),
+      }),
+    );
     const { payload } = buildV25Payload({ ...base, mode: 'reference', images: ['https://a.com/i.jpg'] });
     expect(payload.images).toEqual(['https://a.com/i.jpg']);
   });
 
   test('付费 2.5 模型允许视频参考', () => {
-    const { payload } = buildV25Payload({ ...base, model: 'agnes-video-2.5', mode: 'reference', videos: ['https://a.com/v.mp4'] });
+    const { payload } = buildV25Payload({
+      ...base,
+      model: 'agnes-video-2.5',
+      mode: 'reference',
+      videos: ['https://a.com/v.mp4'],
+    });
     expect(payload.videos).toEqual([{ url: 'https://a.com/v.mp4', start_seconds: 0, require_audio: false }]);
   });
 
@@ -184,7 +213,11 @@ describe('buildV2Payload（V2.0 家族）', () => {
 
   test('keyframes 模式至少 2 张关键帧', () => {
     expectApiError(400, () => buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg'] }));
-    const { payload, meta } = buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] });
+    const { payload, meta } = buildV2Payload({
+      ...base,
+      mode: 'keyframes',
+      images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'],
+    });
     expect(payload.extra_body).toEqual({ image: ['https://a.com/1.jpg', 'https://a.com/2.jpg'], mode: 'keyframes' });
     expect(meta.images).toHaveLength(2);
   });
@@ -232,6 +265,8 @@ describe('buildImagePayload', () => {
     expect(ok.payload.extra_body.image).toHaveLength(2);
     expectApiError(400, () => buildImagePayload({ ...base, image: 'https://a.com/a.jpg' })); // 必须数组
     expectApiError(400, () => buildImagePayload({ ...base, image: ['ftp://bad.com/a.jpg'] }));
-    expectApiError(400, () => buildImagePayload({ ...base, image: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`) }));
+    expectApiError(400, () =>
+      buildImagePayload({ ...base, image: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`) }),
+    );
   });
 });
