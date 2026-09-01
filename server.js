@@ -5,7 +5,7 @@
  */
 const path = require('node:path');
 const fs = require('node:fs');
-const { Readable } = require('node:stream');
+const { Readable, pipeline: streamPipeline } = require('node:stream');
 const express = require('express');
 const { settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, acquireInstanceLock, instanceLockHeldByOther, refreshInstanceLock } = require('./db');
 const agnes = require('./agnes');
@@ -520,9 +520,15 @@ app.post('/api/tasks/:id/retry', ah(async (req, res) => {
     image: t.image, num_frames: t.num_frames, frame_rate: t.frame_rate,
     width: t.width, height: t.height, negative_prompt: t.negative_prompt,
   };
+  // v1.9 修复：重试保留溯源（网络波动重试不再丢 project/shot 关联，避免渲染跳过镜头）
+  const opts = {
+    project_id: t.project_id || null,
+    shot_id: t.shot_id || null,
+    image_id: t.image_id || null,
+  };
   const { payload } = buildPayload(meta);
-  const task = await submitTask(payload, meta);
-  log('info', `任务 #${t.id} 重试 → 新任务 #${task.id}`);
+  const task = await submitTask(payload, meta, opts);
+  log('info', `任务 #${t.id} 重试 → 新任务 #${task.id}（project=${t.project_id} shot=${t.shot_id}）`);
   res.status(201).json({ old: t, task });
 }));
 
@@ -1208,7 +1214,12 @@ app.get('/api/music/stream', ah(async (req, res) => {
   res.setHeader('Content-Type', upstream.headers.get('content-type') || 'audio/mpeg');
   const len = upstream.headers.get('content-length');
   if (len) res.setHeader('Content-Length', len);
-  Readable.fromWeb(upstream.body).pipe(res);
+  // 用 pipeline 转发：pipeline 会正确挂接/清理两端的 error 与 close 事件。
+  // 若用裸 .pipe()，上游 body 因超时/断流 emit 'error' 时无人监听，
+  // Node 会直接把该错误抛成 uncaughtException 导致整个进程崩溃。
+  streamPipeline(Readable.fromWeb(upstream.body), res, (err) => {
+    if (err && err.name !== 'AbortError') log('warn', `试听流中断: ${err.message}`);
+  });
 }));
 
 // 项目选用 BGM：{song_id, name, artist?, album?, level?} → 立即下载缓存本地并落库
@@ -1610,6 +1621,11 @@ app.use((req, res) => res.status(404).json({ error: 'Not Found' }));
 app.use((err, req, res, next) => {
   if (res.headersSent) return next(err); // 响应已开始流式输出时交给 Express 默认处理
   if (err instanceof ApiError) return res.status(err.status).json({ error: err.message });
+  // 显式标记 expose 的错误（如音乐接口服务不可达）直接回传可操作信息，不笼统 500
+  if (err.expose === true && Number.isInteger(err.status)) {
+    log('error', `可暴露错误（${err.status}）: ${err.message}`);
+    return res.status(err.status).json({ error: err.message });
+  }
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: '请求体不是合法 JSON' });
   log('error', `未处理异常: ${err.message}\n${err.stack || ''}`);
   res.status(500).json({ error: '服务器内部错误（详情见「日志」面板）' });

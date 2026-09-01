@@ -35,7 +35,20 @@ function headers(extra = {}) {
 }
 
 async function requestJson(url) {
-  const res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT_MS) });
+  let res;
+  try {
+    res = await fetch(url, { headers: headers(), signal: AbortSignal.timeout(TIMEOUT_MS) });
+  } catch (e) {
+    // fetch 网络层失败（连接被拒/DNS/超时/TLS）统一报 "fetch failed"，包装成可操作信息
+    const host = String(url).replace(/^https?:\/\//i, '').split('?')[0].split('/')[0];
+    const hint = e.name === 'TimeoutError'
+      ? `请求超时（${TIMEOUT_MS / 1000}s）`
+      : `连接失败（${e.cause?.code || e.message || '未知网络错误'}）`;
+    const err = new Error(`音乐接口服务不可达（${host}）：${hint}。请确认该服务已启动、设置中的 music_api_base 地址与端口正确`);
+    err.status = 502; // 上游不可达：错误中间件直接回传给前端，而不是笼统的 500
+    err.expose = true;
+    throw err;
+  }
   const text = await res.text();
   let j = null;
   try { j = text ? JSON.parse(text) : null; } catch { j = null; }

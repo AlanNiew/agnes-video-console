@@ -78,6 +78,15 @@ const mockServer = http.createServer(async (req, res) => {
     return send(200, mockResult(job));
   }
 
+  // v1.4：BGM 音频文件（须在下方 /out/ 前缀分支之前精确匹配：
+  // 否则会命中视频兜底分支，无 ffmpeg 时只返回 12 字节 mp4 header，
+  // 导致 downloadBGM 报「BGM 下载数据异常（过小）」）
+  if (req.method === 'GET' && u.pathname === '/out/bgm.mp3') {
+    const buf = (bgmFixture && fs.existsSync(bgmFixture)) ? fs.readFileSync(bgmFixture) : Buffer.alloc(4096, 7);
+    res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length });
+    return res.end(buf);
+  }
+
   // v1.3：模拟完成的视频文件（供本地归档下载与成片渲染 e2e；有 ffmpeg 时返回可解码的真实测试视频）
   if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
     if (fixtureFile && fs.existsSync(fixtureFile)) {
@@ -111,11 +120,6 @@ const mockServer = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && u.pathname === '/player') {
     return send(200, { code: 200, message: 'success', data: { url: `http://127.0.0.1:${MOCK_PORT}/out/bgm.mp3` } });
-  }
-  if (req.method === 'GET' && u.pathname === '/out/bgm.mp3') {
-    const buf = (bgmFixture && fs.existsSync(bgmFixture)) ? fs.readFileSync(bgmFixture) : Buffer.alloc(4096, 7);
-    res.writeHead(200, { 'Content-Type': 'audio/mpeg', 'Content-Length': buf.length });
-    return res.end(buf);
   }
 
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
