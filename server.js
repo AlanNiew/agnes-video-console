@@ -18,6 +18,8 @@ const { ARTIFACTS_DIR, downloadArtifact } = require('./artifacts');
 const { createPipelineService } = require('./pipeline');
 const { buildOpenApi } = require('./openapi');
 const { log, recent: recentLogs } = require('./logger');
+const { RENDER_PARAMS_DEFAULTS, probeDuration } = require('./config');
+const { ApiError, ah } = require('./errors');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -112,15 +114,7 @@ function cleanVideoList(arr) {
     });
 }
 
-class ApiError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-
-/** Express 4 async 路由包装：让 reject / 同步抛出都进入错误中间件 */
-const ah = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+/** videos 支持字符串 URL 或 {url, start_seconds?, require_audio?} 对象 */
 
 /**
  * agnes-video-v2.0 参数构建（对照官方文档）
@@ -1071,18 +1065,7 @@ app.get('/api/tts/market', ah(async (req, res) => {
   res.json({ items, has_more: r.has_more });
 }));
 
-// 音频时长探测（ffprobe 不存在时返回 null 不阻塞）
-function probeDuration(filePath) {
-  try {
-    const { spawnSync } = require('node:child_process');
-    const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', filePath], { encoding: 'utf8', timeout: 10000 });
-    if (r.status === 0 && r.stdout) {
-      const d = Number(r.stdout.trim());
-      return Number.isFinite(d) ? Math.round(d * 100) / 100 : null;
-    }
-    return null;
-  } catch { return null; }
-}
+// 音频时长探测统一由 config.js 提供（ffprobe 不存在时返回 null 不阻塞）
 
 // TTS 合成：{text, kind?, project_id?, voice?, speed?, model?} → mp3 落库
 app.post('/api/tts/generate', ah(async (req, res) => {
@@ -1542,8 +1525,7 @@ app.post('/api/projects/:id/videos', ah(async (req, res) => {
 }));
 
 /* ---------- v1.3 成片渲染（镜头视频 + 逐镜旁白 → 完整短片） ---------- */
-
-const RENDER_PARAMS_DEFAULTS = { transition_ms: 600, narration_offset_ms: 500, title_card: true, end_card: true };
+// 渲染参数默认值统一由 config.js 单源提供（RENDER_PARAMS_DEFAULTS）
 
 // 发起渲染：{transition_ms?, narration_offset_ms?, title_card?, end_card?} → 渲染任务（后台执行）
 app.post('/api/projects/:id/render', ah(async (req, res) => {

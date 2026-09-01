@@ -16,6 +16,7 @@ const { projects, renders, instanceLockHeldByOther } = require('./db');
 const { ARTIFACTS_DIR } = require('./artifacts');
 const netmusic = require('./netmusic');
 const { log } = require('./logger');
+const { probeDuration } = require('./config');
 
 const TICK_MS = 1500;
 const OUT_FPS = 30;
@@ -59,19 +60,7 @@ function hasFfmpeg() {
   }
 }
 
-function probeDuration(file) {
-  try {
-    const r = spawnSync('ffprobe', ['-v', 'error', '-show_entries', 'format=duration', '-of', 'csv=p=0', file],
-      { encoding: 'utf8', timeout: 15_000, windowsHide: true });
-    if (r.status === 0 && r.stdout) {
-      const d = Number(r.stdout.trim());
-      return Number.isFinite(d) && d > 0 ? d : null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
+// probeDuration 统一由 config.js 提供（消除与 server 侧的双实现漂移）
 
 /** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
 function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {}) {

@@ -567,8 +567,10 @@ const tasks = {
 };
 
 /** 默认设置（与文档对齐） */
+const { DEFAULT_BASE_URL } = require('./config');
+
 const DEFAULT_SETTINGS = {
-  base_url: 'https://apihub.agnes-ai.com',
+  base_url: DEFAULT_BASE_URL,
   model: 'agnes-video-2.5-flash',
   poll_interval_ms: '2000',
   max_active_minutes: '20',

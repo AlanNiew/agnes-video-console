@@ -10,6 +10,7 @@
 const { settings, tasks, instanceLockHeldByOther } = require('./db');
 const agnes = require('./agnes');
 const { log } = require('./logger');
+const { DEFAULT_BASE_URL } = require('./config');
 
 const TICK_MS = 1000;
 const MAX_ATTEMPTS = 5;
@@ -88,7 +89,7 @@ class Submitter {
       this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
       return;
     }
-    const baseUrl = settings.get('base_url', 'https://apihub.agnes-ai.com');
+    const baseUrl = settings.get('base_url', DEFAULT_BASE_URL);
     const prev = this.retryUntil.get(t.id);
     const attempts = prev ? prev.attempts + 1 : 1;
 

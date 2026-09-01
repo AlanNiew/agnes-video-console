@@ -9,6 +9,7 @@ const { settings, tasks, instanceLockHeldByOther } = require('./db');
 const agnes = require('./agnes');
 const { downloadArtifact } = require('./artifacts');
 const { log } = require('./logger');
+const { DEFAULT_BASE_URL } = require('./config');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
 
@@ -88,7 +89,7 @@ class Poller {
 
   async _pollOneInner(t) {
     const apiKey = settings.get('api_key', '');
-    const baseUrl = settings.get('base_url', 'https://apihub.agnes-ai.com');
+    const baseUrl = settings.get('base_url', DEFAULT_BASE_URL);
     const maxActiveMs = Math.max((Number(settings.get('max_active_minutes', 20)) || 20) * 60_000, 30_000);
 
     // 轮询超时保护：实际提交（或创建）超过 max_active_minutes 仍未结束

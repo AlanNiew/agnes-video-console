@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { settings, DEFAULT_SETTINGS } = require('./db');
 const { ARTIFACTS_DIR } = require('./artifacts');
+const { ApiError } = require('./errors');
 
 const TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 300_000;
@@ -44,16 +45,14 @@ async function requestJson(url) {
     const hint = e.name === 'TimeoutError'
       ? `请求超时（${TIMEOUT_MS / 1000}s）`
       : `连接失败（${e.cause?.code || e.message || '未知网络错误'}）`;
-    const err = new Error(`音乐接口服务不可达（${host}）：${hint}。请确认该服务已启动、设置中的 music_api_base 地址与端口正确`);
-    err.status = 502; // 上游不可达：错误中间件直接回传给前端，而不是笼统的 500
-    err.expose = true;
-    throw err;
+    // 上游不可达：502 直接透传给前端，而不是笼统的 500
+    throw new ApiError(502, `音乐接口服务不可达（${host}）：${hint}。请确认该服务已启动、设置中的 music_api_base 地址与端口正确`);
   }
   const text = await res.text();
   let j = null;
   try { j = text ? JSON.parse(text) : null; } catch { j = null; }
   if (!res.ok || !j || j.code !== 200) {
-    throw new Error(`音乐接口错误（HTTP ${res.status}）：${String(j?.message || text || '').slice(0, 200)}`);
+    throw new ApiError(502, `音乐接口错误（HTTP ${res.status}）：${String(j?.message || text || '').slice(0, 200)}`);
   }
   return j.data;
 }
@@ -61,9 +60,9 @@ async function requestJson(url) {
 /** 搜索歌曲 → 规范化列表 */
 async function search(keyword, limit = 8) {
   const base = baseUrl();
-  if (!base) throw new Error('尚未配置音乐接口地址（设置 → music_api_base）');
+  if (!base) throw new ApiError(400, '尚未配置音乐接口地址（设置 → music_api_base）');
   const kw = String(keyword || '').trim();
-  if (!kw) throw new Error('请输入搜索关键词');
+  if (!kw) throw new ApiError(400, '请输入搜索关键词');
   const lim = Math.min(Math.max(Number(limit) || 8, 1), 50);
   const data = await requestJson(`${base}/search?keyword=${encodeURIComponent(kw)}&limit=${lim}`);
   const items = (Array.isArray(data) ? data : []).map((s) => ({
@@ -81,13 +80,13 @@ async function search(keyword, limit = 8) {
 /** 获取播放地址（有时效性，使用前现取） */
 async function playUrl(id, level) {
   const base = baseUrl();
-  if (!base) throw new Error('尚未配置音乐接口地址（设置 → music_api_base）');
+  if (!base) throw new ApiError(400, '尚未配置音乐接口地址（设置 → music_api_base）');
   const lv = LEVELS.includes(String(level)) ? String(level)
     : (LEVELS.includes(String(settings.get('music_level', DEFAULT_SETTINGS.music_level)))
       ? String(settings.get('music_level', DEFAULT_SETTINGS.music_level)) : 'exhigh');
   const data = await requestJson(`${base}/player?id=${encodeURIComponent(String(id))}&level=${lv}`);
   const url = String(data?.url || '').trim();
-  if (!/^https?:\/\//i.test(url)) throw new Error('音乐接口未返回有效播放地址（该歌曲可能无版权或需要 VIP）');
+  if (!/^https?:\/\//i.test(url)) throw new ApiError(502, '音乐接口未返回有效播放地址（该歌曲可能无版权或需要 VIP）');
   return { url, level: lv };
 }
 
@@ -109,9 +108,9 @@ async function downloadBGM(id, level) {
 
   const { url } = await playUrl(id, lv);
   const res = await fetch(url, { signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS) });
-  if (!res.ok) throw new Error(`BGM 下载失败（HTTP ${res.status}）`);
+  if (!res.ok) throw new ApiError(502, `BGM 下载失败（HTTP ${res.status}）`);
   const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length < 1024) throw new Error('BGM 下载数据异常（过小）');
+  if (buf.length < 1024) throw new ApiError(502, 'BGM 下载数据异常（过小）');
   fs.writeFileSync(localPath, buf);
   return { local_path: localPath, local_url: `/artifacts/${name}`, cached: false };
 }
