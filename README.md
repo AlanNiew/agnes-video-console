@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-65%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-61%20unit%20%2B%2065%20e2e-brightgreen)
 本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
 [English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
@@ -43,7 +43,7 @@
 - 🧭 **流程引导**：步骤条点击跳转、随滚动高亮；「下一步」动态引导条；生成等待分阶段提示；新建项目可一键直达分镜
 - 🔐 **密钥安全**：API Key 仅存服务端 SQLite，浏览器只见掩码；服务只监听 `127.0.0.1`
 - 🧾 **内置日志面板**：轮询 / 提交事件在前端可视
-- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路（40 项断言）
+- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路（65 项断言）；另有 **61 项单元测试**（jest：payload 校验矩阵 / LLM 解析 / ASS 字幕 / 退避数学），`npm test` 一键全跑
 
 ## 🚀 快速开始
 
@@ -84,7 +84,12 @@ npm start
 
 ```
 agnes-video-console/
-├── server.js            # Express API + 参数校验（按模型家族分发）+ 流水线端点 + TTS 端点 + 成片渲染端点 + 静态服务
+├── server.js            # Express 装配 + 静态服务 + 统一错误中间件 + 启动编排（单实例锁 / 优雅退出）
+├── constants.js         # 模型清单 / 参数白名单 / 输入上限 / TTS 预设（零依赖单一事实来源）
+├── config.js            # 跨模块单源常量（DEFAULT_BASE_URL / probeDuration / 渲染默认参数）
+├── errors.js            # ApiError + ah（统一业务错误协议）
+├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
+├── services/            # 纯校验与组装（payloads / prompts / voice-pool）+ pipeline（依赖注入编排）
 ├── db.js                # SQLite 数据层（任务/项目/文案/图片/镜头/配音/渲染任务表 + 自动迁移 + 事务）
 ├── agnes.js             # Agnes API 客户端（视频创建/查询 / chat / 图片）
 ├── submitter.js         # 后台提交器（v1.3：按 submit_interval_ms 服务端节流，429 自动退避重试）
@@ -95,10 +100,13 @@ agnes-video-console/
 ├── netmusic.js          # 音乐接口客户端（v1.4 BGM：搜索 / 播放地址 / 本地缓存下载）
 ├── fish-tts.js          # Fish Audio TTS 客户端（直连或 HTTP 代理 CONNECT 隧道）
 ├── logger.js            # 内存环形日志
-├── public/              # 前端单页应用（index.html / style.css / app.js 任务中心 / workspace.js 创作工作台）
+├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
+├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
 ├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流与真实 ffmpeg 渲染用例）
 └── data/                # 运行时生成：agnes-console.db + artifacts 本地归档（已被 .gitignore 忽略）
 ```
+
+> 开发命令：`npm test`（jest 单测 + e2e 冒烟全跑）；`npm run test:unit` / `npm run test:mock` 单独跑；`npm run lint` / `npm run format` 代码检查与格式化。
 
 ## 📡 本工具自带 API
 

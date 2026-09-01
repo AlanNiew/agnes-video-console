@@ -2,6 +2,30 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.1] - 2026-09-01
+
+### Fixed
+
+- **音乐接口不可达透传**：fetch 网络层失败（连接被拒/DNS/超时/TLS）由笼统 500 改为 502 + 可操作提示（确认服务已启动与地址端口正确）。
+- **重试保留溯源**：`/api/tasks/:id/retry` 重试不再丢失 project/shot/image 关联——网络波动重试不再导致成片渲染跳过镜头。
+- **试听流防崩溃**：BGM 试听流代理改用 `stream.pipeline` 转发——上游断流时裸 `.pipe()` 会把 error 抛成 uncaughtException 导致整个进程退出。
+- **网络异常退避引用修复**：submitter 网络异常重试路径的未定义变量（静态检查捕获，该路径此前无测试覆盖）。
+
+### Changed
+
+- **server.js 分层拆分**（1678 行 → 132 行装配层，54 条路由行为零变更，e2e 全程守护）：
+  - `constants.js`（模型清单/参数白名单/上限/TTS 预设，零依赖）
+  - `config.js`（DEFAULT_BASE_URL / probeDuration / RENDER_PARAMS_DEFAULTS 单源——原 base_url 4 处硬编码、probeDuration 双实现漂移、渲染默认值双定义全部收敛）
+  - `errors.js`（ApiError + ah 统一错误协议，netmusic 裸 Error+expose 私有协议并入）
+  - `services/`（payloads 校验与构建 / prompts 模板与 LLM 解析 / voice-pool 备选池 / pipeline 依赖注入）
+  - `routes/`（meta / settings / tasks / llm / images / tts / music / projects / render 九域，注册顺序与原文件一致）
+- **前端公共工具收敛**：`public/common.js` 统一 esc/api/fmtTime/toast/$ 工具——原三份逐字拷贝（app/workspace/compare），两份 `api` 行为已分叉（workspace 版不设 `err.status`）。
+
+### Added
+
+- **单元测试 61 项**（jest，`test/unit/`）：payload 校验矩阵（V2.5/V2.0/图片三套）、LLM 输出容错解析、分镜规范化、ASS 字幕生成（CJK 预换行/行首标点回收/防注入）、提交退避数学（提取 `computeBackoffMs` 纯函数）。
+- **工具链**（devDependencies，运行时依赖仍仅 express）：jest 30 + eslint 10（flat config）+ prettier 3（printWidth 120）；CI 升级为 lint → format:check → jest → e2e 四步。
+
 ## [1.9.0] - 2026-08-30
 
 ### Added

@@ -3,7 +3,7 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-64%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-61%20unit%20%2B%2065%20e2e-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
 **creation workspace (4-step pipeline) + task-queue board + background polling + SQLite persistence**.
@@ -77,25 +77,35 @@ Open **http://127.0.0.1:8273**, click ⚙ settings and enter your Agnes API Key.
 
 ```
 agnes-video-console/
-├── server.js            # Express API + validation (per model family) + pipeline endpoints + static files
+├── server.js            # Express assembly + static files + unified error middleware + startup orchestration
+├── constants.js         # Model catalog / parameter whitelists / input limits / TTS presets (zero-dependency)
+├── config.js            # Single-source constants (DEFAULT_BASE_URL / probeDuration / render defaults)
+├── errors.js            # ApiError + ah (unified business error protocol)
+├── routes/              # Domain-split API routes (meta / settings / tasks / llm / images / tts / music / projects / render)
+├── services/            # Pure validation & assembly (payloads / prompts / voice-pool) + pipeline (DI orchestration)
 ├── db.js                # SQLite layer (tasks / projects / texts / images / settings + migration + transactions)
 ├── agnes.js             # Agnes API client (video create/query / chat / images)
+├── submitter.js         # Background submitter (throttled submits with 429 exponential backoff)
 ├── poller.js            # Background poller (backoff / timeout / stuck-task cleanup)
+├── render.js            # Final-cut renderer (normalize → xfade → narration-aligned mix → title/end cards)
+├── netmusic.js          # Music API client (BGM search / play URL / local cache)
+├── fish-tts.js          # Fish Audio TTS client
 ├── logger.js            # In-memory ring-buffer log
-├── public/              # Frontend SPA (index.html / style.css / app.js task center / workspace.js creation workspace)
+├── public/              # Frontend SPA (index.html / common.js shared utils / app.js task center / workspace.js creation workspace)
+├── test/unit/           # Unit tests (jest: payload validation / LLM parsing / ASS subtitles / backoff math)
 ├── test/mock-e2e.js     # End-to-end smoke test with a local fake Agnes API
 └── data/                # Runtime: agnes-console.db + artifacts backups (gitignored)
 ```
 
 ## 🧪 Testing
 
-No real API key required — a local fake Agnes API verifies the whole create → poll → complete loop plus per-model validation:
+No real API key required:
 
 ```bash
-npm run test:mock
+npm test          # 61 unit tests (jest) + e2e smoke (fake Agnes API + real ffmpeg render)
 ```
 
-Expected output: `== 全部通过 ✔ ==` (currently **47 assertions**, covering the full task loop, the creation pipeline, storyboards, input validation and security constraints). CI runs it on every push / PR.
+CI runs lint → format check → unit tests → e2e on every push / PR.
 
 ## 🔒 Security
 
