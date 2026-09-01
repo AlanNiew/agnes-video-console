@@ -232,11 +232,6 @@ const stmts = {
     WHERE status IN ('queued','in_progress') AND video_id IS NOT NULL AND video_id != ''
     ORDER BY created_at ASC
   `),
-  stuckTasks: db.prepare(`
-    SELECT * FROM tasks
-    WHERE status IN ('queued','in_progress') AND (video_id IS NULL OR video_id = '')
-    ORDER BY created_at ASC
-  `),
   // v1.3 提交队列：待提交任务（提交器接管后不再按 created_at 年龄过滤）
   pendingSubmitTasks: db.prepare(`
     SELECT * FROM tasks
@@ -354,11 +349,29 @@ const stmts = {
   getRenderJob: db.prepare('SELECT * FROM render_jobs WHERE id = ?'),
   listRenderJobsByProject: db.prepare('SELECT * FROM render_jobs WHERE project_id = ? ORDER BY id DESC'),
   queuedRenderJobs: db.prepare("SELECT * FROM render_jobs WHERE status = 'queued' ORDER BY id ASC"),
+  // v1.9.2 渲染自愈：进程崩溃/退出遗留的 rendering 任务复位回 queued（启动时由渲染器调用）
+  resetStuckRenderJobs: db.prepare("UPDATE render_jobs SET status = 'queued', progress = 0 WHERE status = 'rendering'"),
   updateRenderJob: db.prepare(
     'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, updated_at = ? WHERE id = ?',
   ),
   deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
   deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
+  // v1.9.2 单实例锁原子 CAS（upsert 形式）：
+  // 首次插入必成功；行已存在时仅当「锁属本进程 / 心跳过期 / 坏数据」才覆盖——
+  // 单条语句的语句级写锁保证跨进程原子性（tx/BEGIN IMMEDIATE 在 node:sqlite
+  // 跨进程实测不产生互斥，两进程可同时通过检查各自写入，故弃用）。
+  // CASE 逐分支惰性求值：json_valid 守卫在前，坏 JSON 不会触达 json_extract 抛错。
+  casInstanceLock: db.prepare(`
+    INSERT INTO settings (key, value) VALUES (?, ?)
+    ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    WHERE CASE
+      WHEN json_valid(settings.value) = 0 THEN 1
+      WHEN CAST(json_extract(settings.value, '$.pid') AS INTEGER) = ? THEN 1
+      WHEN json_extract(settings.value, '$.heartbeat') IS NULL THEN 1
+      WHEN CAST(json_extract(settings.value, '$.heartbeat') AS INTEGER) < ? THEN 1
+      ELSE 0
+    END = 1
+  `),
 };
 
 /** 安全解析 JSON 列 */
@@ -528,15 +541,6 @@ const tasks = {
   /** v1.3 归档补扫：已完成但尚未本地归档的任务 */
   completedWithoutLocal() {
     return stmts.completedWithoutLocal.all().map(toTaskRow);
-  },
-
-  /** 已提交但从未获得 video_id 的悬空任务（进程中断等） */
-  stuck(olderThanMs = 60 * 1000) {
-    const cutoff = Date.now() - olderThanMs;
-    return stmts.stuckTasks
-      .all()
-      .map(toTaskRow)
-      .filter((t) => t.created_at < cutoff);
   },
 
   stats() {
@@ -1111,6 +1115,10 @@ const renders = {
   remove(id) {
     return stmts.deleteRenderJob.run(Number(id)).changes > 0;
   },
+  /** v1.9.2 渲染自愈：把崩溃遗留的 rendering 任务复位回 queued（重新渲染），返回复位条数 */
+  resetStuck() {
+    return stmts.resetStuckRenderJobs.run().changes;
+  },
 };
 
 /* ---------------- v1.6.1：单实例工作锁 ----------------
@@ -1143,9 +1151,17 @@ function instanceLockHeldByOther() {
 }
 
 function acquireInstanceLock() {
-  if (instanceLockHeldByOther()) return false;
-  settings.set(INSTANCE_LOCK_KEY, JSON.stringify({ pid: process.pid, heartbeat: Date.now() }));
-  return true;
+  // v1.9.2 原子化：检查 + 写入压成单条 upsert CAS（语句级写锁跨进程原子），
+  // 消除双进程同时启动时「都通过检查 → 都写入 → 都拿到锁」的 TOCTOU 窗口。
+  // 语义与旧版差异：心跳新鲜但持有进程实际已死时不再即时抢锁（旧版靠 kill(pid,0)），
+  // 而是等心跳过期（≤15s）后由接管循环获得——收敛稍慢但避免了 Windows pid 复用误判。
+  const r = stmts.casInstanceLock.run(
+    INSTANCE_LOCK_KEY,
+    JSON.stringify({ pid: process.pid, heartbeat: Date.now() }),
+    process.pid,
+    Date.now() - 15_000, // 锁过期阈值（与 instanceLockHeldByOther 一致）
+  );
+  return r.changes > 0;
 }
 
 /** 持有者心跳；锁无主时顺带接管 */

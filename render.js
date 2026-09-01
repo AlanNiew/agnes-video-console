@@ -100,10 +100,13 @@ function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {
   });
 }
 
-/** drawtext 文本转义（滤镜参数内的 : ' \ 需转义；文本用单引号包裹由调用方负责） */
+/** drawtext 文本转义（滤镜参数内的 : ' \ % 需转义；文本用单引号包裹由调用方负责）。
+ * % 必须转义：drawtext 默认 expansion=normal，%{expr} 会被 ffmpeg 表达式引擎求值
+ * （无命令执行能力，但会导致渲染失败或封面显示非预期计算值）。 */
 function escDrawtext(s) {
   return String(s || '')
     .replace(/\\/g, '\\\\')
+    .replace(/%/g, '\\%')
     .replace(/'/g, "\\'")
     .replace(/:/g, '\\:');
 }
@@ -238,6 +241,12 @@ class Renderer {
 
   start() {
     this.stop();
+    // v1.9.2 渲染自愈：进程崩溃/被杀时正在渲染的任务会永久卡在 rendering
+    // （删除接口拒绝 rendering 状态，用户无解卡途径）——启动时复位回 queued 重新渲染。
+    // 注：接管场景（原持有者心跳饿死被误判消亡）可能把活任务复位重复渲染，
+    // 产物文件名带时间戳不冲突，代价仅为重复一次 ffmpeg，概率与代价均可接受。
+    const stuck = renders.resetStuck();
+    if (stuck > 0) log('warn', `发现 ${stuck} 个渲染中断的任务，已复位重新排队`);
     this.timer = setInterval(() => this.tick().catch((e) => log('error', `渲染循环异常: ${e.message}`)), TICK_MS);
     this.timer.unref?.();
     log('info', `渲染器已启动（ffmpeg ${hasFfmpeg() ? '可用' : '不可用，渲染请求将被拒绝'}）`);
@@ -716,3 +725,4 @@ module.exports = new Renderer();
 module.exports.collectSegments = collectSegments;
 module.exports.hasFfmpeg = hasFfmpeg;
 module.exports.buildSubtitleAss = buildSubtitleAss;
+module.exports.escDrawtext = escDrawtext;

@@ -1170,6 +1170,33 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');
+
+    // v1.9.2 渲染自愈：崩溃遗留的 rendering 任务启动时复位回 queued 重新渲染（闭环验证）
+    {
+      const stuckJob = (await api('POST', `/api/projects/${pid}/render`, {})).data;
+      // 直接把任务置成 rendering（模拟进程崩溃瞬间的库内状态），renderer.start() 应复位回 queued
+      const { DatabaseSync } = require('node:sqlite');
+      const dbx = new DatabaseSync(process.env.DB_PATH);
+      dbx.prepare("UPDATE render_jobs SET status = 'rendering', progress = 42 WHERE id = ?").run(stuckJob.id);
+      dbx.close();
+      const renderer = require('../render');
+      renderer.start(); // 内部先复位孤儿 rendering 任务（新定时器 1.5s 后才首次 tick）
+      await sleep(200);
+      const after = (await api('GET', `/api/render/jobs/${stuckJob.id}`)).data;
+      if (after.status !== 'queued') {
+        err(`渲染自愈未生效：崩溃遗留任务应复位回 queued，实际: ${after.status}`);
+      }
+      // 等复位后的重新渲染走完闭环（复用渲染超时上限）
+      let healed = after;
+      const dHeal = Date.now() + 180_000;
+      while (Date.now() < dHeal && !['completed', 'failed'].includes(healed.status)) {
+        healed = (await api('GET', `/api/render/jobs/${stuckJob.id}`)).data;
+        await sleep(1000);
+      }
+      if (healed.status !== 'completed') err(`自愈重渲染未完成: ${healed.status} / ${healed.error_message}`);
+      else ok(`渲染自愈闭环：rendering 孤儿复位 → 重新渲染完成（${path.basename(healed.output_path || '?')}）`);
+      await api('DELETE', `/api/render/jobs/${stuckJob.id}`);
+    }
   }
 
   // 20.45 v1.4：清除 BGM 选择

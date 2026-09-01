@@ -88,6 +88,12 @@ class Poller {
   }
 
   async _pollOneInner(t) {
+    // v1.9.2 快照防陈旧：长 tick 进行中，手动 pollNow 可能已把该任务推到终态——
+    // 以最新状态为准，终态直接跳过（防止超时分支把 completed 改判 failed、或重复归档下载）
+    const fresh = tasks.get(t.id);
+    if (!fresh) return;
+    if (['completed', 'failed', 'submit_error'].includes(fresh.status)) return;
+    t = fresh;
     const apiKey = settings.get('api_key', '');
     const baseUrl = settings.get('base_url', DEFAULT_BASE_URL);
     const maxActiveMs = Math.max((Number(settings.get('max_active_minutes', 20)) || 20) * 60_000, 30_000);

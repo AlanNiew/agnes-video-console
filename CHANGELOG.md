@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [1.9.2] - 2026-09-01
+
+### Fixed
+
+- **渲染任务卡死自愈（并发审计发现·高）**：渲染中进程崩溃/被杀后任务永久卡在 `rendering`（删除接口拒绝该状态，用户无任何解卡途径）——渲染器 `start()` 现在把孤儿 `rendering` 任务复位回 `queued` 重新渲染；e2e 新增「复位 → 重渲染完成」闭环用例。对照：tasks 域早有两层自愈，render 域此前为零。
+- **单实例锁 TOCTOU（并发审计发现·中）**：锁获取是「读检查 → 写」两条语句，双进程同时启动可都拿到锁并都启动 worker。改为单条 upsert CAS（语句级写锁天然原子）。**过程中的证伪**：先尝试 `BEGIN IMMEDIATE` 事务包裹，跨进程并发实测**不产生互斥**（两进程同时通过检查各自写入），弃用并记录；CAS 方案经双进程并发脚本 3 轮验证恰好一个成功。语义微调：持有者死亡但心跳未过期时改为等过期（≤15s）再接管，顺带规避 Windows pid 复用误判。
+- **poller 快照陈旧可把 completed 改判 failed（并发审计发现·中）**：长 tick 进行中，手动「立即查询」已完成某任务后，轮到它时仍按陈旧快照走超时分支可能改判 failed、或重复归档下载。`_pollOneInner` 现在以最新库内状态为准，终态直接跳过。
+- **drawtext 滤镜 `%` 转义缺失（注入面审计发现·低）**：`escDrawtext` 此前只转义 `\ ' :`，`%{expr}` 会被 ffmpeg 表达式引擎求值（无命令执行能力，但可致渲染失败或封面显示非预期值）。补 `%` 转义并导出单测覆盖。
+- 其余注入面审计结论（SQL 全参数化、静态服务无路径穿越、spawn 数组传参无 shell 注入、SSRF 面在本地单人语境可接受）：**无风险，未改动**。
+
+### Changed
+
+- 删除死代码：`tasks.stuck()` 与 `stuckTasks`（与 `pendingSubmitTasks` 查询完全相同的 v1.3 前身，全仓无调用方）。
+
 ## [1.9.1] - 2026-09-01
 
 ### Fixed

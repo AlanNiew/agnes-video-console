@@ -4,7 +4,7 @@
  * 注意：buildSubtitleAss 未从模块导出独立函数明细，但 assTime/wrapCJK 为内部函数，
  * 这里经 buildSubtitleAss 的输出间接断言（与 e2e 的做法一致但更细）。
  */
-const { buildSubtitleAss } = require('../../render');
+const { buildSubtitleAss, escDrawtext } = require('../../render');
 
 describe('buildSubtitleAss', () => {
   test('生成标准 ASS 头（Script Info / Style / Events）', () => {
@@ -82,5 +82,33 @@ describe('buildSubtitleAss', () => {
     expect(ass).toContain('PlayResX: 720');
     expect(ass).toContain('PlayResY: 1280');
     expect(ass).toContain(',80,1'); // MarginV
+  });
+});
+
+describe('escDrawtext（drawtext 滤镜文本转义，v1.9.2）', () => {
+  test("转义集完整：\\ % ' :（按此顺序，先 \\ 防二阶转义）", () => {
+    expect(escDrawtext('a\\b')).toBe('a\\\\b');
+    expect(escDrawtext('100%')).toBe('100\\%');
+    expect(escDrawtext("it's")).toBe("it\\'s");
+    expect(escDrawtext('a:b')).toBe('a\\:b');
+  });
+
+  test('% 转义阻断 ffmpeg 表达式求值（expansion=normal 的 %{expr} 注入）', () => {
+    expect(escDrawtext('%{n/frame_rate}')).toBe('\\%{n/frame_rate}');
+    // 注意表达式内的 : 同样会被 : 转义规则覆盖（双保险）
+    expect(escDrawtext('评分 %{eif:2*3} 分')).toBe('评分 \\%{eif\\:2*3} 分');
+  });
+
+  test('普通中文/英文原样通过', () => {
+    expect(escDrawtext('黄昏麦田少年')).toBe('黄昏麦田少年');
+    expect(escDrawtext('')).toBe('');
+    expect(escDrawtext(null)).toBe('');
+    expect(escDrawtext(undefined)).toBe('');
+  });
+
+  test('组合逃逸尝试全部被中和', () => {
+    // 尝试用 % 和 ' 组合闭合引号并求值表达式 → 两处均被转义
+    const evil = "'%{pts}";
+    expect(escDrawtext(evil)).toBe("\\'\\%{pts}");
   });
 });
