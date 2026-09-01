@@ -41,7 +41,7 @@ class Submitter {
     this.timer = null;
     this.running = false;
     this.lastSubmitAt = new Map(); // model -> 上次成功提交时间戳（服务端最小间隔）
-    this.retryUntil = new Map();   // taskId -> { until, attempts }
+    this.retryUntil = new Map(); // taskId -> { until, attempts }
   }
 
   start() {
@@ -111,8 +111,8 @@ class Submitter {
         this.fail(t.id, `提交网络异常（自动重试 ${attempts - 1} 次）：${e.message}`);
         return;
       }
-      this.backoff(taskId, computeBackoffMs(attempts, 'net'), attempts);
-      log('warn', `任务 #${taskId} 提交网络异常（第 ${attempts} 次）：${e.message}`);
+      this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
+      log('warn', `任务 #${t.id} 提交网络异常（第 ${attempts} 次）：${e.message}`);
       return;
     }
 
@@ -124,7 +124,10 @@ class Submitter {
       }
       const delay = computeBackoffMs(attempts, 'rate-limit');
       this.backoff(t.id, delay, attempts);
-      log('warn', `任务 #${t.id} 触发 429 限流，${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`);
+      log(
+        'warn',
+        `任务 #${t.id} 触发 429 限流，${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
+      );
       return;
     }
 
