@@ -29,13 +29,25 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
-    "test": "npm run test:mock",
-    "test:mock": "node test/mock-e2e.js"
+    "test": "npm run test:unit && npm run test:mock",
+    "test:unit": "jest",
+    "test:mock": "node test/mock-e2e.js",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "engines": {
     "node": ">=22.13.0"
   },
   "dependencies": {
     "express": "^4.21.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "eslint-config-prettier": "^10.1.8",
+    "globals": "^17.11.0",
+    "jest": "^30.5.0",
+    "prettier": "^3.9.6"
   }
 }

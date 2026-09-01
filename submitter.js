@@ -26,6 +26,16 @@ function safeUrl(u) {
   return typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null;
 }
 
+/**
+ * 退避延迟计算（指数退避 + 上限）
+ * @param {number} attempts 重试次数（从 1 起）
+ * @param {'rate-limit'|'net'} kind 429 限流 / 网络异常（各自基数与上限）
+ */
+function computeBackoffMs(attempts, kind) {
+  if (kind === 'net') return Math.min(NET_BASE_MS * 2 ** (attempts - 1), NET_CAP_MS);
+  return Math.min(RATE_LIMIT_BASE_MS * 2 ** (attempts - 1), RATE_LIMIT_CAP_MS);
+}
+
 class Submitter {
   constructor() {
     this.timer = null;
@@ -101,8 +111,8 @@ class Submitter {
         this.fail(t.id, `提交网络异常（自动重试 ${attempts - 1} 次）：${e.message}`);
         return;
       }
-      this.backoff(t.id, Math.min(NET_BASE_MS * 2 ** (attempts - 1), NET_CAP_MS), attempts);
-      log('warn', `任务 #${t.id} 提交网络异常（第 ${attempts} 次）：${e.message}`);
+      this.backoff(taskId, computeBackoffMs(attempts, 'net'), attempts);
+      log('warn', `任务 #${taskId} 提交网络异常（第 ${attempts} 次）：${e.message}`);
       return;
     }
 
@@ -112,7 +122,7 @@ class Submitter {
         this.fail(t.id, `提交限流（429），自动重试 ${attempts - 1} 次仍失败：${detail}`, r.data);
         return;
       }
-      const delay = Math.min(RATE_LIMIT_BASE_MS * 2 ** (attempts - 1), RATE_LIMIT_CAP_MS);
+      const delay = computeBackoffMs(attempts, 'rate-limit');
       this.backoff(t.id, delay, attempts);
       log('warn', `任务 #${t.id} 触发 429 限流，${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`);
       return;
@@ -141,3 +151,5 @@ class Submitter {
 }
 
 module.exports = new Submitter();
+// 纯函数与常量导出（供单元测试断言退避数学；submitter 单例仍为默认导出）
+module.exports.computeBackoffMs = computeBackoffMs;
