@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS settings (
 CREATE TABLE IF NOT EXISTS tasks (
   id                 INTEGER PRIMARY KEY AUTOINCREMENT,
   status             TEXT    NOT NULL DEFAULT 'queued',
+  kind               TEXT    DEFAULT 'video',
   mode               TEXT    NOT NULL DEFAULT 'text',
   model              TEXT    NOT NULL DEFAULT 'agnes-video-2.5-flash',
   prompt             TEXT    NOT NULL DEFAULT '',
@@ -154,6 +155,8 @@ const MIGRATE_COLS = [
   ['shot_id', 'INTEGER'], // 镜头溯源（M2）
   ['text_id', 'INTEGER'], // 提示词文本版本溯源（M2）
   ['image_id', 'INTEGER'], // 引用图片溯源（M2）
+  ['kind', "TEXT DEFAULT 'video'"], // 任务类型：video | image（P1 图片任务统一进任务体系；存量行 NULL 视为 video）
+  ['retry_count', 'INTEGER NOT NULL DEFAULT 0'], // 手动重试次数（原任务原地重新入队，不再新建记录）
 ];
 for (const [name, type] of MIGRATE_COLS) {
   if (!existingCols.has(name)) db.exec(`ALTER TABLE tasks ADD COLUMN ${name} ${type}`);
@@ -205,6 +208,10 @@ const projCols = new Set(
     .map((r) => r.name),
 );
 if (!projCols.has('bgm')) db.exec('ALTER TABLE projects ADD COLUMN bgm TEXT');
+// P3：全自动成片状态机（JSON：{running, stage, attempts, error, history[]}）
+if (!projCols.has('auto_state')) db.exec('ALTER TABLE projects ADD COLUMN auto_state TEXT');
+// P3：成片质检报告（JSON：{duration_s, expected_duration_s, loudness_lufs, shots, narrated_shots, sub_lines}）
+if (!rjobCols.has('quality')) db.exec('ALTER TABLE render_jobs ADD COLUMN quality TEXT');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -212,30 +219,55 @@ const stmts = {
     'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
   ),
   insertTask: db.prepare(`
-    INSERT INTO tasks (status, mode, model, prompt, seconds, size, aspect_ratio, seed,
+    INSERT INTO tasks (status, kind, mode, model, prompt, seconds, size, aspect_ratio, seed,
                        first_frame, last_frame, images, audios, videos, request_json,
                        image, num_frames, frame_rate, width, height, negative_prompt, project_id,
                        shot_id, text_id, image_id,
                        created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
-  getTask: db.prepare('SELECT * FROM tasks WHERE id = ?'),
+  getTask: db.prepare(`
+    SELECT t.*, p.name AS project_name, s.seq AS shot_seq, s.title AS shot_title, pi.kind AS image_kind
+    FROM tasks t
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN shots s ON s.id = t.shot_id
+    LEFT JOIN project_images pi ON pi.id = t.image_id
+    WHERE t.id = ?
+  `),
   listTasks: db.prepare(`
-    SELECT * FROM tasks
+    SELECT t.*, p.name AS project_name, s.seq AS shot_seq, s.title AS shot_title, pi.kind AS image_kind
+    FROM tasks t
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN shots s ON s.id = t.shot_id
+    LEFT JOIN project_images pi ON pi.id = t.image_id
+    WHERE (? IS NULL OR t.status = ?)
+      AND (? IS NULL OR t.prompt LIKE ?)
+    ORDER BY t.created_at DESC, t.id DESC
+    LIMIT ? OFFSET ?
+  `),
+  // P0 分页：与 listTasks 同条件的总数统计（供任务中心翻页）
+  countTasksFiltered: db.prepare(`
+    SELECT COUNT(*) AS n FROM tasks
     WHERE (? IS NULL OR status = ?)
       AND (? IS NULL OR prompt LIKE ?)
-    ORDER BY created_at DESC, id DESC
-    LIMIT ? OFFSET ?
   `),
   activeTasks: db.prepare(`
     SELECT * FROM tasks
     WHERE status IN ('queued','in_progress') AND video_id IS NOT NULL AND video_id != ''
     ORDER BY created_at ASC
   `),
-  // v1.3 提交队列：待提交任务（提交器接管后不再按 created_at 年龄过滤）
+  // v1.3 提交队列：待提交任务（提交器接管后不再按 created_at 年龄过滤）；
+  // P1 起排除图片任务（kind='image' 由 image-worker 接管，存量 NULL 视为 video）
   pendingSubmitTasks: db.prepare(`
     SELECT * FROM tasks
     WHERE status = 'queued' AND (video_id IS NULL OR video_id = '')
+      AND (kind IS NULL OR kind = 'video')
+    ORDER BY created_at ASC, id ASC
+  `),
+  // P1：待生成图片任务（image worker 接管）
+  pendingImageTasks: db.prepare(`
+    SELECT * FROM tasks
+    WHERE kind = 'image' AND status = 'queued'
     ORDER BY created_at ASC, id ASC
   `),
   // v1.3 视频归档补扫：已完成但未本地归档的任务
@@ -256,8 +288,20 @@ const stmts = {
       poll_count = ?, last_polled_at = ?,
       image = ?, num_frames = ?, frame_rate = ?, width = ?, height = ?, negative_prompt = ?,
       project_id = ?, shot_id = ?, text_id = ?, image_id = ?,
-      submitted_at = ?, video_local_path = ?
+      submitted_at = ?, video_local_path = ?, retry_count = ?
     WHERE id = ?
+  `),
+  // v2.1 原任务重试：失败任务原地重置为 queued（清空上次执行结果，保留输入参数与溯源；
+  // 图片任务 kind='image' 时清空 images 产物列，视频任务的参考素材 images/audios/videos 列不动）
+  retryTask: db.prepare(`
+    UPDATE tasks SET
+      status = 'queued', task_id = NULL, video_id = NULL, progress = 0,
+      updated_at = ?, completed_at = NULL, submit_response = NULL, last_poll_response = NULL,
+      metadata_url = NULL, error_message = NULL, poll_count = 0, last_polled_at = NULL,
+      submitted_at = NULL, video_local_path = NULL,
+      images = CASE WHEN kind = 'image' THEN '[]' ELSE images END,
+      retry_count = COALESCE(retry_count, 0) + 1
+    WHERE id = ? AND status IN ('failed', 'submit_error')
   `),
   insertProject: db.prepare(`
     INSERT INTO projects (name, idea, style, aspect_ratio, seconds, status, created_at, updated_at)
@@ -300,7 +344,15 @@ const stmts = {
   getSelectedProjectText: db.prepare(
     'SELECT * FROM project_texts WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1',
   ),
-  listProjectTasks: db.prepare('SELECT * FROM tasks WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
+  listProjectTasks: db.prepare(`
+    SELECT t.*, p.name AS project_name, s.seq AS shot_seq, s.title AS shot_title, pi.kind AS image_kind
+    FROM tasks t
+    LEFT JOIN projects p ON p.id = t.project_id
+    LEFT JOIN shots s ON s.id = t.shot_id
+    LEFT JOIN project_images pi ON pi.id = t.image_id
+    WHERE t.project_id = ?
+    ORDER BY t.created_at DESC, t.id DESC
+  `),
   touchPoll: db.prepare(`
     UPDATE tasks SET poll_count = poll_count + 1, last_polled_at = ?, updated_at = ? WHERE id = ?
   `),
@@ -352,8 +404,10 @@ const stmts = {
   // v1.9.2 渲染自愈：进程崩溃/退出遗留的 rendering 任务复位回 queued（启动时由渲染器调用）
   resetStuckRenderJobs: db.prepare("UPDATE render_jobs SET status = 'queued', progress = 0 WHERE status = 'rendering'"),
   updateRenderJob: db.prepare(
-    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, updated_at = ? WHERE id = ?',
+    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, quality = ?, updated_at = ? WHERE id = ?',
   ),
+  // P3：全自动成片状态机（auto.js 持有；JSON 落 projects.auto_state）
+  setProjectAutoState: db.prepare('UPDATE projects SET auto_state = ?, updated_at = ? WHERE id = ?'),
   deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
   deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
   // v1.9.2 单实例锁原子 CAS（upsert 形式）：
@@ -404,8 +458,9 @@ function tx(fn) {
 /** 将数据库行转换为对前端友好的任务对象 */
 function toTaskRow(row) {
   if (!row) return null;
-  return {
+  const out = {
     id: Number(row.id),
+    kind: row.kind === 'image' ? 'image' : 'video',
     status: row.status,
     mode: row.mode,
     model: row.model,
@@ -445,7 +500,21 @@ function toTaskRow(row) {
     submitted_at: row.submitted_at === null || row.submitted_at === undefined ? null : Number(row.submitted_at),
     video_local_path: row.video_local_path,
     video_local_url: row.video_local_path ? '/artifacts/' + path.basename(row.video_local_path) : null,
+    retry_count: Number(row.retry_count || 0),
   };
+  // v2.1 来源上下文（列表/看板/详情直接展示，不用前端再查）：项目名 / 镜头序号与标题 / 引用图片类型。
+  // image_kind 兜底链：JOIN project_images（完成回写的 image_id）→ request_json.image_kind（入队时的用途标记）
+  const reqJson = out.request_json;
+  out.project_name = row.project_name === undefined ? null : row.project_name;
+  out.shot_seq = row.shot_seq === undefined || row.shot_seq === null ? null : Number(row.shot_seq);
+  out.shot_title = row.shot_title === undefined ? null : row.shot_title;
+  out.image_kind =
+    row.image_kind === undefined || row.image_kind === null
+      ? reqJson && ['character', 'scene'].includes(reqJson.image_kind)
+        ? reqJson.image_kind
+        : null
+      : row.image_kind;
+  return out;
 }
 
 const settings = {
@@ -460,6 +529,7 @@ const settings = {
 
 const tasks = {
   insert({
+    kind,
     status,
     mode,
     model,
@@ -488,12 +558,13 @@ const tasks = {
     const now = Date.now();
     const r = stmts.insertTask.run(
       status,
-      mode,
-      model,
-      prompt,
-      seconds,
-      size,
-      aspect_ratio,
+      kind || 'video',
+      mode || 'text',
+      model || 'agnes-video-2.5-flash',
+      prompt || '',
+      seconds ?? null, // 可空字段归一化：undefined 无法绑定 SQLite 参数（图片任务无 seconds）
+      size ?? null,
+      aspect_ratio ?? null,
       seed === null || seed === undefined ? null : Number(seed),
       first_frame || null,
       last_frame || null,
@@ -529,6 +600,16 @@ const tasks = {
     return stmts.listTasks.all(status, status, qp, qp, lim, off).map(toTaskRow);
   },
 
+  /** P0：分页查询（列表 + 满足筛选的总数），供任务中心翻页 */
+  page({ status = null, q = null, limit = 100, offset = 0 } = {}) {
+    const lim = Math.min(Math.max(Number(limit) || 100, 1), 500);
+    const off = Math.max(Number(offset) || 0, 0);
+    const qp = q ? `%${q}%` : null;
+    const items = stmts.listTasks.all(status, status, qp, qp, lim, off).map(toTaskRow);
+    const total = Number(stmts.countTasksFiltered.get(status, status, qp, qp).n);
+    return { items, total };
+  },
+
   active() {
     return stmts.activeTasks.all().map(toTaskRow);
   },
@@ -536,6 +617,11 @@ const tasks = {
   /** v1.3 提交队列：待提交任务（queued 且尚未获得 video_id），由 submitter 接管 */
   pendingSubmit() {
     return stmts.pendingSubmitTasks.all().map(toTaskRow);
+  },
+
+  /** P1：待生成图片任务，由 image worker 接管 */
+  pendingImages() {
+    return stmts.pendingImageTasks.all().map(toTaskRow);
   },
 
   /** v1.3 归档补扫：已完成但尚未本地归档的任务 */
@@ -601,9 +687,18 @@ const tasks = {
       p.image_id !== undefined ? p.image_id : cur.image_id,
       p.submitted_at !== undefined ? p.submitted_at : cur.submitted_at,
       p.video_local_path !== undefined ? p.video_local_path : cur.video_local_path,
+      p.retry_count !== undefined ? p.retry_count : cur.retry_count,
       Number(id),
     );
     return true;
+  },
+
+  /** v2.1：失败任务原地重试（重置为 queued 并清空上次执行结果；仅 failed/submit_error 可重试）。
+   * 返回重试后的任务行；状态不符返回 null。retry_count 由 SQL 自增。 */
+  retry(id) {
+    const changed = stmts.retryTask.run(Date.now(), Number(id)).changes > 0;
+    if (!changed) return null;
+    return this.get(id);
   },
 
   touchPoll(id) {
@@ -665,6 +760,7 @@ function projectRowToApi(row) {
     seconds: row.seconds,
     status: row.status,
     bgm: parseJson(row.bgm), // v1.4：项目背景音乐选择
+    auto_state: parseJson(row.auto_state) || null, // P3：全自动成片状态机
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
   };
@@ -734,6 +830,14 @@ const projects = {
     const cur = stmts.getProject.get(Number(id));
     if (!cur) return false;
     stmts.setProjectBgm.run(bgmJson ? JSON.stringify(bgmJson) : null, Date.now(), Number(id));
+    return true;
+  },
+
+  /** P3：写入全自动成片状态机（stateJson 为对象或 null 清除） */
+  setAutoState(id, stateJson) {
+    const cur = stmts.getProject.get(Number(id));
+    if (!cur) return false;
+    stmts.setProjectAutoState.run(stateJson ? JSON.stringify(stateJson) : null, Date.now(), Number(id));
     return true;
   },
 
@@ -1077,6 +1181,7 @@ function renderRowToApi(row) {
     output_path: row.output_path,
     output_url: row.output_path ? '/artifacts/' + path.basename(row.output_path) : null,
     covers: parseJson(row.covers) || [], // v1.8 封面候选 [{path,url}]
+    quality: parseJson(row.quality) || null, // P3：质检报告 {duration_s, expected_duration_s, loudness_lufs, shots, narrated_shots, sub_lines}
     error_message: row.error_message,
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -1107,6 +1212,7 @@ const renders = {
       patch.output_path !== undefined ? patch.output_path : cur.output_path,
       patch.error_message !== undefined ? patch.error_message : cur.error_message,
       patch.covers !== undefined ? JSON.stringify(patch.covers) : cur.covers,
+      patch.quality !== undefined ? JSON.stringify(patch.quality) : cur.quality,
       Date.now(),
       Number(id),
     );

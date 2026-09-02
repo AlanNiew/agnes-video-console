@@ -18,6 +18,9 @@ const RENDER_PARAMS_DEFAULTS = {
   narration_offset_ms: 500,
   title_card: true,
   end_card: true,
+  transition_type: 'fade',
+  subtitle_style: 'white-outline',
+  subtitle_position: 'bottom',
 };
 
 /** ffprobe 探测媒体时长（秒，保留两位小数）；ffprobe 不存在/失败时返回 null 不阻塞 */

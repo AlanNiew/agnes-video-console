@@ -88,6 +88,11 @@ const TTS_MAX_TEXT = 8000;
 /* v1.9 声音广场：浏览社区音色的排序方式 */
 const MARKET_SORTS = ['trending', 'task_count', 'created_at', 'title'];
 
+/* v2.0 一键成片高级配置：转场类型（xfade 白名单）/ 字幕样式 / 字幕位置 */
+const RENDER_TRANSITIONS = ['fade', 'dissolve', 'wipeleft', 'wiperight', 'slideup', 'slidedown', 'circleopen'];
+const SUBTITLE_STYLES = ['white-outline', 'yellow-box', 'bottom-bar'];
+const SUBTITLE_POSITIONS = ['bottom', 'center'];
+
 module.exports = {
   MODELS,
   MODES,
@@ -110,4 +115,7 @@ module.exports = {
   TTS_MODELS,
   TTS_MAX_TEXT,
   MARKET_SORTS,
+  RENDER_TRANSITIONS,
+  SUBTITLE_STYLES,
+  SUBTITLE_POSITIONS,
 };
