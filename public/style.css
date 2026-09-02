@@ -1472,6 +1472,66 @@ body {
   font-size: 14px;
 }
 
+/* v2.1：旁白计量条（镜头卡内，超限变红）+ 渲染预检 chips（红黄绿三态） */
+.narr-meter {
+  min-height: 16px;
+  margin-top: 3px;
+  font-size: 11px;
+}
+.narr-meter .nm-ok {
+  color: var(--text-dim);
+}
+.narr-meter .nm-over {
+  color: var(--red);
+  font-weight: 600;
+}
+.precheck-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin: 4px 0 12px;
+}
+.pc-chip {
+  font-size: 11.5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-dim);
+}
+.pc-chip.ok {
+  color: var(--green);
+  border-color: rgba(34, 197, 94, 0.45);
+  background: rgba(34, 197, 94, 0.08);
+}
+.pc-chip.warn {
+  color: var(--amber);
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.08);
+}
+.pc-chip.bad {
+  color: var(--red);
+  border-color: rgba(239, 68, 68, 0.45);
+  background: rgba(239, 68, 68, 0.08);
+}
+.pc-chip.info {
+  color: var(--blue);
+  border-color: rgba(59, 130, 246, 0.4);
+  background: rgba(59, 130, 246, 0.07);
+}
+html[data-theme='light'] .pc-chip.ok {
+  background: rgba(34, 197, 94, 0.1);
+}
+html[data-theme='light'] .pc-chip.warn {
+  background: rgba(245, 158, 11, 0.1);
+}
+html[data-theme='light'] .pc-chip.bad {
+  background: rgba(239, 68, 68, 0.1);
+}
+html[data-theme='light'] .pc-chip.info {
+  background: rgba(59, 130, 246, 0.09);
+}
+
 /* ---------- P2：成片风格预设 / 高级配置面板 ---------- */
 .film-preset-row {
   display: grid;
