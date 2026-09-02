@@ -17,6 +17,7 @@ const { ARTIFACTS_DIR } = require('./artifacts');
 const netmusic = require('./netmusic');
 const { log } = require('./logger');
 const { probeDuration } = require('./config');
+const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('./constants');
 
 const TICK_MS = 1500;
 const OUT_FPS = 30;
@@ -71,9 +72,13 @@ function hasFfmpeg() {
 // probeDuration 统一由 config.js 提供（消除与 server 侧的双实现漂移）
 
 /** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
+/** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
 function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {}) {
   return new Promise((resolve) => {
-    const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostats', ...args], {
+    // -y：输出已存在时直接覆盖；-nostdin：断绝一切 stdin 交互。
+    // 缺失时若产物同名文件已存在（如 jobId 复用的封面文件），ffmpeg 会打印
+    // "Overwrite? [y/N]" 并阻塞等待管道 stdin 应答——父进程永不写入 → 渲染永久卡死。
+    const child = spawn('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostats', '-nostdin', '-y', ...args], {
       windowsHide: true,
       cwd,
     });
@@ -171,14 +176,61 @@ function wrapCJK(text, maxChars) {
 }
 
 /**
+ * 字幕样式预设（v2.0 高级配置）：ASS Style 参数（颜色为 &HAABBGGRR，BGR 反序）
+ */
+const SUBTITLE_STYLE_DEFS = {
+  // 白字深描边（默认）：通用清爽
+  'white-outline': {
+    primary: '&H00DCECF2',
+    outline: '&H00181410',
+    back: '&H80000000',
+    bold: 1,
+    borderStyle: 1,
+    outlineW: 2.2,
+    shadow: 1.2,
+  },
+  // 暖金字幕 + 半透明黑底框：综艺/燃向氛围
+  'yellow-box': {
+    primary: '&H005CD7FF',
+    outline: '&H00000000',
+    back: '&HC0000000',
+    bold: 1,
+    borderStyle: 3,
+    outlineW: 1.2,
+    shadow: 0,
+  },
+  // 白字 + 更实的底部条：纪录/口播风格
+  'bottom-bar': {
+    primary: '&H00FFFFFF',
+    outline: '&H00000000',
+    back: '&HA0000000',
+    bold: 1,
+    borderStyle: 3,
+    outlineW: 1.6,
+    shadow: 0,
+  },
+};
+
+/**
  * 生成 ASS 字幕文件内容（纯函数，供渲染与 e2e 断言）
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
- * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number, marginV?:number}} [opts]
+ * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number, marginV?:number,
+ *          style?:string, position?:string}} [opts] v2.0：style=字幕样式预设，position=bottom|center
  */
 function buildSubtitleAss(
   lines,
-  { fontsize = 42, family = 'Microsoft YaHei', playResX = 1280, playResY = 720, marginV = 52 } = {},
+  {
+    fontsize = 42,
+    family = 'Microsoft YaHei',
+    playResX = 1280,
+    playResY = 720,
+    marginV = 52,
+    style = 'white-outline',
+    position = 'bottom',
+  } = {},
 ) {
+  const sd = SUBTITLE_STYLE_DEFS[SUBTITLE_STYLES.includes(style) ? style : 'white-outline'];
+  const alignment = SUBTITLE_POSITIONS.includes(position) && position === 'center' ? 5 : 2; // numpad：2=底部居中 5=屏幕居中
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
@@ -188,7 +240,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Narr,${family},${fontsize},&H00DCECF2,&H000000FF,&H00181410,&H80000000,1,0,0,0,100,100,0,0,1,2.2,1.2,2,60,60,${marginV},1
+Style: Narr,${family},${fontsize},${sd.primary},&H000000FF,${sd.outline},${sd.back},${sd.bold},0,0,0,100,100,0,0,${sd.borderStyle},${sd.outlineW},${sd.shadow},${alignment},60,60,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;
@@ -290,6 +342,8 @@ class Renderer {
     }
     const params = job.params || {};
     const fade = Math.min(Math.max((Number(params.transition_ms) || 600) / 1000, 0.2), 1.5);
+    // v2.0 转场类型：xfade 白名单（非法值兜底 fade，旧任务参数无该字段也兜底）
+    const transitionType = RENDER_TRANSITIONS.includes(params.transition_type) ? params.transition_type : 'fade';
     const narrOffset = Math.min(Math.max((Number(params.narration_offset_ms) || 500) / 1000, 0), 3);
     const wantTitle = params.title_card !== false;
     const wantEnd = params.end_card !== false;
@@ -298,9 +352,11 @@ class Renderer {
     const bgmDuck = params.bgm_duck !== false;
     // v1.5 旁白增益：TTS 原始电平偏保守，默认提升 1.4 倍让人声稳坐音乐之上
     const narrVolume = Math.min(Math.max(Number(params.narration_volume) || 1.4, 0.5), 3);
-    // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72
+    // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72；v2.0 样式与位置
     const wantSubs = params.burn_subtitles !== false;
     const subFontsize = Math.min(Math.max(Number(params.subtitle_fontsize) || 42, 24), 72);
+    const subStyle = SUBTITLE_STYLES.includes(params.subtitle_style) ? params.subtitle_style : 'white-outline';
+    const subPosition = SUBTITLE_POSITIONS.includes(params.subtitle_position) ? params.subtitle_position : 'bottom';
     // v1.8 成片方向：16:9 横屏 / 9:16 竖屏（默认跟随项目画幅）
     const dims = resolveDims(params.aspect, collected.project.aspect_ratio);
     const { w: OUT_W, h: OUT_H } = dims;
@@ -431,6 +487,8 @@ class Renderer {
             playResX: OUT_W,
             playResY: OUT_H,
             marginV,
+            style: subStyle,
+            position: subPosition,
           }),
         );
       }
@@ -439,7 +497,7 @@ class Renderer {
       for (let k = 1; k < seqs.length; k++) {
         const offset = (cum - fade).toFixed(3);
         const out = k === seqs.length - 1 ? (needSubFilter ? '[vpre]' : '[vout]') : `[vx${k}]`;
-        fl.push(`${prev}[${k}:v]xfade=transition=fade:duration=${fade}:offset=${offset}${out}`);
+        fl.push(`${prev}[${k}:v]xfade=transition=${transitionType}:duration=${fade}:offset=${offset}${out}`);
         prev = out;
         cum += seqs[k].duration - fade;
       }
@@ -534,6 +592,7 @@ class Renderer {
 
       /* ---- 5.5) 响度补偿（v1.8.1）：单遍 loudnorm 在稀疏人声内容上会欠校准，
        * 实测综合响度与 -16 LUFS 目标偏差 >1.5dB 时，音轨直补（视频流免重编码），至多两轮 ---- */
+      let finalLoudness = null; // P3 质检报告：最终实测响度
       try {
         for (let pass = 0; pass < 2; pass++) {
           const probe = spawnSync(
@@ -543,6 +602,7 @@ class Renderer {
           );
           const m = /Integrated loudness:\s*I:\s*(-?\d+\.?\d*)\s*LUFS/.exec(probe.stderr || '');
           if (!m) break;
+          finalLoudness = Math.round(Number(m[1]) * 10) / 10;
           const delta = -16 - Number(m[1]);
           if (Math.abs(delta) <= 1.5) {
             log('info', `渲染任务 #${job.id} 响度达标：${Number(m[1])} LUFS`);
@@ -602,10 +662,25 @@ class Renderer {
         log('warn', `渲染任务 #${job.id} 封面生成失败（不影响成片）：${e.message}`);
       }
 
-      renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath, covers });
+      // P3 质检报告：成片时长 / 响度 / 镜头覆盖 / 旁白覆盖 / 字幕行数 / 时长偏差
+      const expectedDuration =
+        Math.round(segments.reduce((s, x) => s + (Number(x.nominalSeconds) || 5), 0) * 100) / 100;
+      const quality = {
+        duration_s: Math.round(outDur * 100) / 100,
+        expected_duration_s: expectedDuration,
+        duration_deviation_pct:
+          expectedDuration > 0 ? Math.round(((outDur - expectedDuration) / expectedDuration) * 1000) / 10 : null,
+        loudness_lufs: finalLoudness,
+        shots: segments.length,
+        narrated_shots: norm.filter((s) => s.narrationPath).length,
+        sub_lines: subLines.length,
+        transition_type: transitionType,
+        subtitle_style: subStyle,
+      };
+      renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath, covers, quality });
       log(
         'info',
-        `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 → ${outPath}`,
+        `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 / 响度 ${finalLoudness ?? '?'} LUFS → ${outPath}`,
       );
     } finally {
       try {

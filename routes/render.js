@@ -7,10 +7,13 @@ const { projects, renders } = require('../db');
 const renderer = require('../render');
 const { log } = require('../logger');
 const { RENDER_PARAMS_DEFAULTS } = require('../config');
+const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../constants');
 const { ApiError, ah } = require('../errors');
 
 module.exports = function registerRenderRoutes(app) {
-  // 发起渲染：{transition_ms?, narration_offset_ms?, title_card?, end_card?} → 渲染任务（后台执行）
+  // 发起渲染：{transition_ms?, transition_type?, narration_offset_ms?, title_card?, end_card?,
+  //           subtitle_style?, subtitle_position?, bgm_*, narration_volume?, burn_subtitles?, aspect?}
+  // → 渲染任务（后台执行）
   app.post(
     '/api/projects/:id/render',
     ah(async (req, res) => {
@@ -29,6 +32,17 @@ module.exports = function registerRenderRoutes(app) {
         narration_offset_ms: clampInt(b.narration_offset_ms, 0, 3000, RENDER_PARAMS_DEFAULTS.narration_offset_ms),
         title_card: b.title_card === undefined ? RENDER_PARAMS_DEFAULTS.title_card : Boolean(b.title_card),
         end_card: b.end_card === undefined ? RENDER_PARAMS_DEFAULTS.end_card : Boolean(b.end_card),
+        // v2.0 转场类型（xfade 白名单）
+        transition_type: RENDER_TRANSITIONS.includes(String(b.transition_type))
+          ? String(b.transition_type)
+          : RENDER_PARAMS_DEFAULTS.transition_type,
+        // v2.0 字幕样式 / 位置
+        subtitle_style: SUBTITLE_STYLES.includes(String(b.subtitle_style))
+          ? String(b.subtitle_style)
+          : RENDER_PARAMS_DEFAULTS.subtitle_style,
+        subtitle_position: SUBTITLE_POSITIONS.includes(String(b.subtitle_position))
+          ? String(b.subtitle_position)
+          : RENDER_PARAMS_DEFAULTS.subtitle_position,
         // v1.4 BGM
         bgm_volume: Number.isFinite(bgmVol) ? Math.min(Math.max(bgmVol, 0), 1) : 0.35,
         bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
@@ -50,7 +64,7 @@ module.exports = function registerRenderRoutes(app) {
       const jobId = renders.insert({ project_id: p.id, params });
       log(
         'info',
-        `项目 #${p.id} 发起渲染任务 #${jobId}（${ready} 镜，叠化 ${params.transition_ms}ms，旁白偏移 ${params.narration_offset_ms}ms）`,
+        `项目 #${p.id} 发起渲染任务 #${jobId}（${ready} 镜，转场 ${params.transition_type} ${params.transition_ms}ms，旁白偏移 ${params.narration_offset_ms}ms）`,
       );
       res.status(201).json(renders.get(jobId));
     }),
