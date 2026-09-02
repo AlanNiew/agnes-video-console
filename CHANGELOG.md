@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Refactored
+
+- **服务端模块目录归位（纯物理移动，零行为变化）**：根目录平铺的模块按职责收进语义子目录 —— `core/`（constants/config/errors/logger/openapi）、`clients/`（agnes/fish-tts/netmusic）、`workers/`（submitter/poller/image-worker/render/auto）、`lib/`（artifacts/poster），`pipeline.js` 移入 `services/`；全量相对 require 修正。`lint` / `format:check` / 74 单测 / 72 e2e 全绿，59 条 API 契约、`npm start` 运行方式与 `data/` 结构均不变。
+
 ## [2.2.1] - 2026-09-02
 
 ### Added

@@ -26,20 +26,25 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 ## 架构分层（新增代码放对地方）
 
 ```
-server.js     装配层（135 行）：require 路由 + 错误中间件 + 启动编排（5 个后台 worker）。不写业务。
-constants.js  模型清单/白名单/上限/TTS 预设/转场与字幕预设（零依赖，勿 require 其他模块）
-config.js     跨模块单源常量：DEFAULT_BASE_URL / probeDuration / 渲染默认参数
-errors.js     ApiError + ah —— 业务错误唯一协议，勿再造裸 Error+expose
+server.js     装配层：require 路由 + 错误中间件 + 启动编排（5 个后台 worker）。不写业务。
+core/         零/低依赖基元：constants（模型清单/白名单/上限/TTS/转场字幕预设，勿 require 其他模块）
+              · config（跨模块单源常量）· errors（ApiError/ah，勿再造裸 Error+expose）
+              · logger（内存环形日志）· openapi（API 自描述，读 package.json）
+clients/      上游客户端：agnes（视频/chat/图片 API）· fish-tts（TTS，CONNECT 隧道）· netmusic（BGM）
 services/     纯校验与组装（payloads / prompts / voice-pool）；pipeline 为依赖注入编排
+lib/          本地文件/产物支撑：artifacts（素材备份 + works 作品目录定位）· poster（社交海报）
+db.js         数据层（SQLite：任务/项目/文案/图片/镜头/配音/渲染任务表 + 迁移 + 事务 + 实例锁）
+              —— import 即副作用（require 即开库），单测前先设 DATA_DIR/DB_PATH
+workers/      后台进程（均受单实例工作锁约束）：submitter（视频提交节流）/ poller（轮询归档）
+              / image-worker（图片任务）/ render（成片渲染，ffmpeg 必须经其 runFfmpeg）
+              / auto（全自动成片状态机，状态落 projects.auto_state）
 routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序一致（保持现有顺序追加）
-后台 worker   submitter（视频提交节流）/ poller（轮询归档）/ image-worker（图片任务）
-              / render（成片渲染）/ auto（全自动成片状态机）—— 均受单实例工作锁约束
 ```
 
 - 59 条 API 路由的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
 - 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload）。
-- **ffmpeg 调用必须经 `render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
-- 全自动成片编排在 `auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
+- **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
+- 全自动成片编排在 `workers/auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
 
 ## 已知技术债（勿扩散，勿顺手大改）
 

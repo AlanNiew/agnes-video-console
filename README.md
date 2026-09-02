@@ -93,24 +93,13 @@ npm start
 ```
 agnes-video-console/
 ├── server.js            # Express 装配 + 静态服务 + 统一错误中间件 + 启动编排（单实例锁 / 优雅退出）
-├── constants.js         # 模型清单 / 参数白名单 / 输入上限 / 转场与字幕预设（零依赖单一事实来源）
-├── config.js            # 跨模块单源常量（DEFAULT_BASE_URL / probeDuration / 渲染默认参数）
-├── errors.js            # ApiError + ah（统一业务错误协议）
-├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
+├── core/                # 零/低依赖基元：constants（模型清单/白名单/上限/转场与字幕预设）· config（跨模块单源常量）· errors（ApiError/ah）· logger（内存环形日志）· openapi（API 自描述）
+├── clients/             # 上游客户端：agnes（视频/chat/图片 API）· fish-tts（TTS，CONNECT 隧道）· netmusic（BGM 音乐接口）
 ├── services/            # 纯校验与组装（payloads / prompts / voice-pool）+ pipeline（依赖注入编排）
-├── db.js                # SQLite 数据层（任务/项目/文案/图片/镜头/配音/渲染任务表 + 自动迁移 + 事务）
-├── agnes.js             # Agnes API 客户端（视频创建/查询 / chat / 图片）
-├── submitter.js         # 后台提交器（v1.3：按 submit_interval_ms 服务端节流，429 自动退避重试）
-├── poller.js            # 后台轮询器（退避 / 超时 / 完成视频自动归档 / 启动补扫）
-├── image-worker.js      # 图片任务工作器（v2.0：异步图片生成 + 退避重试 + 产物归档/项目落库）
-├── auto.js              # 全自动成片编排器（v2.1：文案→分镜→自审→角色图→视频→配音→自动选配乐→渲染状态机）
-├── render.js            # 成片渲染器（归一化 → xfade 转场 → 旁白对齐混音 → 质检报告 → 封面候选）
-├── artifacts.js         # 本地产物归档（素材备份 artifacts + 作品目录 works/《名》-id 定位）
-├── poster.js            # 社交海报生成器（v2.2：LLM 提示词 → 文生图 → 叠标题，渲染完成自动出图）
-├── openapi.js           # API 自描述文档（GET /api/openapi.json）
-├── netmusic.js          # 音乐接口客户端（v1.4 BGM：搜索 / 播放地址 / 本地缓存下载）
-├── fish-tts.js          # Fish Audio TTS 客户端（直连或 HTTP 代理 CONNECT 隧道）
-├── logger.js            # 内存环形日志
+├── lib/                 # 本地文件/产物支撑：artifacts（素材备份 artifacts + works 作品目录定位）· poster（社交海报）
+├── db.js                # SQLite 数据层（任务/项目/文案/图片/镜头/配音/渲染任务表 + 自动迁移 + 事务 + 实例锁）
+├── workers/             # 后台进程（单实例工作锁约束）：submitter（提交节流 + 429 退避）· poller（轮询归档）· image-worker（图片任务）· render（成片渲染器）· auto（全自动成片编排器）
+├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
 ├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
 ├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流、图片任务、全自动成片与真实 ffmpeg 渲染用例）

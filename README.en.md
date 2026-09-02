@@ -83,22 +83,14 @@ Open **http://127.0.0.1:8273**, click ⚙ settings and enter your Agnes API Key.
 
 ```
 agnes-video-console/
-├── server.js            # Express assembly + static files + unified error middleware + startup orchestration
-├── constants.js         # Model catalog / parameter whitelists / input limits / TTS presets (zero-dependency)
-├── config.js            # Single-source constants (DEFAULT_BASE_URL / probeDuration / render defaults)
-├── errors.js            # ApiError + ah (unified business error protocol)
-├── routes/              # Domain-split API routes (meta / settings / tasks / llm / images / tts / music / projects / render)
+├── server.js            # Express assembly + static files + unified error middleware + startup orchestration (entry)
+├── core/                # Zero/low-dep primitives: constants (models/whitelists/limits/presets) · config (single-source) · errors (ApiError/ah) · logger (ring buffer) · openapi (API self-description)
+├── clients/             # Upstream API clients: agnes (video/chat/image) · fish-tts (Fish Audio TTS) · netmusic (BGM/music API)
 ├── services/            # Pure validation & assembly (payloads / prompts / voice-pool) + pipeline (DI orchestration)
-├── db.js                # SQLite layer (tasks / projects / texts / images / settings + migration + transactions)
-├── agnes.js             # Agnes API client (video create/query / chat / images)
-├── submitter.js         # Background submitter (throttled submits with 429 exponential backoff)
-├── poller.js            # Background poller (backoff / timeout / stuck-task cleanup)
-├── image-worker.js      # Image task worker (v2.0: async image generation + backoff retry + archival)
-├── auto.js              # Fully automated final-cut orchestrator (v2.0 state machine)
-├── render.js            # Final-cut renderer (normalize → xfade → narration-aligned mix → QC report → covers)
-├── netmusic.js          # Music API client (BGM search / play URL / local cache)
-├── fish-tts.js          # Fish Audio TTS client
-├── logger.js            # In-memory ring-buffer log
+├── lib/                 # Local file/artifact support: artifacts (backup archive + works dir) · poster (social poster)
+├── db.js                # SQLite layer (tasks / projects / texts / images / shots / tts / render_jobs + migration + transactions)
+├── workers/             # Background workers (all guarded by the single-instance lock): submitter (throttle + 429 backoff) · poller (poll & archive) · image-worker · render (final-cut renderer) · auto (auto-pipeline state machine)
+├── routes/              # Domain-split API routes (meta / settings / tasks / llm / images / tts / music / projects / render)
 ├── public/              # Frontend SPA (index.html / common.js shared utils / app.js task center / workspace.js creation workspace)
 ├── test/unit/           # Unit tests (jest: payload validation / LLM parsing / ASS subtitles / backoff math)
 ├── test/mock-e2e.js     # End-to-end smoke test with a local fake Agnes API
