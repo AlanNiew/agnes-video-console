@@ -13,8 +13,9 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const { projects, renders, instanceLockHeldByOther } = require('./db');
-const { ARTIFACTS_DIR } = require('./artifacts');
+const { ARTIFACTS_DIR, WORKS_DIR, workDirFor } = require('./artifacts');
 const netmusic = require('./netmusic');
+const { generatePoster } = require('./poster');
 const { log } = require('./logger');
 const { probeDuration } = require('./config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('./constants');
@@ -253,6 +254,50 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
       return `Dialogue: 0,${assTime(l.start)},${assTime(l.end)},Narr,,0,0,0,,{\\fad(150,150)}${text}`;
     });
   return header + '\n' + events.join('\n') + (events.length ? '\n' : '');
+}
+
+/** v2.2：SRT 字幕生成（纯函数，作品归档用——社交平台/剪辑软件通用格式）
+ * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒，与成片对齐） */
+function buildSrt(lines) {
+  const fmt = (t) => {
+    const ms = Math.max(0, Math.round((Number(t) || 0) * 1000));
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor((ms % 3_600_000) / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    const r = ms % 1000;
+    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')},${String(r).padStart(3, '0')}`;
+  };
+  return (lines || [])
+    .filter((l) => l && l.text && l.end > l.start)
+    .map((l, i) => `${i + 1}\n${fmt(l.start)} --> ${fmt(l.end)}\n${String(l.text).replace(/\r?\n/g, ' ')}\n`)
+    .join('\n');
+}
+
+/** v2.2：作品归档——成片/字幕/台词写入 data/works/《项目名》-id/（与素材目录彻底分开）
+ * 成片与字幕按渲染任务版本化（重渲追加），台词/海报为项目最新版覆盖。
+ * @returns {string|null} 作品目录绝对路径（失败返回 null，不影响成片状态） */
+function archiveWork({ job, project, segments, subLines, outPath }) {
+  try {
+    const { dir } = workDirFor(project);
+    fs.mkdirSync(dir, { recursive: true });
+    // 成片（版本化：同项目多次渲染共存）
+    fs.copyFileSync(outPath, path.join(dir, `成片-${job.id}.mp4`));
+    // SRT 字幕（时间轴与成片一致；无字幕行时也落空文件占位说明）
+    const srt = subLines.length ? buildSrt(subLines) : '1\n00:00:00,000 --> 00:00:02,000\n（本片无旁白字幕）\n';
+    fs.writeFileSync(path.join(dir, `字幕-${job.id}.srt`), `\ufeff${srt}`, 'utf8'); // BOM：Windows 记事本正确识别 UTF-8
+    // 旁白台词（项目级最新版：镜头序号 + 标题 + 台词）
+    const narrated = segments.filter((s) => s.narrationText);
+    const scriptText = [
+      `《${project.name}》旁白台词`,
+      narrated.length ? '' : '（本片无旁白）',
+      ...narrated.map((s) => `镜头${s.shot.seq}${s.shot.title ? `《${s.shot.title}》` : ''}：${s.narrationText}`),
+    ].join('\n');
+    fs.writeFileSync(path.join(dir, '旁白台词.txt'), `\ufeff${scriptText}\n`, 'utf8');
+    return dir;
+  } catch (e) {
+    log('warn', `渲染任务 #${job.id} 作品归档失败（不影响成片）：${e.message}`);
+    return null;
+  }
 }
 
 /** 收集项目的可渲染素材：每个镜头最新完成视频（本地优先）+ 最新成功旁白 */
@@ -677,10 +722,23 @@ class Renderer {
         transition_type: transitionType,
         subtitle_style: subStyle,
       };
-      renders.update(job.id, { status: 'completed', progress: 100, output_path: outPath, covers, quality });
+      // v2.2 作品归档：成片/字幕/台词 → data/works/《项目名》-id/（用户找成品直接翻作品目录）
+      const workDir = archiveWork({ job, project, segments, subLines, outPath });
+      // v2.2 社交海报：LLM 提示词 → 文生图 → 叠标题（fire-and-forget，不阻塞渲染器下一个任务）
+      if (workDir) {
+        generatePoster(project, workDir, dims.aspect).catch(() => {}); // poster 内部已 best-effort，双保险
+      }
+      renders.update(job.id, {
+        status: 'completed',
+        progress: 100,
+        output_path: outPath,
+        covers,
+        quality,
+        work_dir: workDir,
+      });
       log(
         'info',
-        `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 / 响度 ${finalLoudness ?? '?'} LUFS → ${outPath}`,
+        `渲染任务 #${job.id} 完成：《${project.name}》 ${outDur.toFixed(1)}s / ${segments.length} 镜 / 响度 ${finalLoudness ?? '?'} LUFS → ${outPath}${workDir ? `（作品已归档 ${workDir}）` : ''}`,
       );
     } finally {
       try {
@@ -800,4 +858,5 @@ module.exports = new Renderer();
 module.exports.collectSegments = collectSegments;
 module.exports.hasFfmpeg = hasFfmpeg;
 module.exports.buildSubtitleAss = buildSubtitleAss;
+module.exports.buildSrt = buildSrt;
 module.exports.escDrawtext = escDrawtext;

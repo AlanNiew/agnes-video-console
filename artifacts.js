@@ -1,12 +1,28 @@
 'use strict';
 /**
  * artifacts.js —— 本地产物归档（v1.3 从 server.js 抽出，供 server / poller 共用）
- * 图片/视频/音频等远程产物下载到 data/artifacts 做永久备份（平台远端链接会过期）
+ * 图片/视频/音频等远程产物下载到 data/artifacts 做永久备份（平台远端链接会过期）。
+ * v2.2：新增作品目录 data/works——渲染完成的成片/字幕/台词/海报按作品独立存放，
+ * 与中间素材（artifacts）彻底分开，用户可直接翻目录找成品。
  */
 const path = require('node:path');
 const fs = require('node:fs');
 
 const ARTIFACTS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'artifacts');
+const WORKS_DIR = path.join(process.env.DATA_DIR || path.join(__dirname, 'data'), 'works');
+
+/**
+ * 项目 → 作品目录名（sanitize 掉 Windows 非法字符）：`《项目名》-项目ID`
+ * @returns {{dir: string, name: string}} dir=绝对路径 name=目录名
+ */
+function workDirFor(project) {
+  const safe = String(project.name || '未命名')
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .trim()
+    .slice(0, 60);
+  const name = `《${safe}》-${project.id}`;
+  return { dir: path.join(WORKS_DIR, name), name };
+}
 
 const EXT_BY_CONTENT_TYPE = [
   ['.png', 'png'],
@@ -47,4 +63,4 @@ async function downloadArtifact(remoteUrl, { fallbackExt = '.png', timeoutMs = 1
   }
 }
 
-module.exports = { ARTIFACTS_DIR, downloadArtifact, extFor };
+module.exports = { ARTIFACTS_DIR, WORKS_DIR, workDirFor, downloadArtifact, extFor };

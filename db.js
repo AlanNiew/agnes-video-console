@@ -212,6 +212,8 @@ if (!projCols.has('bgm')) db.exec('ALTER TABLE projects ADD COLUMN bgm TEXT');
 if (!projCols.has('auto_state')) db.exec('ALTER TABLE projects ADD COLUMN auto_state TEXT');
 // P3：成片质检报告（JSON：{duration_s, expected_duration_s, loudness_lufs, shots, narrated_shots, sub_lines}）
 if (!rjobCols.has('quality')) db.exec('ALTER TABLE render_jobs ADD COLUMN quality TEXT');
+// v2.2：作品归档目录（成片/字幕/台词/海报按作品存放于 data/works/《名》-id/）
+if (!rjobCols.has('work_dir')) db.exec('ALTER TABLE render_jobs ADD COLUMN work_dir TEXT');
 
 const stmts = {
   getSetting: db.prepare('SELECT value FROM settings WHERE key = ?'),
@@ -404,7 +406,7 @@ const stmts = {
   // v1.9.2 渲染自愈：进程崩溃/退出遗留的 rendering 任务复位回 queued（启动时由渲染器调用）
   resetStuckRenderJobs: db.prepare("UPDATE render_jobs SET status = 'queued', progress = 0 WHERE status = 'rendering'"),
   updateRenderJob: db.prepare(
-    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, quality = ?, updated_at = ? WHERE id = ?',
+    'UPDATE render_jobs SET status = ?, progress = ?, output_path = ?, error_message = ?, covers = ?, quality = ?, work_dir = ?, updated_at = ? WHERE id = ?',
   ),
   // P3：全自动成片状态机（auto.js 持有；JSON 落 projects.auto_state）
   setProjectAutoState: db.prepare('UPDATE projects SET auto_state = ?, updated_at = ? WHERE id = ?'),
@@ -1182,6 +1184,8 @@ function renderRowToApi(row) {
     output_url: row.output_path ? '/artifacts/' + path.basename(row.output_path) : null,
     covers: parseJson(row.covers) || [], // v1.8 封面候选 [{path,url}]
     quality: parseJson(row.quality) || null, // P3：质检报告 {duration_s, expected_duration_s, loudness_lufs, shots, narrated_shots, sub_lines}
+    work_dir: row.work_dir || null, // v2.2：作品归档目录（data/works/《名》-id，含成片/字幕/台词/海报）
+    work_url: row.work_dir ? '/works/' + encodeURIComponent(path.basename(row.work_dir)) : null,
     error_message: row.error_message,
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -1213,6 +1217,7 @@ const renders = {
       patch.error_message !== undefined ? patch.error_message : cur.error_message,
       patch.covers !== undefined ? JSON.stringify(patch.covers) : cur.covers,
       patch.quality !== undefined ? JSON.stringify(patch.quality) : cur.quality,
+      patch.work_dir !== undefined ? patch.work_dir : cur.work_dir,
       Date.now(),
       Number(id),
     );

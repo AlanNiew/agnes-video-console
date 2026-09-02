@@ -28,7 +28,7 @@ const submitter = require('./submitter');
 const imageWorker = require('./image-worker');
 const renderer = require('./render');
 const autoPipeline = require('./auto');
-const { ARTIFACTS_DIR } = require('./artifacts');
+const { ARTIFACTS_DIR, WORKS_DIR } = require('./artifacts');
 const { log } = require('./logger');
 const { ApiError } = require('./errors');
 
@@ -46,13 +46,20 @@ require('./routes/music')(app); // /api/music/* + /api/projects/:id/bgm
 require('./routes/projects')(app); // /api/projects*（文案/图片/镜头/视频任务/重拍/定稿）
 require('./routes/render')(app); // /api/projects/:id/render + /api/render/jobs*
 
-/* ---------------- 本地图片静态服务 ---------------- */
+/* ---------------- 本地产物静态服务 ---------------- */
 try {
   fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
 } catch {
   /* ignore */
 }
 app.use('/artifacts', express.static(ARTIFACTS_DIR, { maxAge: '7d' }));
+// v2.2 作品目录静态服务：data/works/《名》-id/（成片/字幕/台词/海报，供前端预览与下载）
+try {
+  fs.mkdirSync(WORKS_DIR, { recursive: true });
+} catch {
+  /* ignore */
+}
+app.use('/works', express.static(WORKS_DIR, { maxAge: '7d' }));
 
 /* ---------------- 静态前端 ---------------- */
 app.use(express.static(path.join(__dirname, 'public')));
