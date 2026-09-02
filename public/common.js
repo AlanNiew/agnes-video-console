@@ -58,5 +58,61 @@
     return data;
   };
 
-  window.__common = { $, $$, esc, fmtTime, toast, api };
+  /* ---------------- v2.2 主题管理（深色 / 浅色 / 跟随系统） ----------------
+   * 真实主题落 <html data-theme="dark|light">（'system' 仅是用户选择，
+   * 应用时按 prefers-color-scheme 解析）；index.html head 内联脚本已做首屏防闪烁。
+   * 按钮自包含绑定：common.js 在 body 末尾加载，DOM 已就绪。 */
+  const THEMES = ['dark', 'light', 'system'];
+  const THEME_META = {
+    dark: { icon: '🌙', label: '深色' },
+    light: { icon: '☀️', label: '浅色' },
+    system: { icon: '🖥️', label: '跟随系统' },
+  };
+  const THEME_KEY = 'agnes-theme';
+
+  const getTheme = () => {
+    try {
+      const t = localStorage.getItem(THEME_KEY);
+      return THEMES.includes(t) ? t : 'dark';
+    } catch {
+      return 'dark';
+    }
+  };
+  const systemPrefersDark = () => window.matchMedia('(prefers-color-scheme: dark)').matches;
+  /** 把用户选择解析为真实主题并应用到 <html>；同步切换按钮图标与提示 */
+  const applyTheme = (mode) => {
+    const real = mode === 'system' ? (systemPrefersDark() ? 'dark' : 'light') : mode;
+    document.documentElement.dataset.theme = real;
+    const btn = $('#btnTheme');
+    if (btn) {
+      const meta = THEME_META[mode] || THEME_META.dark;
+      btn.textContent = meta.icon;
+      btn.title = `当前主题：${meta.label}（点击切换 深色 → 浅色 → 跟随系统）`;
+    }
+  };
+  const setTheme = (mode) => {
+    try {
+      localStorage.setItem(THEME_KEY, mode);
+    } catch {
+      /* 隐私模式下不可持久化，仅本次会话生效 */
+    }
+    applyTheme(mode);
+  };
+  const cycleTheme = () => {
+    const next = THEMES[(THEMES.indexOf(getTheme()) + 1) % THEMES.length];
+    setTheme(next);
+    return next;
+  };
+  // system 模式下系统切换深浅时实时跟随
+  window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', () => {
+    if (getTheme() === 'system') applyTheme('system');
+  });
+  // 绑定切换按钮 + 按当前选择刷新按钮展示
+  (() => {
+    const btn = $('#btnTheme');
+    if (btn) btn.addEventListener('click', () => toast(`已切换主题：${THEME_META[cycleTheme()].label}`, 'ok'));
+    applyTheme(getTheme());
+  })();
+
+  window.__common = { $, $$, esc, fmtTime, toast, api, theme: { getTheme, setTheme, cycleTheme, applyTheme } };
 })();

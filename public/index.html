@@ -4,6 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Agnes Video 任务控制台</title>
+    <script>
+      /* 主题初始化（必须内联于 head 且先于样式渲染）：读 localStorage 决定 dark/light，
+       * 'system' 模式按系统偏好解析——避免页面加载后主题切换闪烁（FOUC） */
+      (function () {
+        var theme = 'dark';
+        try {
+          theme = localStorage.getItem('agnes-theme') || 'dark';
+          if (theme === 'system') {
+            theme = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+          }
+        } catch (e) {
+          /* localStorage 不可用时保持默认深色 */
+        }
+        document.documentElement.dataset.theme = theme;
+      })();
+    </script>
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -29,6 +45,7 @@
           <button class="nav-tab active" id="navTasks">📋 任务中心</button>
         </div>
         <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
+        <button class="btn ghost icon-btn" id="btnTheme" title="切换主题">🌙</button>
         <button class="btn primary" id="btnNewTask">＋ 新建任务</button>
         <button class="btn ghost icon-btn" id="btnSettings" title="设置">⚙</button>
       </div>

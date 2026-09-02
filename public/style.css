@@ -1,5 +1,6 @@
 /* Agnes Video 任务控制台 —— 深色主题 */
 :root {
+  color-scheme: dark; /* UA 默认表单控件（输入框/复选框/滑杆/滚动条）适配深色主题，杜绝黑底黑字 */
   --bg: #0f1117;
   --bg-2: #161a24;
   --bg-3: #1d2230;
@@ -197,6 +198,22 @@ body {
 }
 .search:focus {
   border-color: var(--accent);
+}
+/* v2.1 修复：BGM 搜索框此前无任何规则，渲染成 UA 默认白盒（深色主题下突兀） */
+#wsBgmQuery {
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 8px 14px;
+  border-radius: 9px;
+  font-size: 13px;
+  outline: none;
+}
+#wsBgmQuery:focus {
+  border-color: var(--accent);
+}
+#wsBgmQuery::placeholder {
+  color: var(--text-dim);
 }
 .chips {
   display: flex;
@@ -1272,6 +1289,16 @@ body {
   border-radius: 8px;
   padding: 6px 10px;
   font-size: 13px;
+  color: var(--text); /* 修复：深底无字色导致浏览器默认黑字隐形 */
+  outline: none;
+  font-family: inherit;
+}
+.shot-title:focus {
+  border-color: var(--accent);
+}
+.shot-title::placeholder {
+  color: var(--text-dim);
+  opacity: 0.7;
 }
 .shot-card textarea {
   margin-top: 8px;
@@ -1792,12 +1819,30 @@ body {
   color: var(--text-dim);
 }
 
-/* 步骤条 */
+/* 步骤条（v2.2 吸顶：随滚动固定在顶栏下方，随时可跳转任意步骤 / 查看完成进度） */
 .steps {
+  position: sticky;
+  top: 64px; /* 顶栏高度（顶栏自身 sticky top:0），窄屏顶栏换行增高时可能露出少许缝隙，可接受 */
+  z-index: 40;
   display: flex;
   gap: 8px;
   margin: 14px 0 20px;
   flex-wrap: wrap;
+  padding: 10px 12px; /* 吸顶时内容从条后穿过，需有底色遮盖 */
+  background: rgba(15, 17, 23, 0.92);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+/* 锚点跳转（步骤条点击 / 上一步下一步）预留吸顶条高度，防止目标被遮 */
+#wsCopySections,
+#wsCharSection,
+#wsVideoSection,
+#wsTtsSection,
+#wsBgmSection,
+#wsRenderSection {
+  scroll-margin-top: 150px;
 }
 .step {
   flex: 1;
@@ -2012,4 +2057,61 @@ body {
   padding: 40px 0;
   color: var(--text-dim);
   font-size: 13px;
+}
+
+/* ================= v2.2 浅色主题 =================
+ * 真实主题落 <html data-theme="light">（common.js 按 dark/light/system 解析后设置）。
+ * 只覆盖变量 + 少量硬编码深色；视频/图片查看底(#0d1117)与日志/JSON 终端风(#0b0e15)
+ * 为刻意设计，两种主题下均保持不变。 */
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f5fa;
+  --bg-2: #ffffff;
+  --bg-3: #eceef5;
+  --border: #d7dbe7;
+  --text: #1d2434;
+  --text-dim: #5c6579;
+  --shadow: 0 10px 30px rgba(30, 40, 80, 0.14);
+}
+html[data-theme='light'] body {
+  background:
+    radial-gradient(1200px 500px at 80% -10%, rgba(99, 102, 241, 0.08), transparent 60%),
+    radial-gradient(900px 400px at -10% 110%, rgba(139, 92, 246, 0.07), transparent 60%), var(--bg);
+}
+html[data-theme='light'] .topbar {
+  background: rgba(255, 255, 255, 0.86);
+}
+html[data-theme='light'] .col {
+  background: rgba(255, 255, 255, 0.6);
+}
+html[data-theme='light'] .steps {
+  background: rgba(255, 255, 255, 0.92);
+}
+html[data-theme='light'] .modal-overlay {
+  background: rgba(40, 50, 90, 0.35);
+}
+/* 透明底 hover 原为白字（深色下正确，浅色下白字隐形）→ 改主题色 */
+html[data-theme='light'] .btn:hover {
+  color: var(--accent);
+}
+html[data-theme='light'] .act:hover {
+  color: var(--accent);
+}
+html[data-theme='light'] .modal-close:hover {
+  color: var(--text);
+}
+/* 靛蓝浅字（深色下的点缀色）→ 浅色下换深靛蓝保证对比度 */
+html[data-theme='light'] .t-src,
+html[data-theme='light'] .card-src,
+html[data-theme='light'] .shot-field-label,
+html[data-theme='light'] .film-recipe b,
+html[data-theme='light'] .adv-group > b,
+html[data-theme='light'] .step-guide summary,
+html[data-theme='light'] .rv-rev div {
+  color: #4f46e5;
+}
+/* spinner 白色转轮 → 深色轨道 */
+html[data-theme='light'] .spinner {
+  border-color: rgba(0, 0, 0, 0.15);
+  border-top-color: #4f46e5;
 }
