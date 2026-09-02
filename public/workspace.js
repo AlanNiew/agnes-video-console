@@ -175,6 +175,7 @@
     ['character', '角色图'],
     ['videos', '视频生成'],
     ['tts', '配音'],
+    ['bgm', '配乐'],
     ['render', '渲染成片'],
   ];
   const AUTO_STAGE_ALIAS = { wait_videos: 'videos', wait_render: 'render', done: '__done__' };
@@ -186,6 +187,7 @@
     videos: '逐镜生成视频',
     wait_videos: '等待视频完成',
     tts: '逐镜配音',
+    bgm: '自动选配乐',
     render: '渲染成片',
     wait_render: '等待渲染完成',
     done: '完成',
@@ -868,6 +870,8 @@
         <div class="copy-sect" id="wsRenderSection">
           <h4>🎞️ 成片渲染 <span class="muted" style="font-weight:400">已完成镜头 + 逐镜旁白 → 完整短片（本地 ffmpeg 合成）</span></h4>
           ${stepGuideHTML(7)}
+          <!-- v2.1 渲染前预检：镜头就绪 / 旁白匹配 / 配乐状态 / 预计时长（红黄绿三态，随后台进度自动更新） -->
+          <div class="precheck-row" id="wsPrecheck">${renderPrecheckHTML(d, completedShots, narratedShots, shots)}</div>
           <!-- P2：成片风格预设卡片（一键套用整套配方，小白一步到位） -->
           <div class="film-preset-row" id="wsFilmPresets">
             ${FILM_PRESETS.map(
@@ -1694,6 +1698,17 @@
       const d = await api(`/api/projects/${currentProjectId}`);
       box.innerHTML = renderTaskList(d.tasks || [], d.shots || []);
       bindGotoTaskLinks();
+      // v2.1：渲染预检随项目聚合同步刷新（视频后台完成时预检自动转绿）
+      const pc = $('#wsPrecheck');
+      if (pc) {
+        const tasks = d.tasks || [];
+        const shots = d.shots || [];
+        const completedShots = tasks.filter((t) => t.status === 'completed' && t.shot_id).length;
+        const narratedShots = shots.filter((s) =>
+          (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message),
+        ).length;
+        pc.innerHTML = renderPrecheckHTML(d, completedShots, narratedShots, shots);
+      }
     } catch {
       /* 静默：下次轮询自愈 */
     }
@@ -1910,6 +1925,106 @@
     return `<button class="btn ghost sm" data-shot-tts="${s.id}" title="${bound ? '重新生成本镜配音（覆盖旧绑定）' : '用本镜旁白文案合成配音并自动绑定'}">${bound ? '🎙️ 重配本镜' : '🎙️ 配本镜旁白'}</button>`;
   }
 
+  /* v2.1 旁白计量：TTS 实测约 4.6 字/秒（标定见 docs/CREATION_PLAYBOOK.md），上限 = 秒数×4 字。
+   * 生成端已有 clampNarration 硬限（v2.0.3），此处把同样的规则前移到编辑时即时反馈。 */
+  const NARR_CPS = 4.6;
+  function narrMeterHTML(text, seconds) {
+    const sec = Number(seconds) || 5;
+    const cap = Math.floor(sec * 4);
+    const len = (text || '').length;
+    if (!len) return ''; // 空旁白不占位（该镜无配音）
+    const est = len / NARR_CPS;
+    const over = len > cap;
+    return `<span class="${over ? 'nm-over' : 'nm-ok'}">${len}/${cap} 字 · 配音 ≈${est.toFixed(1)}s / 镜头 ${sec}s${over ? ' · 超长，渲染时将被截断' : ''}</span>`;
+  }
+  /** 旁白计量实时刷新：旁白输入 / 时长下拉联动（渲染后由 bindStoryboardEvents 统一绑定） */
+  function bindNarrMeters() {
+    document.querySelectorAll('#wsShotList .shot-card').forEach((card) => {
+      const ta = card.querySelector('[data-shot-narration]');
+      const meter = card.querySelector('[data-narr-meter]');
+      const secSel = card.querySelector('[data-shot-seconds]');
+      if (!ta || !meter) return;
+      const update = () => {
+        meter.innerHTML = narrMeterHTML(ta.value, secSel?.value);
+      };
+      ta.oninput = update;
+      if (secSel) secSel.onchange = update;
+    });
+  }
+
+  /* ---------------- v2.1 渲染前预检（镜头就绪 / 旁白匹配 / 配乐 / 预计时长） ----------------
+   * 输入为项目聚合数据（refreshTasks 每 10s 全量拉取，视频后台完成时预检自动转绿）。
+   * 旁白匹配口径与渲染器一致：镜头最新绑定配音时长 + 0.5s 偏移 ≤ 镜头标称时长。 */
+  function renderPrecheckHTML(d, completedShots, narratedShots, shots) {
+    const tasks = d.tasks || [];
+    const tts = d.tts || [];
+    const bgm = d.project?.bgm;
+    const chips = [];
+
+    // ① 镜头就绪（硬门槛：≥2 完成镜头，与渲染按钮 disabled 同口径）
+    chips.push(
+      completedShots >= 2
+        ? `<span class="pc-chip ok" title="已完成视频的镜头数">✓ ${completedShots} 镜就绪</span>`
+        : `<span class="pc-chip bad" title="渲染至少需要 2 个已完成视频的镜头">✗ 仅 ${completedShots} 镜（需 ≥2）</span>`,
+    );
+
+    // ② 旁白匹配：逐镜「最新绑定配音时长 + 0.5s ≤ 镜头时长」（有旁白文案且已配音的镜头才计入）
+    let matched = 0;
+    let overCount = 0;
+    let noAudio = 0;
+    for (const s of shots) {
+      if (!(s.narration || '').trim()) continue; // 无旁白文案的镜头不参与
+      const bound = tts
+        .filter((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message)
+        .sort((a, b) => b.id - a.id)[0];
+      if (!bound) {
+        noAudio += 1;
+        continue;
+      }
+      if ((Number(bound.duration) || 0) + 0.5 <= Number(s.seconds || 5) * 1.035)
+        matched += 1; // 镜头实测约 +3.5%
+      else overCount += 1;
+    }
+    const narrTotal = matched + overCount + noAudio;
+    if (narrTotal === 0) {
+      chips.push(`<span class="pc-chip warn" title="没有任何镜头填写旁白文案，成片将无配音字幕">⚠ 全片无旁白</span>`);
+    } else if (overCount === 0 && noAudio === 0) {
+      chips.push(
+        `<span class="pc-chip ok" title="所有旁白配音时长均在镜头内">✓ 旁白 ${matched}/${narrTotal} 匹配</span>`,
+      );
+    } else {
+      const parts = [];
+      if (overCount) parts.push(`${overCount} 镜超长（渲染时将被截断）`);
+      if (noAudio) parts.push(`${noAudio} 镜未配音`);
+      chips.push(
+        `<span class="pc-chip warn" title="${esc(parts.join('；'))}">⚠ 旁白 ${matched}/${narrTotal} 匹配</span>`,
+      );
+    }
+
+    // ③ 配乐状态
+    if (bgm?.song_id) {
+      chips.push(`<span class="pc-chip ok" title="已选用背景音乐">🎵 已配乐</span>`);
+    } else if (narratedShots > 0) {
+      chips.push(
+        `<span class="pc-chip warn" title="有旁白但未选 BGM：建议在第⑥步选一首衬托人声的轻音乐">🎵 建议配乐（有旁白无 BGM）</span>`,
+      );
+    } else {
+      chips.push(`<span class="pc-chip warn" title="无旁白也无 BGM，成片将完全无声">🎵 未配乐（成片将无声）</span>`);
+    }
+
+    // ④ 预计时长（信息性）：Σ完成镜头标称时长 + 片头尾卡(6.3s) − 转场叠化(600ms × 缺口数)
+    const readyShots = shots.filter((s) => tasks.some((t) => t.shot_id === s.id && t.status === 'completed'));
+    if (readyShots.length) {
+      const seg = readyShots.reduce((sum, s) => sum + (Number(s.seconds) || 5), 0);
+      const est = seg + 6.3 - 0.6 * Math.max(readyShots.length - 1, 0);
+      chips.push(
+        `<span class="pc-chip info" title="按完成镜头标称时长 + 片头尾卡 − 转场叠化估算">⏱ 预计 ≈${est.toFixed(0)}s</span>`,
+      );
+    }
+
+    return chips.join('');
+  }
+
   function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
     const sbVersions = texts.filter((t) => t.kind === 'storyboard');
     const secondsOpts = (sel) =>
@@ -1981,6 +2096,7 @@
             <textarea data-shot-prompt rows="3" title="本镜的画面生成提示词">${esc(s.video_prompt)}</textarea>
             <label class="shot-field-label">🎙️ 旁白文案<span class="hint">本镜的人声朗读文稿（渲染时自动与画面对齐；画面提示词不会被拿去配音）</span></label>
             <textarea data-shot-narration rows="2" placeholder="此镜头的旁白台词（可选；留空则该镜无配音）" title="本镜旁白：只用于合成人声，成片时按镜头对齐混入" style="margin-top:2px">${esc(s.narration || '')}</textarea>
+            <div class="narr-meter" data-narr-meter>${narrMeterHTML(s.narration || '', s.seconds)}</div>
             <label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:6px">
               <input type="checkbox" data-shot-ref ${s.use_character_ref !== 0 ? 'checked' : ''} />
               引用角色定稿图（纯空镜 / 无人镜头可取消勾选，将以纯文生模式提交）
@@ -2089,6 +2205,8 @@
       const down = card.querySelector('[data-shot-down]');
       if (down) down.onclick = () => moveShot(projectId, card, 1);
     });
+    // v2.1：旁白计量条实时刷新（input / 时长变更联动）
+    bindNarrMeters();
   }
 
   async function moveShot(projectId, card, dir) {

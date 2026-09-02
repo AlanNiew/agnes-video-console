@@ -1,25 +1,33 @@
 'use strict';
 /**
- * auto.js —— 全自动成片编排器（P3）
- * 把「创意 → 文案 → 分镜 → L1 自审 → 角色图 → 逐镜视频 → 逐镜 TTS → 渲染」串成一条
- * 后台流水线：小白只需一个创意点「全自动」，其余步骤自动推进、失败自动重试、
+ * auto.js —— 全自动成片编排器（P3；v2.1 补 bgm 阶段）
+ * 把「创意 → 文案 → 分镜 → L1 自审 → 角色图 → 逐镜视频 → 逐镜 TTS → 自动选配乐 → 渲染」
+ * 串成一条后台流水线：小白只需一个创意点「全自动」，其余步骤自动推进、失败自动重试、
  * 卡住时停在人工介入点。状态机持久化在 projects.auto_state（JSON），前端可随时
  * 拉取渲染进度时间线。
  *
  * 阶段：script → storyboard → review → character → videos → wait_videos
- *       → tts → render → wait_render → done（失败/停止 → error / stopped）
+ *       → tts → bgm → render → wait_render → done（失败/停止 → error / stopped）
  * 每阶段最多重试 2 次；L1 审查失败不阻塞（记录 warning 后继续）；
- * TTS 未配置 Fish Key 时跳过（无配音渲染）。
+ * TTS 未配置 Fish Key 时跳过（无配音渲染）；bgm 阶段任何失败均降级跳过（成片不因配乐阻塞）。
  */
 const fs = require('node:fs');
 const path = require('node:path');
 const { settings, DEFAULT_SETTINGS, projects, tasks, renders, instanceLockHeldByOther } = require('./db');
 const agnes = require('./agnes');
 const fishTts = require('./fish-tts');
+const netmusic = require('./netmusic');
 const { log } = require('./logger');
 const { ARTIFACTS_DIR } = require('./artifacts');
 const { probeDuration } = require('./config');
-const { LLM_MODEL, IMAGE_MODEL, SCRIPT_KINDS, SECONDS_OK } = require('./constants');
+const {
+  LLM_MODEL,
+  IMAGE_MODEL,
+  SCRIPT_KINDS,
+  SECONDS_OK,
+  STYLE_BGM_KEYWORDS,
+  STYLE_BGM_DEFAULT_KEYWORD,
+} = require('./constants');
 const { ApiError } = require('./errors');
 const {
   SCRIPT_SYSTEM_PROMPT,
@@ -46,11 +54,12 @@ const STAGE_META = {
   videos: { label: '逐镜生成视频', step: 5 },
   wait_videos: { label: '等待视频完成', step: 5 },
   tts: { label: '逐镜配音', step: 6 },
-  render: { label: '渲染成片', step: 7 },
-  wait_render: { label: '等待渲染完成', step: 7 },
-  done: { label: '完成', step: 8 },
-  error: { label: '人工介入', step: 8 },
-  stopped: { label: '已停止', step: 8 },
+  bgm: { label: '自动选配乐', step: 7 },
+  render: { label: '渲染成片', step: 8 },
+  wait_render: { label: '等待渲染完成', step: 8 },
+  done: { label: '完成', step: 9 },
+  error: { label: '人工介入', step: 9 },
+  stopped: { label: '已停止', step: 9 },
 };
 
 class AutoPipeline {
@@ -226,6 +235,8 @@ class AutoPipeline {
         return this.doWaitVideos(projectId, p, st);
       case 'tts':
         return this.doTts(projectId, p, st);
+      case 'bgm':
+        return this.doBgm(projectId, p, st);
       case 'render':
         return this.doRender(projectId, p, st);
       case 'wait_render':
@@ -449,14 +460,14 @@ class AutoPipeline {
   async doTts(projectId, _p, st) {
     const apiKey = settings.get('fish_api_key', '');
     if (!apiKey) {
-      this.advance(projectId, 'render', '未配置 Fish Audio Key，跳过配音');
+      this.advance(projectId, 'bgm', '未配置 Fish Audio Key，跳过配音');
       return;
     }
     const shots = projects.shots(projectId);
     const targets = shots.filter((s) => (s.narration || '').trim());
     const idx = st.tts_index || 0;
     if (idx >= targets.length) {
-      this.advance(projectId, 'render', `配音处理完成（${targets.length} 镜旁白）`);
+      this.advance(projectId, 'bgm', `配音处理完成（${targets.length} 镜旁白）`);
       return;
     }
     const s = targets[idx];
@@ -515,7 +526,59 @@ class AutoPipeline {
     );
   }
 
-  /** ⑦ 渲染：发起（默认参数）；随后轮询 */
+  /** ⑦ 自动选配乐（v2.1）：按项目风格映射搜索曲库选用 BGM；任何失败降级跳过（成片永不因配乐阻塞） */
+  async doBgm(projectId, p) {
+    // 已选 BGM（全自动前人工选过）→ 直接进入渲染
+    if (p.bgm?.song_id) {
+      this.advance(projectId, 'render', `已有 BGM《${p.bgm.name}》，跳过选曲`);
+      return;
+    }
+    // 音乐接口未配置 → 不阻塞，记建议后渲染（与 TTS 降级同策略）
+    if (!netmusic.baseUrl()) {
+      this.advance(projectId, 'render', '未配置音乐接口，跳过配乐（可在第⑥步手动选曲后重渲）');
+      return;
+    }
+    // 风格 → 搜索词（未命中用默认「轻音乐」：内容创作类视频纯轻音乐最稳，不抢注意力、衬托旁白）
+    const style = String(p.style || '');
+    const hit = STYLE_BGM_KEYWORDS.find(([re]) => re.test(style));
+    const keyword = hit ? hit[1] : STYLE_BGM_DEFAULT_KEYWORD;
+    try {
+      const items = await netmusic.search(keyword, 8);
+      const song = items?.[0];
+      if (!song) {
+        this.advance(projectId, 'render', `曲库搜「${keyword}」无结果，暂无配乐（可手动选曲后重渲）`);
+        return;
+      }
+      // 复刻 POST /api/projects/:id/bgm 核心逻辑：下载缓存 → 落库
+      const level = String(
+        netmusic.LEVELS.find((l) => l === String(settings.get('music_level', DEFAULT_SETTINGS.music_level))) ||
+          'exhigh',
+      );
+      const dl = await netmusic.downloadBGM(song.id, level);
+      projects.setBgm(projectId, {
+        song_id: String(song.id),
+        name: song.name,
+        artist: song.artist || '',
+        album: song.album || '',
+        level,
+        local_path: dl.local_path,
+        local_url: dl.local_url,
+        cached: dl.cached,
+        selected_at: Date.now(),
+      });
+      this.advance(
+        projectId,
+        'render',
+        `配乐已选《${song.name}》${song.artist ? `- ${song.artist}` : ''}（风格「${style || '默认'}」→ ${keyword}）`,
+      );
+    } catch (e) {
+      // 搜索/下载失败：warn 记录后继续（配乐是增益项，不是成片前置）
+      this.advance(projectId, 'render', `自动选曲失败已跳过：${String(e.message).slice(0, 120)}`);
+      log('warn', `项目 #${projectId} 自动成片：BGM 阶段失败（不阻塞）——${String(e.message).slice(0, 200)}`);
+    }
+  }
+
+  /** ⑧ 渲染：发起（默认参数）；随后轮询 */
   async doRender(projectId, _p, st) {
     const jobId = renders.insert({ project_id: projectId, params: {} });
     st.render_job_id = jobId;
@@ -523,7 +586,7 @@ class AutoPipeline {
     this.advance(projectId, 'wait_render', `渲染任务 #${jobId} 已创建`);
   }
 
-  /** ⑦.5 等待渲染完成 */
+  /** ⑧.5 等待渲染完成 */
   async doWaitRender(projectId, _p, st) {
     const job = st.render_job_id ? renders.get(st.render_job_id) : null;
     if (!job) throw new Error('渲染任务记录丢失');

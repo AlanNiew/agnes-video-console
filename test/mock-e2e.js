@@ -1403,6 +1403,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       'videos',
       'wait_videos',
       'tts',
+      'bgm',
       'render',
       'wait_render',
       'done',
@@ -1411,6 +1412,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     }
     // L1 自动修订：low 严重度的旁白修订应已写入镜头 1（medium/low 自动采纳，high 留人工）
     const autoDetail = (await api('GET', `/api/projects/${apid}`)).data;
+    // v2.1 bgm 阶段：音乐接口已配置（指向 mock），全自动应自动选中 BGM
+    if (!autoDetail.project?.bgm?.song_id) err('全自动 bgm 阶段未自动选中 BGM');
+    if (autoDetail.project?.bgm?.name !== '测试曲') err(`自动选曲名称异常: ${autoDetail.project?.bgm?.name}`);
+    // 选曲结果记录在「进入 render」的历史条目里（doBgm advance 到 render 时携带选曲说明）
+    const renderEntry = (autoSt.history || []).find((h) => h.stage === 'render' && h.status === 'ok');
+    if (!renderEntry || !String(renderEntry.detail || '').includes('配乐已选')) {
+      err(`bgm 阶段选曲说明缺失: ${JSON.stringify(renderEntry)}`);
+    }
     if (!autoDetail.shots.some((s) => s.narration === '暮色拉长了土路，夏天走成了脚印。'))
       err('L1 自审的 low 严重度修订未自动应用到镜头旁白');
     if (autoDetail.tasks.some((t) => t.status !== 'completed')) err('全自动后存在未完成的视频任务');
@@ -1420,7 +1429,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (!autoJob.quality || !autoJob.quality.duration_s || autoJob.quality.shots !== 2)
       err(`质检报告缺失或异常: ${JSON.stringify(autoJob.quality)}`);
     ok(
-      `全自动成片闭环完成 🎉（${autoDetail.shots.length} 镜 · 成片 ${autoJob.quality.duration_s}s · 响度 ${autoJob.quality.loudness_lufs ?? '?'} LUFS · L1 修订已应用 · TTS 未配置自动跳过）`,
+      `全自动成片闭环完成 🎉（${autoDetail.shots.length} 镜 · 成片 ${autoJob.quality.duration_s}s · 响度 ${autoJob.quality.loudness_lufs ?? '?'} LUFS · L1 修订已应用 · TTS 未配置自动跳过 · BGM 自动选《${autoDetail.project?.bgm?.name}》）`,
     );
   }
 

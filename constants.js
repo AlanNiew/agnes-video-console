@@ -93,6 +93,19 @@ const RENDER_TRANSITIONS = ['fade', 'dissolve', 'wipeleft', 'wiperight', 'slideu
 const SUBTITLE_STYLES = ['white-outline', 'yellow-box', 'bottom-bar'];
 const SUBTITLE_POSITIONS = ['bottom', 'center'];
 
+/* v2.1 全自动成片 BGM 阶段：项目风格 → 搜索词映射（顺序敏感：先匹配先赢）。
+ * 兜底为「轻音乐」——内容创作类视频纯轻音乐最稳：不抢观众注意力、衬托旁白、普适性强。 */
+const STYLE_BGM_KEYWORDS = [
+  [/治愈|温暖|治疗|治愈系/, '钢琴'],
+  [/热血|燃向|动漫|少年感/, '摇滚'],
+  [/悬疑|恐怖|惊悚|紧张/, '氛围弦乐'],
+  [/国风|水墨|古风|汉服/, '古筝'],
+  [/童话|绘本|儿童|亲子/, '八音盒'],
+  [/赛博|科幻|未来/, '电子'],
+  [/纪录|写实|人文/, '轻音乐'],
+];
+const STYLE_BGM_DEFAULT_KEYWORD = '轻音乐';
+
 module.exports = {
   MODELS,
   MODES,
@@ -118,4 +131,6 @@ module.exports = {
   RENDER_TRANSITIONS,
   SUBTITLE_STYLES,
   SUBTITLE_POSITIONS,
+  STYLE_BGM_KEYWORDS,
+  STYLE_BGM_DEFAULT_KEYWORD,
 };
