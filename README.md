@@ -29,6 +29,7 @@
 - 📱 **竖屏 9:16 产线 + 封面自动生成（v1.8）**：渲染方向跟随项目画幅（16:9 横屏 / 9:16 竖屏直通抖音快手），字卡/字幕/安全边距全链自适应；渲染完成自动产出 3 张封面候选（关键帧 + 片名），工作台直接预览下载
 - 🎵 **在线 BGM 配乐（v1.4）**：工作台第⑥步搜索在线曲库（自托管音乐接口，网易云源）→ 试听 → 一键选用；渲染时 BGM 循环铺底、首尾淡入淡出，**有旁白时自动闪避**（sidechaincompress 压低音乐让人声突出），音量可调
 - 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（转场可选、旁白按镜头对齐、片头/片尾卡、响度标准化），产出直接播放/下载
+- 📁 **作品归档 + 社交海报（v2.2）**：每部成品独立目录 `data/works/《作品名》-ID/`（成片 / SRT 字幕 / 旁白台词 / AI 海报），渲染完成自动生成可直发社交平台的海报（LLM 海报级提示词 → 文生图 → 叠片名标题），与素材目录彻底分开
 - 🚦 **服务端提交队列（v1.3）**：任务创建为「入队」语义，后台提交器按 `submit_interval_ms` 节流提交上游，**429 限流自动指数退避重试**——批量提交不再产生撞墙死记录
 - 💾 **视频本地归档（v1.3）**：任务完成即自动下载到 `data/artifacts`，播放/下载优先本地（远端链接过期也有兜底）；历史完成任务启动时自动补扫归档
 - 🗑️ **superseded 失败治理（v1.3）**：同镜头已有更新成功任务时，旧失败记录自动标记「已作废」，看板不再被废记录误导
@@ -103,7 +104,8 @@ agnes-video-console/
 ├── image-worker.js      # 图片任务工作器（v2.0：异步图片生成 + 退避重试 + 产物归档/项目落库）
 ├── auto.js              # 全自动成片编排器（v2.1：文案→分镜→自审→角色图→视频→配音→自动选配乐→渲染状态机）
 ├── render.js            # 成片渲染器（归一化 → xfade 转场 → 旁白对齐混音 → 质检报告 → 封面候选）
-├── artifacts.js         # 本地产物归档（远程图片/视频/音频下载备份，供 server/poller 共用）
+├── artifacts.js         # 本地产物归档（素材备份 artifacts + 作品目录 works/《名》-id 定位）
+├── poster.js            # 社交海报生成器（v2.2：LLM 提示词 → 文生图 → 叠标题，渲染完成自动出图）
 ├── openapi.js           # API 自描述文档（GET /api/openapi.json）
 ├── netmusic.js          # 音乐接口客户端（v1.4 BGM：搜索 / 播放地址 / 本地缓存下载）
 ├── fish-tts.js          # Fish Audio TTS 客户端（直连或 HTTP 代理 CONNECT 隧道）
@@ -111,8 +113,10 @@ agnes-video-console/
 ├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
 ├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流、图片任务、全自动成片与真实 ffmpeg 渲染用例）
-└── data/                # 运行时生成：agnes-console.db + artifacts 本地归档（已被 .gitignore 忽略）
+└── data/                # 运行时生成：agnes-console.db + artifacts 素材归档 + works 作品目录（gitignore 忽略）
 ```
+
+> **找成品**：渲染完成的成片/字幕/旁白台词/海报按作品存放在 `data/works/《作品名》-项目ID/`，与中间素材（data/artifacts）分开；工作台第⑦步渲染卡也会显示每部作品的确切目录路径。
 
 > 开发命令：`npm test`（jest 单测 + e2e 冒烟全跑）；`npm run test:unit` / `npm run test:mock` 单独跑；`npm run lint` / `npm run format` 代码检查与格式化。
 

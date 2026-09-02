@@ -4,7 +4,7 @@
  * 注意：buildSubtitleAss 未从模块导出独立函数明细，但 assTime/wrapCJK 为内部函数，
  * 这里经 buildSubtitleAss 的输出间接断言（与 e2e 的做法一致但更细）。
  */
-const { buildSubtitleAss, escDrawtext } = require('../../render');
+const { buildSubtitleAss, buildSrt, escDrawtext } = require('../../render');
 
 describe('buildSubtitleAss', () => {
   test('生成标准 ASS 头（Script Info / Style / Events）', () => {
@@ -137,5 +137,36 @@ describe('escDrawtext（drawtext 滤镜文本转义，v1.9.2）', () => {
     // 尝试用 % 和 ' 组合闭合引号并求值表达式 → 两处均被转义
     const evil = "'%{pts}";
     expect(escDrawtext(evil)).toBe("\\'\\%{pts}");
+  });
+});
+
+describe('buildSrt（v2.2 作品归档 SRT 导出）', () => {
+  test('标准 SRT 结构：序号 + HH:MM:SS,mmm 时间轴 + 文本 + 空行分隔', () => {
+    const srt = buildSrt([{ start: 1.5, end: 3.25, text: '末班车开走了' }]);
+    expect(srt).toBe('1\n00:00:01,500 --> 00:00:03,250\n末班车开走了\n');
+  });
+
+  test('跨小时/毫秒进位格式正确', () => {
+    const srt = buildSrt([{ start: 3661.005, end: 3662.999, text: 'x' }]);
+    expect(srt).toContain('01:01:01,005 --> 01:01:02,999');
+  });
+
+  test('过滤无效行（end≤start / 空文本 / null），多行文本压成单行', () => {
+    const srt = buildSrt([
+      { start: 0, end: 1, text: '第一句' },
+      { start: 2, end: 2, text: '零时长' },
+      { start: 3, end: 4, text: '' },
+      null,
+      { start: 5, end: 6, text: '多行\n台词' },
+    ]);
+    expect(srt).toContain('第一句');
+    expect(srt).toContain('多行 台词');
+    expect(srt).not.toContain('零时长');
+    expect((srt.match(/^\d+$/gm) || []).length).toBe(2); // 只有序号 1、2
+  });
+
+  test('空输入返回空串', () => {
+    expect(buildSrt([])).toBe('');
+    expect(buildSrt(null)).toBe('');
   });
 });

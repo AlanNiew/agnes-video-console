@@ -1327,6 +1327,34 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     ok(
       `一键成片渲染完成：${path.basename(renJob.output_path)}（${Number.isFinite(dur) ? dur.toFixed(1) + 's' : '?'} · 竖屏 ${vw}x${vh} · 封面 ${renJob.covers.length} 张 · 含片头/片尾卡与叠化）`,
     );
+
+    // v2.2 作品归档：data/works/《项目名》-id/ 含 成片/字幕/台词（同步归档），海报异步轮询
+    if (!renJob.work_dir) err('渲染完成未携带 work_dir 作品目录');
+    else {
+      const wkName = path.basename(renJob.work_dir);
+      if (!wkName.includes(`-${pid}`) || !wkName.startsWith('《'))
+        err(`作品目录名异常: ${wkName}（应为《项目名》-id）`);
+      const fmp4 = path.join(renJob.work_dir, `成片-${renJob.id}.mp4`);
+      const fsrt = path.join(renJob.work_dir, `字幕-${renJob.id}.srt`);
+      const ftxt = path.join(renJob.work_dir, '旁白台词.txt');
+      if (!fs.existsSync(fmp4)) err(`作品目录缺成片: ${fmp4}`);
+      if (!fs.existsSync(fsrt)) err(`作品目录缺字幕: ${fsrt}`);
+      if (!fs.existsSync(ftxt)) err(`作品目录缺旁白台词: ${ftxt}`);
+      const srtContent = fs.readFileSync(fsrt, 'utf8');
+      if (!srtContent.includes('-->') || !srtContent.includes('旁白测试')) err('SRT 内容异常（无时间轴或无台词）');
+      if (!fs.readFileSync(ftxt, 'utf8').includes('旁白台词')) err('台词文件标题缺失');
+      // 海报（LLM→文生图→叠标题，异步）：轮询至多 60s（mock 链路完整应秒级）
+      let posterOk = false;
+      const dPoster = Date.now() + 60_000;
+      while (Date.now() < dPoster) {
+        if (fs.existsSync(path.join(renJob.work_dir, '海报.png'))) {
+          posterOk = true;
+          break;
+        }
+        await sleep(1500);
+      }
+      ok(`作品归档：${wkName}（成片/字幕/台词 ✓${posterOk ? ' · 海报 ✓' : ' · 海报未就绪（best-effort 不阻塞）'}）`);
+    }
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');
