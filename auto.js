@@ -72,7 +72,7 @@ class AutoPipeline {
     this.stop();
     this.timer = setInterval(() => this.tick().catch((e) => log('error', `自动成片循环异常: ${e.message}`)), TICK_MS);
     this.timer.unref?.();
-    log('info', '自动成片编排器已启动（全自动：文案→分镜→自审→角色图→视频→配音→渲染）');
+    log('info', '自动成片编排器已启动（全自动：文案→分镜→自审→角色图→视频→配音→自动选配乐→渲染）');
   }
 
   stop() {
