@@ -9,6 +9,9 @@ const pkg = require('./package.json');
 
 const paths = {
   '/api/health': { get: '健康检查（ok/uptime/db 路径/node 版本）' },
+  '/api/works': {
+    get: 'v2.2 作品库：实时扫描 data/works/ 汇总全部成品 → {items:[{project_id, name, work_dir, latest_at, quality, films[](多版成片按新→旧), poster, subtitles[], script}], total}；文件 url 直指 /works/ 静态服务',
+  },
   '/api/meta': {
     get: '模型/画幅/时长/图片清单元数据（前端下拉单一事实来源）；models[].rate_limit 为上游限流提示',
   },

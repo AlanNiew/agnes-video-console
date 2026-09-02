@@ -1354,6 +1354,17 @@ async function waitCompleted(id, timeoutMs = 30_000) {
         await sleep(1500);
       }
       ok(`作品归档：${wkName}（成片/字幕/台词 ✓${posterOk ? ' · 海报 ✓' : ' · 海报未就绪（best-effort 不阻塞）'}）`);
+      // v2.2 作品库接口：/api/works 汇总全部作品（含刚归档的这部）
+      const wkLib = (await api('GET', '/api/works')).data;
+      const wkItem = (wkLib.items || []).find((x) => x.project_id === pid);
+      if (!wkItem) err(`作品库 /api/works 未包含刚归档的作品（pid=${pid}, total=${wkLib.total}）`);
+      else {
+        if (!wkItem.films?.length || !wkItem.films[0].url?.startsWith('/works/'))
+          err(`作品库成片 URL 异常: ${JSON.stringify(wkItem.films?.[0])}`);
+        if (wkItem.quality?.duration_s !== renJob.quality?.duration_s) err('作品库质检报告与渲染任务不一致');
+        if (wkItem.poster?.url && !wkItem.poster.url.startsWith('/works/')) err('作品库海报 URL 异常');
+      }
+      ok(`作品库：${wkLib.total} 部作品，最新《${wkItem?.name}》成片/海报/质检 ✓`);
     }
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
