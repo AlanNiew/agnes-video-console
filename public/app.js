@@ -1365,12 +1365,14 @@
       $('#navTasks').classList.toggle('active', !ws && !wk);
       $('#workspaceView').hidden = !ws;
       $('#worksView').hidden = !wk;
-      ['.stats', '.toolbar', '#emptyTip', '#btnNewTask'].forEach((sel) => {
-        const el = $(sel);
-        if (el) el.hidden = ws || wk;
-      });
-      // P0：任务中心内部视图（列表/看板）恢复用户所选模式，避免两个容器同时显示
+      // v2.2.2：顶栏完全常驻（统计栏/新建任务任何视图都不隐藏）——只有任务中心专属的
+      // 搜索筛选工具栏与空态提示随视图切换；统计栏数据本就全局有效（任务池不分视图）
       const taskHidden = ws || wk;
+      ['.toolbar', '#emptyTip'].forEach((sel) => {
+        const el = $(sel);
+        if (el) el.hidden = taskHidden;
+      });
+      // 任务中心内部视图（列表/看板）恢复用户所选模式，避免两个容器同时显示
       $('#taskListView').hidden = taskHidden || state.viewMode !== 'list';
       $('#board').hidden = taskHidden || state.viewMode !== 'board';
       if (ws) window.__ws?.refresh?.();
