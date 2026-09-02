@@ -32,18 +32,18 @@
           <p class="brand-sub" id="brandSub">未连接 · 请先在设置中填写 API Key</p>
         </div>
       </div>
+      <!-- v2.2.2：主导航紧跟品牌（左端锚死）——统计栏显隐只影响中部空间，tabs 位置恒定不跳 -->
+      <div class="nav-tabs" id="mainNav">
+        <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
+        <button class="nav-tab" id="navWorks">🏆 我的作品</button>
+        <button class="nav-tab active" id="navTasks">📋 任务中心</button>
+      </div>
       <div class="stats" id="statsBar">
         <div class="stat"><span class="num" id="statTotal">0</span><span class="lbl">全部</span></div>
         <div class="stat"><span class="num amber" id="statQueued">0</span><span class="lbl">队列中</span></div>
         <div class="stat"><span class="num blue" id="statActive">0</span><span class="lbl">生成中</span></div>
         <div class="stat"><span class="num green" id="statDone">0</span><span class="lbl">已完成</span></div>
         <div class="stat"><span class="num red" id="statFailed">0</span><span class="lbl">失败</span></div>
-      </div>
-      <!-- v2.2.2：主导航固定在品牌旁（不随右侧统计栏/按钮显隐而左右跳动） -->
-      <div class="nav-tabs" id="mainNav">
-        <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
-        <button class="nav-tab" id="navWorks">🏆 我的作品</button>
-        <button class="nav-tab active" id="navTasks">📋 任务中心</button>
       </div>
       <div class="actions">
         <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
