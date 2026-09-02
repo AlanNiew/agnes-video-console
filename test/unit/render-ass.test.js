@@ -83,6 +83,33 @@ describe('buildSubtitleAss', () => {
     expect(ass).toContain('PlayResY: 1280');
     expect(ass).toContain(',80,1'); // MarginV
   });
+
+  test('v2.0 字幕样式预设：yellow-box 金字底框（BorderStyle=3 + 金色）', () => {
+    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { style: 'yellow-box' });
+    expect(ass).toContain('&H005CD7FF'); // 金色主色
+    expect(ass).toMatch(/,3,1\.2,0,/); // BorderStyle=3, Outline=1.2, Shadow=0
+  });
+
+  test('v2.0 字幕样式预设：bottom-bar（BorderStyle=3 + 纯白主色）', () => {
+    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { style: 'bottom-bar' });
+    expect(ass).toContain('&H00FFFFFF');
+    expect(ass).toMatch(/,3,1\.6,0,/);
+  });
+
+  test('v2.0 字幕位置：center → Alignment=5（屏幕居中）', () => {
+    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { position: 'center' });
+    // Style 行尾段：Alignment 在 Shadow 之后，2=底部居中（默认）5=屏幕居中
+    expect(ass).toMatch(/,1,2\.2,1\.2,5,60,60,/);
+  });
+
+  test('v2.0 非法样式/位置兜底默认（white-outline + bottom）', () => {
+    const ass = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], {
+      style: 'evil-injected',
+      position: 'diag',
+    });
+    expect(ass).toContain('&H00DCECF2'); // 默认白字
+    expect(ass).toMatch(/,1,2\.2,1\.2,2,60,60,/); // 默认 BorderStyle=1 + Alignment=2
+  });
 });
 
 describe('escDrawtext（drawtext 滤镜文本转义，v1.9.2）', () => {

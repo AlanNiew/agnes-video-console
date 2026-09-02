@@ -48,7 +48,9 @@ function mockResult(job) {
 const mockServer = http.createServer(async (req, res) => {
   const u = new URL(req.url, `http://127.0.0.1:${MOCK_PORT}`);
   const send = (code, obj) => {
-    res.writeHead(code, { 'Content-Type': 'application/json' });
+    // Connection: close —— 消灭 keep-alive 连接复用竞态（undici 池中的死连接会让
+    // worker 的 fetch 反复挂到 headers 超时，表现为轮询停摆数分钟）
+    res.writeHead(code, { 'Content-Type': 'application/json', Connection: 'close' });
     res.end(JSON.stringify(obj));
   };
 
@@ -156,7 +158,29 @@ const mockServer = http.createServer(async (req, res) => {
     const body = JSON.parse(raw || '{}');
     const sys = (body.messages || []).find((m) => m.role === 'system')?.content || '';
     let content;
-    if (sys.includes('"shots"')) {
+    if (sys.includes('"shot_seq"')) {
+      // P3 L1 分镜自审契约（system 要求输出 issues 数组，含 shot_seq 字段）
+      content = JSON.stringify({
+        issues: [
+          {
+            shot_seq: 1,
+            severity: 'low',
+            field: 'narration',
+            issue: '旁白与画面内容重复，缺少推进感',
+            revised: '黄昏把土路拉得很长，少年把整个夏天走成了一行脚印。',
+          },
+          {
+            shot_seq: 2,
+            severity: 'high',
+            field: 'video_prompt',
+            issue: '动作量超出该镜时长承载',
+            revised:
+              '以 <Picture 1> 中的角色为参考，保持其外观一致。低机位特写黄胶鞋踏过土路，麦浪拂过镜头下沿，暖金色逆光，脚步声由远及近。',
+          },
+        ],
+        overall: '整体节奏完整，一处旁白可优化、一处动作量偏大',
+      });
+    } else if (sys.includes('"shots"')) {
       // M2 分镜生成契约（system 中要求输出 shots 数组）
       content = JSON.stringify({
         shots: [
@@ -198,20 +222,26 @@ const mockServer = http.createServer(async (req, res) => {
     });
   }
 
-  // 模拟图片模型 /v1/images/generations（返回 CDN URL）
+  // 模拟图片模型 /v1/images/generations（返回 CDN URL；prompt 含 FAIL_IMAGE 时模拟上游 400 不可恢复错误）
   if (req.method === 'POST' && u.pathname === '/v1/images/generations') {
+    let imgRaw = '';
+    for await (const chunk of req) imgRaw += chunk;
+    const imgBody = JSON.parse(imgRaw || '{}');
+    if (String(imgBody.prompt || '').includes('FAIL_IMAGE')) {
+      return send(400, { error: { message: 'mock image upstream bad request' } });
+    }
     seq += 1;
     const url = `http://127.0.0.1:${MOCK_PORT}/out/img-mock-${seq}.png`;
     return send(200, { created: Date.now(), data: [{ url, b64_json: null, revised_prompt: null }] });
   }
 
-  // 模拟生成结果图片（供本地备份下载）
+  // 模拟生成结果图片（供本地备份下载；Connection:close 防止 keep-alive 死连接竞态）
   if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
     const png = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
       'base64',
     );
-    res.writeHead(200, { 'Content-Type': 'image/png' });
+    res.writeHead(200, { 'Content-Type': 'image/png', Connection: 'close' });
     return res.end(png);
   }
 
@@ -278,6 +308,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     fs.rmSync(TEST_DB, { force: true });
     fs.rmSync(TEST_DB + '-wal', { force: true });
     fs.rmSync(TEST_DB + '-shm', { force: true });
+    // 失败运行的产物残留会在下次运行触发 ffmpeg「Overwrite? [y/N]」死等（同名封面文件）——启动即清空
+    fs.rmSync(TEST_ARTIFACTS, { recursive: true, force: true });
   } catch {}
 
   // 启动 Mock Agnes API
@@ -911,6 +943,126 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (imgsAfterMulti.length < 3) err(`count=3 落库异常: ${imgsAfterMulti.length}`);
   ok('图片 count=3：一次生成 3 张候选并全部落库，首张自动选中（兼容首张字段）');
 
+  // 17.15 P1：异步图片任务（独立创作）—— 入队 → image worker 生成 → 任务中心统一可见
+  const imgTask = await api('POST', '/api/images/tasks', {
+    prompt: '独立图片创作：雪山日出',
+    size: '1K',
+    ratio: '16:9',
+    count: 2,
+  });
+  if (imgTask.status !== 201) err(`图片任务创建失败: ${JSON.stringify(imgTask.data).slice(0, 200)}`);
+  if (imgTask.data.kind !== 'image' || imgTask.data.status !== 'queued')
+    err(`图片任务初始状态错误: kind=${imgTask.data.kind} status=${imgTask.data.status}`);
+  const imgTaskId = imgTask.data.id;
+  let imgDone = null;
+  const imgDl = Date.now() + 20_000;
+  while (Date.now() < imgDl) {
+    await sleep(500);
+    imgDone = (await api('GET', `/api/tasks/${imgTaskId}`)).data;
+    if (imgDone.status === 'completed' || imgDone.status === 'failed') break;
+  }
+  if (!imgDone || imgDone.status !== 'completed') err(`独立图片任务未完成: ${JSON.stringify(imgDone?.status)}`);
+  if (!Array.isArray(imgDone.images) || imgDone.images.length !== 2)
+    err(`独立图片任务应有 2 张产物: ${imgDone.images?.length}`);
+  if (!imgDone.images[0]?.remote_url) err('图片产物缺少 remote_url');
+  if (!imgDone.video_local_url) err('图片产物未本地归档（首张 video_local_url 缺失）');
+  const listWithImg = await api('GET', '/api/tasks?limit=20');
+  const inList = listWithImg.data.items.find((x) => x.id === imgTaskId);
+  if (!inList || inList.kind !== 'image') err('图片任务未出现在列表接口或 kind 字段缺失');
+  if (typeof listWithImg.data.total !== 'number') err('列表接口缺少 total 字段（P0 分页）');
+  ok(`异步图片任务 #${imgTaskId} 完成（2 张产物 · 本地归档 · 列表 kind=image 可见 · total=${listWithImg.data.total}）`);
+
+  // 17.16 P1：挂项目的图片任务 —— 完成后落 project_images 并首张自动定稿
+  const imgsBefore = ((await api('GET', `/api/projects/${pid}`)).data.images || []).length;
+  const imgTask2 = await api('POST', '/api/images/tasks', {
+    prompt: '项目角色图（异步）：红发少女',
+    size: '1K',
+    ratio: '1:1',
+    project_id: pid,
+    kind: 'character',
+    count: 1,
+  });
+  if (imgTask2.status !== 201) err(`项目图片任务创建失败: ${JSON.stringify(imgTask2.data).slice(0, 200)}`);
+  let imgDone2 = null;
+  const imgDl2 = Date.now() + 20_000;
+  while (Date.now() < imgDl2) {
+    await sleep(500);
+    imgDone2 = (await api('GET', `/api/tasks/${imgTask2.data.id}`)).data;
+    if (imgDone2.status === 'completed' || imgDone2.status === 'failed') break;
+  }
+  if (imgDone2?.status !== 'completed') err(`项目图片任务未完成: ${imgDone2?.status}`);
+  const imgsAfterTask = (await api('GET', `/api/projects/${pid}`)).data.images;
+  if (imgsAfterTask.length <= imgsBefore) err('项目图片任务完成后未落 project_images');
+  const linked = imgsAfterTask.find((x) => x.id === imgDone2.images?.[0]?.image_id);
+  if (!linked) err('图片任务产物未关联 project_images 记录（image_id 缺失）');
+  if (!linked?.selected) err('项目图片任务首张未自动定稿');
+  ok(`项目图片任务 #${imgTask2.data.id} 完成并落库定稿 #${linked.id}`);
+
+  // 17.16a v2.1：任务来源上下文（列表/详情直接给出项目名、镜头序号标题、图片类型）
+  {
+    const projNameNow = ((await api('GET', `/api/projects/${pid}`)).data.project || {}).name;
+    const detailCtx = (await api('GET', `/api/tasks/${imgTask2.data.id}`)).data;
+    if (detailCtx.project_name !== projNameNow) err(`图片任务缺项目名上下文: ${detailCtx.project_name}`);
+    if (detailCtx.image_kind !== 'character') err(`图片任务缺 image_kind: ${detailCtx.image_kind}`);
+    const listCtx = (await api('GET', '/api/tasks?limit=100')).data.items.find((x) => x.id === imgTask2.data.id);
+    if (!listCtx?.project_name || listCtx.image_kind !== 'character') err('任务列表缺来源上下文字段');
+    // 视频任务：先造一条挂项目镜头的任务再查（此时镜头已生成，见上方 17.5 分镜步骤）
+    const pdForCtx = (await api('GET', `/api/projects/${pid}`)).data;
+    const anyShot = (pdForCtx.shots || [])[0];
+    if (anyShot) {
+      const svCtx = await api('POST', `/api/projects/${pid}/shots/${anyShot.id}/videos`, {});
+      if (svCtx.status === 201) {
+        const svCtxRow = (await api('GET', `/api/tasks/${svCtx.data.id}`)).data;
+        if (svCtxRow.project_name !== projNameNow) err(`视频任务缺项目名: ${svCtxRow.project_name}`);
+        if (svCtxRow.shot_seq !== anyShot.seq) err(`视频任务缺镜头序号: ${svCtxRow.shot_seq}`);
+        const svDoneCtx = await waitCompleted(svCtx.data.id, 40_000);
+        if (svDoneCtx?.status !== 'completed') err(`上下文验证视频任务未完成: ${svDoneCtx?.status}`);
+        ok(`任务来源上下文：视频任务带 项目名+镜头${svCtxRow.shot_seq}，图片任务带 项目名+角色图`);
+      }
+    }
+  }
+
+  // 17.17 v2.1：图片任务失败 → 重试为「原任务原地重新入队」（ID 不变 / retry_count 自增 / 重新流转）
+  const imgFail = await api('POST', '/api/images/tasks', {
+    prompt: 'FAIL_IMAGE 触发上游 400',
+    size: '1K',
+    ratio: '1:1',
+  });
+  if (imgFail.status !== 201) err(`失败图片任务创建失败: ${JSON.stringify(imgFail.data).slice(0, 200)}`);
+  let imgFailed = null;
+  const imgFl = Date.now() + 20_000;
+  while (Date.now() < imgFl) {
+    await sleep(500);
+    imgFailed = (await api('GET', `/api/tasks/${imgFail.data.id}`)).data;
+    if (imgFailed.status === 'failed') break;
+  }
+  if (imgFailed?.status !== 'failed') err(`图片任务应失败: ${imgFailed?.status}`);
+  if (!imgFailed.error_message) err('失败图片任务缺少 error_message');
+  const imgRetry = await api('POST', `/api/tasks/${imgFail.data.id}/retry`);
+  if (imgRetry.status !== 200 || !imgRetry.data.reused) {
+    err(`图片任务重试应原地复用: ${JSON.stringify(imgRetry.data).slice(0, 200)}`);
+  }
+  if (imgRetry.data.task.id !== imgFail.data.id) {
+    err(`重试后任务 ID 变了: ${imgFail.data.id} → ${imgRetry.data.task.id}（应原地重置）`);
+  }
+  if (imgRetry.data.task.status !== 'queued' || imgRetry.data.task.retry_count !== 1) {
+    err(`重试后状态/retry_count 异常: ${imgRetry.data.task.status} / ${imgRetry.data.task.retry_count}`);
+  }
+  if (imgRetry.data.task.error_message !== null || imgRetry.data.task.video_id !== null) {
+    err('重试后未清空上次执行结果（error_message / video_id）');
+  }
+  ok(`图片任务失败 → 原地重试入队（任务 #${imgRetry.data.task.id} 不变 · retry_count=1 · 重新排队）`);
+  // 清理：等待重试任务再度失败后删除（上游仍 400；避免干扰后续统计断言）
+  {
+    const dImgRetryFail = Date.now() + 20_000;
+    while (Date.now() < dImgRetryFail) {
+      await sleep(500);
+      const r = (await api('GET', `/api/tasks/${imgFail.data.id}`)).data;
+      if (r?.status === 'failed') break;
+    }
+    await api('DELETE', `/api/tasks/${imgFail.data.id}`);
+  }
+
   // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
   const img = await api('POST', '/api/images/generate', {
     prompt: '角色立绘：银发少年',
@@ -1084,11 +1236,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   }
   const ren = await api('POST', `/api/projects/${pid}/render`, {
     transition_ms: 400,
+    transition_type: 'slideup',
     title_card: true,
     end_card: true,
     aspect: '9:16',
     burn_subtitles: true,
     subtitle_fontsize: 42,
+    subtitle_style: 'yellow-box',
+    subtitle_position: 'bottom',
   });
   if (ren.status === 400 && String(ren.data.error).includes('ffmpeg')) {
     ok('成片渲染：本环境无 ffmpeg，跳过真实渲染（校验通过）');
@@ -1101,8 +1256,13 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined)
       err('渲染参数缺少字幕烧录字段');
     if (ren.data.params?.aspect !== '9:16') err(`竖屏 aspect 参数未生效: ${ren.data.params?.aspect}`);
-    if (ren.data.params?.burn_subtitles === undefined || ren.data.params?.subtitle_fontsize === undefined)
-      err('渲染参数缺少字幕烧录字段');
+    // v2.0：转场类型 / 字幕样式 / 位置 白名单参数透传
+    if (ren.data.params?.transition_type !== 'slideup')
+      err(`transition_type 未生效: ${ren.data.params?.transition_type}`);
+    if (ren.data.params?.subtitle_style !== 'yellow-box')
+      err(`subtitle_style 未生效: ${ren.data.params?.subtitle_style}`);
+    if (ren.data.params?.subtitle_position !== 'bottom')
+      err(`subtitle_position 未生效: ${ren.data.params?.subtitle_position}`);
     // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
     {
       const { buildSubtitleAss } = require('../render');
@@ -1197,6 +1357,71 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       else ok(`渲染自愈闭环：rendering 孤儿复位 → 重新渲染完成（${path.basename(healed.output_path || '?')}）`);
       await api('DELETE', `/api/render/jobs/${stuckJob.id}`);
     }
+  }
+
+  // 20.44 P3：L1 分镜 AI 审查（手动触发）+ 全自动成片端到端闭环
+  {
+    // L1：审查现有分镜（mock 返回 2 条建议：low=旁白修订 / high=提示词硬伤留人工）
+    const rv = await api('POST', `/api/projects/${pid}/storyboard/review`);
+    if (rv.status !== 200 || !rv.data.parsed) err(`分镜审查失败: ${JSON.stringify(rv.data).slice(0, 200)}`);
+    if (rv.data.issues?.length !== 2) err(`审查应返回 2 条建议: ${rv.data.issues?.length}`);
+    if (!rv.data.issues[0].revised) err('审查建议缺少 revised 修订文本');
+    ok(`L1 分镜审查：返回 ${rv.data.issues.length} 条建议（高/低严重度分级 + 可采纳修订）`);
+
+    // 全自动成片：新项目从创意到成片全自动推进（TTS 未配置 Fish Key 自动跳过）
+    const autoProj = await api('POST', '/api/projects', {
+      name: '全自动成片测试',
+      idea: '黄昏麦田，穿黄胶鞋的少年沿土路走向远方，暖金色逆光',
+      style: '电影写实',
+      seconds: '5',
+    });
+    const apid = autoProj.data.id;
+    const autoStart = await api('POST', `/api/projects/${apid}/auto`);
+    if (autoStart.status !== 202 || !autoStart.data.auto_state?.running)
+      err(`全自动启动失败: ${JSON.stringify(autoStart.data).slice(0, 200)}`);
+    const autoDup = await api('POST', `/api/projects/${apid}/auto`);
+    if (autoDup.status !== 400) err('重复启动全自动未被 400 拦截');
+    ok(`全自动成片已启动（项目 #${apid}；重复启动 400 拦截）`);
+
+    let autoSt = null;
+    const dAuto = Date.now() + 120_000;
+    while (Date.now() < dAuto) {
+      await sleep(1500);
+      autoSt = (await api('GET', `/api/projects/${apid}/auto`)).data.auto_state;
+      if (autoSt && !autoSt.running) break;
+    }
+    if (!autoSt || autoSt.stage !== 'done') {
+      err(
+        `全自动成片未完成: stage=${autoSt?.stage} err=${autoSt?.error} hist=${JSON.stringify((autoSt?.history || []).map((h) => h.stage + ':' + h.status))}`,
+      );
+    }
+    const stagesDone = (autoSt.history || []).filter((h) => h.status === 'ok').map((h) => h.stage);
+    for (const s of [
+      'storyboard',
+      'review',
+      'character',
+      'videos',
+      'wait_videos',
+      'tts',
+      'render',
+      'wait_render',
+      'done',
+    ]) {
+      if (!stagesDone.includes(s)) err(`全自动历史缺少阶段 ${s}: ${JSON.stringify(stagesDone)}`);
+    }
+    // L1 自动修订：low 严重度的旁白修订应已写入镜头 1（medium/low 自动采纳，high 留人工）
+    const autoDetail = (await api('GET', `/api/projects/${apid}`)).data;
+    if (!autoDetail.shots.some((s) => s.narration === '黄昏把土路拉得很长，少年把整个夏天走成了一行脚印。'))
+      err('L1 自审的 low 严重度修订未自动应用到镜头旁白');
+    if (autoDetail.tasks.some((t) => t.status !== 'completed')) err('全自动后存在未完成的视频任务');
+    const autoJobs = (await api('GET', `/api/projects/${apid}/render/jobs`)).data.items;
+    const autoJob = autoJobs.find((j) => j.status === 'completed');
+    if (!autoJob || !autoJob.output_url) err('全自动渲染产物缺失');
+    if (!autoJob.quality || !autoJob.quality.duration_s || autoJob.quality.shots !== 2)
+      err(`质检报告缺失或异常: ${JSON.stringify(autoJob.quality)}`);
+    ok(
+      `全自动成片闭环完成 🎉（${autoDetail.shots.length} 镜 · 成片 ${autoJob.quality.duration_s}s · 响度 ${autoJob.quality.loudness_lufs ?? '?'} LUFS · L1 修订已应用 · TTS 未配置自动跳过）`,
+    );
   }
 
   // 20.45 v1.4：清除 BGM 选择
@@ -1309,7 +1534,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (JSON.stringify(logs.data.items).includes('sk-test-key-1234')) err('日志中泄露 API Key');
   ok(`日志接口正常（items=${logs.data.items.length}，无密钥泄露）`);
 
-  // 10.2 重试端点：404 / 仅失败态可重试
+  // 10.2 重试端点：404 / 仅失败态可重试 / 视频任务原地重试闭环（ID 不变 → 重新排队 → 完成）
   const retry404 = await api('POST', '/api/tasks/999999/retry', {});
   if (retry404.status !== 404) err('重试不存在的任务未被 404 拒绝');
   const retryBad = await api('POST', `/api/tasks/${taskId}/retry`, {});
@@ -1317,6 +1542,40 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err(`completed 任务重试未被 400 拦截: ${JSON.stringify(retryBad.data)}`);
   }
   ok('校验：重试 404 / completed 任务不可重试');
+  {
+    // v2.1 视频任务原地重试闭环：429 重试耗尽会落 submit_error → retry → 原任务重新流转直至完成
+    await mockRateLimit(6); // MAX_ATTEMPTS=5，6 次退避后必然 submit_error
+    const vr = await api('POST', '/api/tasks', {
+      model: 'agnes-video-2.5-flash',
+      prompt: '原地重试闭环测试：雪夜路灯下的邮筒',
+      mode: 'text',
+      seconds: '5',
+    });
+    if (vr.status !== 201) err(`原地重试任务创建失败: ${JSON.stringify(vr.data).slice(0, 150)}`);
+    const vrId = vr.data.id;
+    let vrRow = null;
+    const vrDl = Date.now() + 90_000; // 6 次退避（基数 500ms 起）+ 重试后提交
+    while (Date.now() < vrDl) {
+      await sleep(600);
+      vrRow = (await api('GET', `/api/tasks/${vrId}`)).data;
+      if (vrRow.status === 'submit_error' || vrRow.status === 'failed') break;
+    }
+    if (!['submit_error', 'failed'].includes(vrRow?.status)) {
+      err(`原地重试前置失败：任务应先失败（实际 ${vrRow?.status}，限流计数可能未生效）`);
+    }
+    await mockRateLimit(0); // 解除限流
+    const vrRetry = await api('POST', `/api/tasks/${vrId}/retry`);
+    if (vrRetry.status !== 200 || vrRetry.data.task.id !== vrId || vrRetry.data.task.status !== 'queued') {
+      err(`视频任务原地重试异常: ${JSON.stringify(vrRetry.data).slice(0, 200)}`);
+    }
+    if (vrRetry.data.task.retry_count !== 1) err(`retry_count 应为 1: ${vrRetry.data.task.retry_count}`);
+    const vrDone = await waitCompleted(vrId, 40_000);
+    if (vrDone?.status !== 'completed') err(`原地重试后未完成: ${vrDone?.status} / ${vrDone?.error_message}`);
+    if (!vrDone.video_id) err('原地重试完成后缺少 video_id');
+    const vrCtx = (await api('GET', `/api/tasks/${vrId}`)).data;
+    if (vrCtx.project_name !== null) err(`独立任务 project_name 应为 null: ${vrCtx.project_name}`);
+    ok(`视频任务原地重试闭环：#${vrId} submit_error → 重试（ID 不变·retry_count=1）→ completed`);
+  }
 
   // 10.3 立即查询端点：404 / 已完成任务查询返回当前状态
   const poll404 = await api('POST', '/api/tasks/999999/poll', {});

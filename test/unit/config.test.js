@@ -16,12 +16,15 @@ describe('DEFAULT_BASE_URL 单源', () => {
 });
 
 describe('RENDER_PARAMS_DEFAULTS 单源', () => {
-  test('渲染默认参数值与历史行为一致', () => {
+  test('渲染默认参数值与历史行为一致（v2.0 新增转场/字幕默认）', () => {
     expect(RENDER_PARAMS_DEFAULTS).toEqual({
       transition_ms: 600,
       narration_offset_ms: 500,
       title_card: true,
       end_card: true,
+      transition_type: 'fade',
+      subtitle_style: 'white-outline',
+      subtitle_position: 'bottom',
     });
   });
 });
