@@ -124,10 +124,14 @@ async function generatePoster(project, workDir, aspect) {
       fs.copyFileSync(fontSrc, path.join(workDir, fontRel));
       tmpFiles.push(fontRel);
       // 标题：底部半透明衬底 + 大字 + 深色描边，任何画面都可读
+      //（drawbox/drawtext 用具体像素值——drawtext 的 y 表达式不支持 ih/iw，混用会 Eval 报错）
       const fsize = Math.round(dims.w * (dims.h > dims.w ? 0.085 : 0.06));
+      const boxTop = Math.round(dims.h * 0.78);
+      const boxH = dims.h - boxTop;
+      const textBottomGap = Math.round(dims.h * 0.07);
       vf +=
-        `,drawbox=y=ih-ih*0.22:h=ih*0.22:color=black@0.45:t=fill` +
-        `,drawtext=fontfile=${fontRel}:text='${escDrawtext(project.name)}':fontsize=${fsize}:fontcolor=0xF2ECDC:borderw=4:bordercolor=0x10131A:x=(w-text_w)/2:y=h-ih*0.16`;
+        `,drawbox=y=${boxTop}:h=${boxH}:color=black@0.45:t=fill` +
+        `,drawtext=fontfile=${fontRel}:text='${escDrawtext(project.name)}':fontsize=${fsize}:fontcolor=0xF2ECDC:borderw=4:bordercolor=0x10131A:x=(w-text_w)/2:y=h-text_h-${textBottomGap}`;
     }
     const r = await runFfmpegOnce(['-i', baseName, '-vf', vf, '海报.png'], workDir);
     if (!r.ok) throw new Error(`标题合成失败：${r.err.slice(0, 150)}`);
