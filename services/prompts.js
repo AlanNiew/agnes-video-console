@@ -33,6 +33,24 @@ const STORYBOARD_SYSTEM_PROMPT = `你是资深影视分镜师。把用户的创�
 }
 分镜节奏要求：第一镜负责建立时空（交代环境与主角出场），中间镜头递进冲突或细节，最后一镜收束情绪；相邻镜头的动作与视线方向连贯（遵守 180° 轴线，不越轴）；全片视觉风格关键词完全一致；seconds 只能是 "4"~"12" 的字符串；动作量与该镜时长匹配（5 秒最多 2~3 个动作）；镜头数量遵循用户指定数量（未指定则按叙事需要 3~8 个）。`;
 
+/** P3 L1 分镜自审：审查当前分镜与文案一致性 / 节奏 / 提示词质量，输出结构化修订建议（mock 测试按「分镜审查」契约标记识别） */
+const REVIEW_SYSTEM_PROMPT = `你是严谨的视频分镜审查导演。审查用户提交的分镜脚本，发现问题并给出可直接替换的修订。
+只输出一个 JSON 对象（不要 markdown 代码块、不要解释），结构如下：
+{
+  "issues": [
+    {
+      "shot_seq": 1,
+      "severity": "high",
+      "field": "video_prompt",
+      "issue": "问题描述（一句话，说清问题与原因）",
+      "revised": "修订后的完整文本（可直接替换该镜头的该字段）"
+    }
+  ],
+  "overall": "总体评价一句话"
+}
+审查维度：①分镜与文案（故事梗概/角色描述）的一致性——角色外观、时空、剧情走向是否矛盾；②镜头节奏——开场是否建立时空、结尾是否收束情绪、相邻镜头动作衔接是否连贯；③提示词质量——是否具体可拍摄、动作量是否与 seconds 匹配（5 秒最多 2~3 个动作）、有角色镜头是否以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头；④旁白——是否与画面互补而非复述、连起来是否成文。
+规则：只报告确实存在的问题，不臆造；field 只能是 video_prompt / narration / seconds 三者之一（seconds 的 revised 为 "4"~"12" 数字字符串）；severity：high=影响成片质量的硬伤，medium=明显可改进，low=锦上添花；无问题时 issues 为空数组。`;
+
 /** 容错解析 LLM 输出 JSON：剥 markdown 围栏 → 提取首个平衡对象 → JSON.parse */
 function parseLLMJson(text) {
   if (!text) return null;
@@ -91,9 +109,42 @@ function normalizeStoryboardShots(rawShots, fallbackSeconds = '5') {
   return out;
 }
 
+/** P3：规范化 L1 审查结果（容错裁剪，防注入越界） */
+function normalizeReviewResult(parsed) {
+  if (!parsed || typeof parsed !== 'object' || !Array.isArray(parsed.issues)) return null;
+  const FIELDS = ['video_prompt', 'narration', 'seconds'];
+  const SEVS = ['high', 'medium', 'low'];
+  const issues = [];
+  for (const it of parsed.issues.slice(0, 30)) {
+    if (!it || typeof it !== 'object') continue;
+    const field = FIELDS.includes(it.field) ? it.field : null;
+    const severity = SEVS.includes(it.severity) ? it.severity : 'medium';
+    const revised = String(it.revised || '').trim() || null;
+    if (!field || !revised) continue; // 无可执行修订的问题仅作提示，不入结构
+    if (field === 'seconds' && !SECONDS_OK.includes(String(revised))) continue;
+    issues.push({
+      shot_seq: Math.max(1, Number(it.shot_seq) || 0),
+      severity,
+      field,
+      issue: String(it.issue || '')
+        .trim()
+        .slice(0, 300),
+      revised: field === 'seconds' ? String(revised) : revised.slice(0, MAX_TEXT_LEN),
+    });
+  }
+  return {
+    issues,
+    overall: String(parsed.overall || '')
+      .trim()
+      .slice(0, 200),
+  };
+}
+
 module.exports = {
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
+  REVIEW_SYSTEM_PROMPT,
   parseLLMJson,
   normalizeStoryboardShots,
+  normalizeReviewResult,
 };

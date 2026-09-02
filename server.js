@@ -17,7 +17,9 @@ const express = require('express');
 const { settings, DB_PATH, acquireInstanceLock, refreshInstanceLock, DEFAULT_SETTINGS } = require('./db');
 const poller = require('./poller');
 const submitter = require('./submitter');
+const imageWorker = require('./image-worker');
 const renderer = require('./render');
+const autoPipeline = require('./auto');
 const { ARTIFACTS_DIR } = require('./artifacts');
 const { log } = require('./logger');
 const { ApiError } = require('./errors');
@@ -75,7 +77,9 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
 function startWorkers() {
   poller.start();
   submitter.start();
+  imageWorker.start();
   renderer.start();
+  autoPipeline.start();
 }
 if (acquireInstanceLock()) {
   startWorkers();
@@ -107,6 +111,8 @@ const server = app.listen(PORT, '127.0.0.1', () => {
 function shutdown(signal) {
   log('info', `收到 ${signal}，正在关闭...`);
   poller.stop();
+  imageWorker.stop();
+  autoPipeline.stop();
   server.close(() => {
     require('./db').db.close();
     process.exit(0);

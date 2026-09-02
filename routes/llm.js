@@ -19,8 +19,10 @@ const { ApiError, ah } = require('../errors');
 const {
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
+  REVIEW_SYSTEM_PROMPT,
   parseLLMJson,
   normalizeStoryboardShots,
+  normalizeReviewResult,
 } = require('../services/prompts');
 
 module.exports = function registerLlmRoutes(app) {
@@ -268,6 +270,53 @@ module.exports = function registerLlmRoutes(app) {
         shotsOut = normalized;
       }
       res.json({ parsed: true, shots: shotsOut, auto_selected: true, texts, model: r.data?.model || LLM_MODEL });
+    }),
+  );
+
+  // P3 L1：分镜 AI 自审 —— 审查当前分镜与文案一致性 / 节奏 / 提示词质量，返回结构化修订建议
+  // （前端弹审查报告，逐条决定采纳；auto.js 全自动管道中自动采纳中低严重度）
+  app.post(
+    '/api/projects/:id/storyboard/review',
+    ah(async (req, res) => {
+      const pid = Number(req.params.id);
+      const p = projects.get(pid);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const shots = projects.shots(pid);
+      if (!shots.length) throw new ApiError(400, '项目还没有分镜，请先生成分镜');
+      const script = projects.selectedText(pid, 'script')?.content || '';
+      const charDesc = projects.selectedText(pid, 'character_desc')?.content || '';
+      const storyboardText = projects
+        .texts(pid)
+        .filter((t) => t.kind === 'storyboard' && t.selected)
+        .map((t) => t.content)
+        .join('\n');
+      const userMessage = `【故事梗概】\n${script || p.idea}\n\n【角色描述】\n${charDesc || '（未提供）'}\n\n【分镜脚本（JSON）】\n${storyboardText || JSON.stringify(shots)}`;
+      const apiKey = settings.get('api_key', '');
+      if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+      let r;
+      try {
+        r = await agnes.chatComplete({
+          apiKey,
+          baseUrl: settings.get('base_url', DEFAULT_SETTINGS.base_url),
+          model: LLM_MODEL,
+          messages: [
+            { role: 'system', content: REVIEW_SYSTEM_PROMPT },
+            { role: 'user', content: userMessage },
+          ],
+          temperature: 0.3,
+          max_tokens: 3000,
+        });
+      } catch (e) {
+        throw new ApiError(502, `分镜审查网络异常：${e.message}`);
+      }
+      if (!r.ok) {
+        const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
+        throw new ApiError(502, `分镜审查失败（${r.status}）：${String(detail).slice(0, 400)}`);
+      }
+      const raw = r.data?.choices?.[0]?.message?.content || '';
+      const reviewed = normalizeReviewResult(parseLLMJson(raw));
+      if (!reviewed) return res.json({ parsed: false, content: raw, issues: null });
+      res.json({ parsed: true, issues: reviewed.issues, overall: reviewed.overall });
     }),
   );
 };

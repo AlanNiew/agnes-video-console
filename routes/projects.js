@@ -6,6 +6,7 @@
 const { projects } = require('../db');
 const { createPipelineService } = require('../pipeline');
 const { log } = require('../logger');
+const autoPipeline = require('../auto');
 const { ASPECT_RATIOS, SECONDS_OK, PROJECT_STATUSES, MAX_SHOTS, MAX_TEXT_LEN, SHOT_MODES } = require('../constants');
 const { ApiError, ah } = require('../errors');
 const { buildPayload, submitTask } = require('../services/payloads');
@@ -15,6 +16,32 @@ const { normalizeStoryboardShots } = require('../services/prompts');
 const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log });
 
 module.exports = function registerProjectRoutes(app) {
+  /* ---------- P3：全自动成片（启动 / 状态 / 停止） ---------- */
+  // 启动：从文案到成片全自动推进（失败自动重试，卡住停在人工介入点）
+  app.post(
+    '/api/projects/:id/auto',
+    ah(async (req, res) => {
+      const r = autoPipeline.launch(Number(req.params.id));
+      if (!r.ok) throw new ApiError(r.code, r.message);
+      res.status(202).json({ ok: true, auto_state: r.state });
+    }),
+  );
+  // 状态（前端进度时间线数据源）
+  app.get('/api/projects/:id/auto', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) throw new ApiError(404, '项目不存在');
+    res.json({ auto_state: p.auto_state, stage_meta: autoPipeline.STAGE_META });
+  });
+  // 停止（保留已产出内容）
+  app.post(
+    '/api/projects/:id/auto/stop',
+    ah(async (req, res) => {
+      const r = autoPipeline.stopProject(Number(req.params.id));
+      if (!r.ok) throw new ApiError(r.code, r.message);
+      res.json({ ok: true, auto_state: r.state });
+    }),
+  );
+
   app.post('/api/projects', (req, res) => {
     const b = req.body || {};
     const name = String(b.name || '').trim();
