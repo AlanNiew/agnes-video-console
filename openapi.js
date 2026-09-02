@@ -51,8 +51,8 @@ const paths = {
     delete: '删除项目（级联清理文案/图片/镜头/配音/渲染任务，任务解绑）',
   },
   '/api/projects/{id}/auto': {
-    post: 'P3 全自动成片：启动后台状态机（文案→分镜→AI自审→角色图→逐镜视频→配音→渲染），失败自动重试，卡住停在人工介入点；202 返回 auto_state',
-    get: '全自动成片状态 {auto_state:{running,stage,attempts,error,history[]}, stage_meta}',
+    post: 'P3 全自动成片：启动后台状态机（文案→分镜→AI自审→角色图→逐镜视频→配音→自动选配乐[按风格选曲，默认轻音乐]→渲染），失败自动重试，卡住停在人工介入点；202 返回 auto_state',
+    get: '全自动成片状态 {auto_state:{running,stage,attempts,error,history[]}, stage_meta}（stage 含 bgm 阶段）',
   },
   '/api/projects/{id}/auto/stop': { post: '停止全自动成片（已完成内容保留，可重新启动）' },
   '/api/projects/{id}/storyboard/review': {
