@@ -13,13 +13,13 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { settings, DEFAULT_SETTINGS, projects, tasks, renders, instanceLockHeldByOther } = require('./db');
-const agnes = require('./agnes');
-const fishTts = require('./fish-tts');
-const netmusic = require('./netmusic');
-const { log } = require('./logger');
-const { ARTIFACTS_DIR } = require('./artifacts');
-const { probeDuration } = require('./config');
+const { settings, DEFAULT_SETTINGS, projects, tasks, renders, instanceLockHeldByOther } = require('../db');
+const agnes = require('../clients/agnes');
+const fishTts = require('../clients/fish-tts');
+const netmusic = require('../clients/netmusic');
+const { log } = require('../core/logger');
+const { ARTIFACTS_DIR } = require('../lib/artifacts');
+const { probeDuration } = require('../core/config');
 const {
   LLM_MODEL,
   IMAGE_MODEL,
@@ -27,8 +27,8 @@ const {
   SECONDS_OK,
   STYLE_BGM_KEYWORDS,
   STYLE_BGM_DEFAULT_KEYWORD,
-} = require('./constants');
-const { ApiError } = require('./errors');
+} = require('../core/constants');
+const { ApiError } = require('../core/errors');
 const {
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
@@ -36,9 +36,9 @@ const {
   parseLLMJson,
   normalizeStoryboardShots,
   normalizeReviewResult,
-} = require('./services/prompts');
-const { buildPayload, submitTask } = require('./services/payloads');
-const { createPipelineService } = require('./pipeline');
+} = require('../services/prompts');
+const { buildPayload, submitTask } = require('../services/payloads');
+const { createPipelineService } = require('../services/pipeline');
 
 const TICK_MS = 3000;
 const MAX_STAGE_ATTEMPTS = 2; // 每阶段自动重试上限（含首次共 3 次机会）

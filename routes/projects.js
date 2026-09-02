@@ -4,11 +4,18 @@
  * 分镜版本选用 / 视频任务提交入口 / 重拍与定稿（v1.9.1 拆分自 server.js）
  */
 const { projects } = require('../db');
-const { createPipelineService } = require('../pipeline');
-const { log } = require('../logger');
-const autoPipeline = require('../auto');
-const { ASPECT_RATIOS, SECONDS_OK, PROJECT_STATUSES, MAX_SHOTS, MAX_TEXT_LEN, SHOT_MODES } = require('../constants');
-const { ApiError, ah } = require('../errors');
+const { createPipelineService } = require('../services/pipeline');
+const { log } = require('../core/logger');
+const autoPipeline = require('../workers/auto');
+const {
+  ASPECT_RATIOS,
+  SECONDS_OK,
+  PROJECT_STATUSES,
+  MAX_SHOTS,
+  MAX_TEXT_LEN,
+  SHOT_MODES,
+} = require('../core/constants');
+const { ApiError, ah } = require('../core/errors');
 const { buildPayload, submitTask } = require('../services/payloads');
 const { normalizeStoryboardShots } = require('../services/prompts');
 

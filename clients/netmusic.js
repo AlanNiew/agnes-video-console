@@ -10,9 +10,9 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { settings, DEFAULT_SETTINGS } = require('./db');
-const { ARTIFACTS_DIR } = require('./artifacts');
-const { ApiError } = require('./errors');
+const { settings, DEFAULT_SETTINGS } = require('../db');
+const { ARTIFACTS_DIR } = require('../lib/artifacts');
+const { ApiError } = require('../core/errors');
 
 const TIMEOUT_MS = 30_000;
 const DOWNLOAD_TIMEOUT_MS = 300_000;

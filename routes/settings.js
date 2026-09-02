@@ -4,12 +4,12 @@
  * GET/PUT /api/settings —— 敏感 Key 只回掩码；poll_interval_ms 变更即时重启轮询器
  */
 const { settings, DEFAULT_SETTINGS } = require('../db');
-const agnes = require('../agnes');
-const netmusic = require('../netmusic');
-const poller = require('../poller');
-const { log } = require('../logger');
-const { MODELS } = require('../constants');
-const { ApiError } = require('../errors');
+const agnes = require('../clients/agnes');
+const netmusic = require('../clients/netmusic');
+const poller = require('../workers/poller');
+const { log } = require('../core/logger');
+const { MODELS } = require('../core/constants');
+const { ApiError } = require('../core/errors');
 const { isHttpUrl } = require('../services/payloads');
 const { getVoicePool } = require('../services/voice-pool');
 

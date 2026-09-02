@@ -4,9 +4,9 @@
  */
 const { Readable, pipeline: streamPipeline } = require('node:stream');
 const { settings, DEFAULT_SETTINGS, projects } = require('../db');
-const netmusic = require('../netmusic');
-const { log } = require('../logger');
-const { ApiError, ah } = require('../errors');
+const netmusic = require('../clients/netmusic');
+const { log } = require('../core/logger');
+const { ApiError, ah } = require('../core/errors');
 
 const MUSIC_LEVELS = netmusic.LEVELS;
 

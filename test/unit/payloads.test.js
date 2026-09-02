@@ -13,7 +13,7 @@ const {
   safeUrl,
   gcd,
 } = require('../../services/payloads');
-const { ApiError } = require('../../errors');
+const { ApiError } = require('../../core/errors');
 
 /** 断言给定调用抛出指定状态的 ApiError */
 function expectApiError(status, fn) {

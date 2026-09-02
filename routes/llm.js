@@ -4,8 +4,8 @@
  * /api/llm/chat（通用 OpenAI 兼容）/ script（结构化文案）/ storyboard（分镜）
  */
 const { settings, DEFAULT_SETTINGS, projects } = require('../db');
-const agnes = require('../agnes');
-const { log } = require('../logger');
+const agnes = require('../clients/agnes');
+const { log } = require('../core/logger');
 const {
   MAX_MESSAGES,
   MAX_TEXT_LEN,
@@ -14,8 +14,8 @@ const {
   SECONDS_OK,
   SCRIPT_KINDS,
   SHOT_COUNTS,
-} = require('../constants');
-const { ApiError, ah } = require('../errors');
+} = require('../core/constants');
+const { ApiError, ah } = require('../core/errors');
 const {
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,

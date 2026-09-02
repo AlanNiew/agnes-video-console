@@ -4,11 +4,11 @@
  * （v1.9.1 拆分自 server.js）
  */
 const { tasks, projects, tx } = require('../db');
-const poller = require('../poller');
-const submitter = require('../submitter');
-const imageWorker = require('../image-worker');
-const { log } = require('../logger');
-const { ApiError, ah } = require('../errors');
+const poller = require('../workers/poller');
+const submitter = require('../workers/submitter');
+const imageWorker = require('../workers/image-worker');
+const { log } = require('../core/logger');
+const { ApiError, ah } = require('../core/errors');
 const { buildPayload, submitTask } = require('../services/payloads'); // 创建任务仍走入队语义
 
 module.exports = function registerTaskRoutes(app) {

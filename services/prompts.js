@@ -4,7 +4,7 @@
  * 纯函数、可单测：不持有 IO，不依赖 express。
  * 依赖 constants 的白名单（SECONDS_OK / MAX_SHOTS / MAX_TEXT_LEN）做规范化兜底。
  */
-const { SECONDS_OK, MAX_SHOTS, MAX_TEXT_LEN } = require('../constants');
+const { SECONDS_OK, MAX_SHOTS, MAX_TEXT_LEN } = require('../core/constants');
 
 /** 文案生成系统提示词：严格输出结构化 JSON（mock 测试按「JSON 对象」契约标记识别） */
 const SCRIPT_SYSTEM_PROMPT = `你是资深影视导演兼 AI 视频提示词工程师。根据用户创意，产出可直接驱动 AI 视频生成的专业文案。

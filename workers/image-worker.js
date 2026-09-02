@@ -7,12 +7,12 @@
  * - 429 / 网络错误 / 5xx 指数退避重试，耗尽才落 failed；其余错误直接 failed
  * - 单实例工作锁持有者才运行（与 submitter / poller / renderer 一致）
  */
-const { settings, tasks, projects, instanceLockHeldByOther, DEFAULT_SETTINGS } = require('./db');
-const agnes = require('./agnes');
-const { downloadArtifact } = require('./artifacts');
-const { log } = require('./logger');
-const { IMAGE_MODEL } = require('./constants');
-const { safeUrl } = require('./services/payloads');
+const { settings, tasks, projects, instanceLockHeldByOther, DEFAULT_SETTINGS } = require('../db');
+const agnes = require('../clients/agnes');
+const { downloadArtifact } = require('../lib/artifacts');
+const { log } = require('../core/logger');
+const { IMAGE_MODEL } = require('../core/constants');
+const { safeUrl } = require('../services/payloads');
 
 const TICK_MS = 5000;
 const MAX_ATTEMPTS = 5;

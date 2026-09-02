@@ -5,7 +5,7 @@
  *   429：基数 60s，上限 10min；网络异常：基数 10s，上限 60s；最多 5 次尝试。
  */
 
-const { computeBackoffMs } = require('../../submitter');
+const { computeBackoffMs } = require('../../workers/submitter');
 
 describe('computeBackoffMs（429 限流退避）', () => {
   test('第 1–4 次重试按 60s 基数指数递增', () => {

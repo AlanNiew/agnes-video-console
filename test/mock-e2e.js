@@ -1265,7 +1265,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       err(`subtitle_position 未生效: ${ren.data.params?.subtitle_position}`);
     // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
     {
-      const { buildSubtitleAss } = require('../render');
+      const { buildSubtitleAss } = require('../workers/render');
       const ass = buildSubtitleAss(
         [
           { start: 3.3, end: 7.05, text: '测试,字幕{文本}' },
@@ -1378,7 +1378,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       const dbx = new DatabaseSync(process.env.DB_PATH);
       dbx.prepare("UPDATE render_jobs SET status = 'rendering', progress = 42 WHERE id = ?").run(stuckJob.id);
       dbx.close();
-      const renderer = require('../render');
+      const renderer = require('../workers/render');
       renderer.start(); // 内部先复位孤儿 rendering 任务（新定时器 1.5s 后才首次 tick）
       await sleep(200);
       const after = (await api('GET', `/api/render/jobs/${stuckJob.id}`)).data;
@@ -1537,7 +1537,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       if (pick.status !== 200 || pick.data.shot?.take_task_id !== oldTake.id)
         err(`选定 take 失败: ${JSON.stringify(pick.data).slice(0, 200)}`);
       // collectSegments 应优先取定稿条
-      const { collectSegments } = require('../render');
+      const { collectSegments } = require('../workers/render');
       const seg1 = collectSegments(pid).segments.find((s) => s.shot.id === shot1.id);
       if (!seg1 || seg1.src !== oldTake.video_local_path) err('渲染素材未优先使用选定定稿 take');
       // 校验：非本镜头任务不可选

@@ -6,12 +6,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { settings, projects } = require('../db');
-const fishTts = require('../fish-tts');
-const { ARTIFACTS_DIR } = require('../artifacts');
-const { log } = require('../logger');
-const { TTS_VOICES, TTS_MODELS, TTS_MAX_TEXT, MARKET_SORTS } = require('../constants');
-const { probeDuration } = require('../config');
-const { ApiError, ah } = require('../errors');
+const fishTts = require('../clients/fish-tts');
+const { ARTIFACTS_DIR } = require('../lib/artifacts');
+const { log } = require('../core/logger');
+const { TTS_VOICES, TTS_MODELS, TTS_MAX_TEXT, MARKET_SORTS } = require('../core/constants');
+const { probeDuration } = require('../core/config');
+const { ApiError, ah } = require('../core/errors');
 const { getVoicePool, setVoicePool } = require('../services/voice-pool');
 
 module.exports = function registerTtsRoutes(app) {

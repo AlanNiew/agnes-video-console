@@ -5,12 +5,12 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { projects, renders } = require('../db');
-const renderer = require('../render');
-const { log } = require('../logger');
-const { RENDER_PARAMS_DEFAULTS } = require('../config');
-const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../constants');
-const { ApiError, ah } = require('../errors');
-const { WORKS_DIR } = require('../artifacts');
+const renderer = require('../workers/render');
+const { log } = require('../core/logger');
+const { RENDER_PARAMS_DEFAULTS } = require('../core/config');
+const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
+const { ApiError, ah } = require('../core/errors');
+const { WORKS_DIR } = require('../lib/artifacts');
 
 module.exports = function registerRenderRoutes(app) {
   /* ---------- v2.2 作品库：data/works 下全部成品（成片/海报/字幕/台词）汇总清单 ---------- */

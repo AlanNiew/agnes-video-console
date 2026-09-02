@@ -11,7 +11,7 @@ const IMAGE_TIMEOUT_MS = 180_000; // 图片同步生成 30–180s（官方建议
 const CHAT_TIMEOUT_MS = 60_000; // 文本生成最长 60s
 
 /** 归一化 base_url：去掉尾部斜杠与 /v1 后缀（用户可能直接粘贴文档里的 AGNES_BASE_URL） */
-const { DEFAULT_BASE_URL } = require('./config');
+const { DEFAULT_BASE_URL } = require('../core/config');
 
 function normalizeBaseUrl(raw) {
   let url = String(raw || '')

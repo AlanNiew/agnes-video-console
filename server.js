@@ -23,14 +23,14 @@ process.on('warning', (w) => {
 });
 const express = require('express');
 const { settings, DB_PATH, acquireInstanceLock, refreshInstanceLock, DEFAULT_SETTINGS } = require('./db');
-const poller = require('./poller');
-const submitter = require('./submitter');
-const imageWorker = require('./image-worker');
-const renderer = require('./render');
-const autoPipeline = require('./auto');
-const { ARTIFACTS_DIR, WORKS_DIR } = require('./artifacts');
-const { log } = require('./logger');
-const { ApiError } = require('./errors');
+const poller = require('./workers/poller');
+const submitter = require('./workers/submitter');
+const imageWorker = require('./workers/image-worker');
+const renderer = require('./workers/render');
+const autoPipeline = require('./workers/auto');
+const { ARTIFACTS_DIR, WORKS_DIR } = require('./lib/artifacts');
+const { log } = require('./core/logger');
+const { ApiError } = require('./core/errors');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));

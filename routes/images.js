@@ -3,11 +3,11 @@
  * routes/images.js —— 图片生成（文生图 / 图生图，多张候选）（v1.9.1 拆分自 server.js）
  */
 const { settings, DEFAULT_SETTINGS, projects, tasks } = require('../db');
-const agnes = require('../agnes');
-const { downloadArtifact } = require('../artifacts');
-const { log } = require('../logger');
-const { IMAGE_MODEL } = require('../constants');
-const { ApiError, ah } = require('../errors');
+const agnes = require('../clients/agnes');
+const { downloadArtifact } = require('../lib/artifacts');
+const { log } = require('../core/logger');
+const { IMAGE_MODEL } = require('../core/constants');
+const { ApiError, ah } = require('../core/errors');
 const { buildImagePayload, safeUrl } = require('../services/payloads');
 
 module.exports = function registerImageRoutes(app) {

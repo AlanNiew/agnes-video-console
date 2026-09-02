@@ -7,10 +7,10 @@
  * - 429 / 网络错误 / 5xx 自动指数退避重试，重试耗尽才落 submit_error
  * - 其余 4xx（鉴权/参数等）不可恢复，直接 submit_error
  */
-const { settings, tasks, instanceLockHeldByOther } = require('./db');
-const agnes = require('./agnes');
-const { log } = require('./logger');
-const { DEFAULT_BASE_URL } = require('./config');
+const { settings, tasks, instanceLockHeldByOther } = require('../db');
+const agnes = require('../clients/agnes');
+const { log } = require('../core/logger');
+const { DEFAULT_BASE_URL } = require('../core/config');
 
 const TICK_MS = 1000;
 const MAX_ATTEMPTS = 5;

@@ -5,8 +5,8 @@
  * submitTask 依赖 db/submitter/logger（入队即触发后台提交）。
  */
 const { settings, tasks, DEFAULT_SETTINGS } = require('../db');
-const submitter = require('../submitter');
-const { log } = require('../logger');
+const submitter = require('../workers/submitter');
+const { log } = require('../core/logger');
 const {
   MODELS,
   MODES,
@@ -17,8 +17,8 @@ const {
   IMAGE_RATIOS,
   MAX_TEXT_LEN,
   MAX_INPUT_IMAGES,
-} = require('../constants');
-const { ApiError } = require('../errors');
+} = require('../core/constants');
+const { ApiError } = require('../core/errors');
 
 /* ---------------- URL 工具 ---------------- */
 

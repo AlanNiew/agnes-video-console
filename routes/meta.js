@@ -4,8 +4,8 @@
  * /api/meta /api/health /api/openapi.json /api/logs
  */
 const { DB_PATH } = require('../db');
-const { buildOpenApi } = require('../openapi');
-const { recent: recentLogs } = require('../logger');
+const { buildOpenApi } = require('../core/openapi');
+const { recent: recentLogs } = require('../core/logger');
 const {
   MODELS,
   ASPECT_RATIOS,
@@ -14,7 +14,7 @@ const {
   IMAGE_SIZES,
   IMAGE_RATIOS,
   LLM_MODEL,
-} = require('../constants');
+} = require('../core/constants');
 
 module.exports = function registerMetaRoutes(app) {
   // 前端元数据：模型/画幅/时长的单一事实来源，下拉与提示文案全部由此渲染

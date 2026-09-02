@@ -5,7 +5,7 @@
  * 目标：让自动化脚本 / AI Agent 不必读源码即可正确对接（例如完成任务字段是
  * metadata_url / video_local_url，提交接口为「入队」语义等）。
  */
-const pkg = require('./package.json');
+const pkg = require('../package.json');
 
 const paths = {
   '/api/health': { get: '健康检查（ok/uptime/db 路径/node 版本）' },

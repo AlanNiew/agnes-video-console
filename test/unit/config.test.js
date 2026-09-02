@@ -2,7 +2,7 @@
 /**
  * config 单元测试 —— 单源常量契约（防止各处默认值再次漂移）
  */
-const { DEFAULT_BASE_URL, RENDER_PARAMS_DEFAULTS, probeDuration } = require('../../config');
+const { DEFAULT_BASE_URL, RENDER_PARAMS_DEFAULTS, probeDuration } = require('../../core/config');
 const { DEFAULT_SETTINGS } = require('../../db');
 
 describe('DEFAULT_BASE_URL 单源', () => {

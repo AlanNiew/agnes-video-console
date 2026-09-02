@@ -731,7 +731,7 @@ const tasks = {
 };
 
 /** 默认设置（与文档对齐） */
-const { DEFAULT_BASE_URL } = require('./config');
+const { DEFAULT_BASE_URL } = require('./core/config');
 
 const DEFAULT_SETTINGS = {
   base_url: DEFAULT_BASE_URL,

@@ -5,11 +5,11 @@
  * 429 / 网络错误按指数退避；超过 max_active_minutes 的任务标记为失败（轮询超时）。
  * v1.3：完成视频自动归档到本地（artifacts.js）；「待提交任务」由 submitter.js 接管。
  */
-const { settings, tasks, instanceLockHeldByOther } = require('./db');
-const agnes = require('./agnes');
-const { downloadArtifact } = require('./artifacts');
-const { log } = require('./logger');
-const { DEFAULT_BASE_URL } = require('./config');
+const { settings, tasks, instanceLockHeldByOther } = require('../db');
+const agnes = require('../clients/agnes');
+const { downloadArtifact } = require('../lib/artifacts');
+const { log } = require('../core/logger');
+const { DEFAULT_BASE_URL } = require('../core/config');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
 
