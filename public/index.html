@@ -39,12 +39,13 @@
         <div class="stat"><span class="num green" id="statDone">0</span><span class="lbl">已完成</span></div>
         <div class="stat"><span class="num red" id="statFailed">0</span><span class="lbl">失败</span></div>
       </div>
+      <!-- v2.2.2：主导航固定在品牌旁（不随右侧统计栏/按钮显隐而左右跳动） -->
+      <div class="nav-tabs" id="mainNav">
+        <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
+        <button class="nav-tab" id="navWorks">🏆 我的作品</button>
+        <button class="nav-tab active" id="navTasks">📋 任务中心</button>
+      </div>
       <div class="actions">
-        <div class="nav-tabs" id="mainNav">
-          <button class="nav-tab" id="navWorkspace">🎬 创作工作台</button>
-          <button class="nav-tab" id="navWorks">🏆 我的作品</button>
-          <button class="nav-tab active" id="navTasks">📋 任务中心</button>
-        </div>
         <button class="btn ghost" id="btnLogs" title="查看运行日志">日志</button>
         <button class="btn ghost icon-btn" id="btnTheme" title="切换主题">🌙</button>
         <button class="btn primary" id="btnNewTask">＋ 新建任务</button>

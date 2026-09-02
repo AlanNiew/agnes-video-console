@@ -132,6 +132,7 @@ body {
 .actions {
   display: flex;
   gap: 8px;
+  margin-left: auto; /* v2.2.2：统计栏隐藏时操作区仍稳定右对齐（与 .stats 的 auto 均分剩余空间） */
 }
 
 /* ---------- 按钮 ---------- */
@@ -1931,6 +1932,7 @@ html[data-theme='light'] .work-dir-row {
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 3px;
+  margin-left: 4px;
   margin-right: 6px;
 }
 .nav-tab {
