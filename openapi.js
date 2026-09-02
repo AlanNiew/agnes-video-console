@@ -20,11 +20,16 @@ const paths = {
   '/api/stats': { get: '按状态统计 {total, active, byStatus, completed, failed}' },
   '/api/logs': { get: '最近运行日志 ?limit=' },
   '/api/tasks': {
-    get: '任务列表 ?status=&q=&limit=&offset=；completed 任务含 metadata_url（远端）与 video_local_url（本地归档，优先使用）',
+    get: '任务列表 ?status=&q=&limit=&offset= → {items, total(满足当前筛选的总条数), stats}；items[].kind 区分 video|image，items[] 含来源上下文（project_name/shot_seq/shot_title/image_kind）；completed 任务含 metadata_url（远端）与 video_local_url（本地归档，优先使用）',
     post: '创建任务（入队语义：返回 queued 记录，由后台提交器按 submit_interval_ms 节流提交上游，429 自动退避重试）。body：{model, prompt, mode(text|keyframe|reference), seconds("4"-"12"), size, aspect_ratio, seed?, first_frame?, last_frame?, images?[], audios?[], videos?[]}；模式规则：text 不允许媒体字段；keyframe 需 first/last_frame；reference 需 images/audios/videos 至少一类，flash 限 5 图且不支持 videos',
   },
-  '/api/tasks/{id}': { get: '任务详情', delete: '删除任务记录' },
-  '/api/tasks/{id}/retry': { post: '失败重试（以原参数入队新任务，保留失败记录）' },
+  '/api/tasks/{id}': {
+    get: '任务详情（含来源上下文：project_name / shot_seq / shot_title / image_kind）',
+    delete: '删除任务记录',
+  },
+  '/api/tasks/{id}/retry': {
+    post: '失败重试（v2.1：原任务原地重新入队——ID 不变，状态重置为 queued 重新流转 队列中→生成中→完成/失败；输入参数与溯源保留，retry_count +1；视频与图片任务均可）',
+  },
   '/api/tasks/{id}/poll': { post: '立即强制轮询一次（需已有 video_id）' },
   '/api/tasks/bulk/clear-completed': { post: '清空已完成' },
   '/api/tasks/bulk/clear-failed': { post: '清空 failed 与 submit_error' },
@@ -36,11 +41,22 @@ const paths = {
   '/api/images/generate': {
     post: '图片生成（同步）{prompt, size(1K-4K), ratio, count(1-4), kind(character|scene), project_id?} → {results[], image}',
   },
+  '/api/images/tasks': {
+    post: '图片生成任务（异步·P1）{prompt, size(1K-4K), ratio, count(1-4), kind(character|scene), project_id?} → 入队即返回 201 任务记录；由后台 image-worker 生成并归档，完成后 tasks.images[] 携带 {remote_url, local_url, image_id}，在任务中心统一展示/重试',
+  },
   '/api/projects': { get: '项目列表', post: '创建项目 {name, idea?, style?, aspect_ratio?, seconds?}' },
   '/api/projects/{id}': {
     get: '项目详情聚合 {project, texts, images, shots, tasks, tts}；tasks[] 中同镜头已有 completed 时，旧 failed/submit_error 打 superseded:true',
     patch: '更新项目 {name?, idea?, style?, aspect_ratio?, seconds?, status?}',
     delete: '删除项目（级联清理文案/图片/镜头/配音/渲染任务，任务解绑）',
+  },
+  '/api/projects/{id}/auto': {
+    post: 'P3 全自动成片：启动后台状态机（文案→分镜→AI自审→角色图→逐镜视频→配音→渲染），失败自动重试，卡住停在人工介入点；202 返回 auto_state',
+    get: '全自动成片状态 {auto_state:{running,stage,attempts,error,history[]}, stage_meta}',
+  },
+  '/api/projects/{id}/auto/stop': { post: '停止全自动成片（已完成内容保留，可重新启动）' },
+  '/api/projects/{id}/storyboard/review': {
+    post: 'P3 L1 分镜 AI 自审：审查分镜与文案一致性/节奏/提示词质量 → {issues:[{shot_seq,severity,field,issue,revised}], overall}（revised 可直接采纳写入镜头）',
   },
   '/api/projects/{id}/select-text': { post: '选定文案版本 {text_id}' },
   '/api/projects/{id}/texts/{textId}': { patch: '编辑文案内容 {content}' },
@@ -66,11 +82,11 @@ const paths = {
   },
   '/api/projects/{id}/videos': { post: '整项目提交视频任务（旧入口，单提示词）' },
   '/api/projects/{id}/render': {
-    post: '一键成片渲染：镜头视频（本地归档优先，重拍定稿 take 优先）+ 逐镜旁白 + 项目 BGM（可选）→ xfade 叠化 + 旁白对齐混音 + BGM 铺底/闪避 + 字幕烧录（ASS）→ mp4。body：{transition_ms?(200-2000, 默认600), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true), narration_volume?(0.5-3, 默认1.4), burn_subtitles?(默认true), subtitle_fontsize?(24-72, 默认42), aspect?(16:9|9:16, 默认跟随项目画幅)}；完成后自动生成 3 张封面候选（covers 字段）；需本机 ffmpeg，≥2 个已完成镜头',
+    post: '一键成片渲染：镜头视频（本地归档优先，重拍定稿 take 优先）+ 逐镜旁白 + 项目 BGM（可选）→ xfade 转场 + 旁白对齐混音 + BGM 铺底/闪避 + 字幕烧录（ASS）→ mp4。body：{transition_ms?(200-2000, 默认600), transition_type?(fade|dissolve|wipeleft|wiperight|slideup|slidedown|circleopen, 默认fade), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true), narration_volume?(0.5-3, 默认1.4), burn_subtitles?(默认true), subtitle_fontsize?(24-72, 默认42), subtitle_style?(white-outline|yellow-box|bottom-bar, 默认white-outline), subtitle_position?(bottom|center, 默认bottom), aspect?(16:9|9:16, 默认跟随项目画幅)}；完成后自动生成 3 张封面候选（covers 字段）；需本机 ffmpeg，≥2 个已完成镜头',
   },
   '/api/projects/{id}/render/jobs': { get: '项目渲染任务列表' },
   '/api/render/jobs/{id}': {
-    get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), output_path, output_url}',
+    get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), output_path, output_url, quality(质检报告: duration_s/expected_duration_s/loudness_lufs/shots/narrated_shots/sub_lines)}',
     delete: '删除渲染任务（渲染中不可删；产物文件一并清理）',
   },
   '/api/music/search': {

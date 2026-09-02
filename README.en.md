@@ -3,10 +3,10 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-61%20unit%20%2B%2065%20e2e-brightgreen)
+![Tests](https://img.shields.io/badge/tests-74%20unit%20%2B%2072%20e2e-brightgreen)
 
 A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
-**creation workspace (4-step pipeline) + task-queue board + background polling + SQLite persistence**.
+**creation workspace (6-step pipeline + fully automated final cut) + unified task center (video & image) + background polling + SQLite persistence**.
 
 [中文 README](README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
@@ -22,29 +22,33 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 
 ## ✨ Features
 
+- 🚀 Fully automated final cut (v2.0): tick "🚀 全自动成片" when creating a project and the whole pipeline runs itself — copywriting → storyboard → AI self-review → character sheet → per-shot videos → narration → render; each stage auto-retries, failed shots are re-taken once, TTS is skipped when unavailable, and a stall parks the run at a human-intervention point with one-click restart. Live progress timeline included
+- 🎨 Unified image tasks (v2.0): "generate video / generate image" dual entry in the new-task dialog; image tasks share the task center list / detail / retry / download with video tasks (async worker + backoff retry + local archival), and standalone creation (no project) is supported
+- 📋 Timeline task list (v2.0): every task in one list ordered by creation time (type/status badges + progress + failure reason + relative time) with real pagination (10/20/50 per page); the 4-column kanban remains as a switchable view
+- 🎬 Final-cut style presets (v2.0): healing / high-energy / documentary / lecture / storybook presets apply a whole render recipe in one click; the advanced panel exposes 7 transition types, 3 subtitle styles, subtitle position and audio fine-tuning
+- 🔍 AI self-review & QC (v2.0): one-click "AI 审查分镜" after storyboard generation (consistency / pacing / prompt quality → structured revisions you adopt per item); every render emits a QC report (duration deviation / loudness LUFS / narration coverage / subtitle lines)
+- 🧭 Step-by-step guidance (v2.0): each workspace step ships a "what does this step do" beginner card + prev/next navigation with pre-checks + completion counter; project creation offers 8 style preset cards
 - 🎵 Online BGM (v1.4): search an online music library (self-hosted NetEase-source API) from workspace step ⑥ → preview → one-click pick; at render time the BGM loops under the film with fade in/out and **auto-ducking under narration** (sidechaincompress); volume adjustable
-- 🎞️ One-click final cut (v1.3): workspace step ⑥ assembles completed shot videos + per-shot narration into a full short film locally via ffmpeg (xfade transitions, narration aligned per shot, title/end cards, auto limiting); output playable/downloadable from `data/artifacts/`
+- 🎞️ One-click final cut (v1.3): workspace step ⑥ assembles completed shot videos + per-shot narration into a full short film locally via ffmpeg (xfade transitions, narration aligned per shot, title/end cards, loudness normalization); output playable/downloadable from `data/artifacts/`
 - 🚦 Server-side submit queue (v1.3): task creation is "enqueue" semantics; a background submitter throttles per `submit_interval_ms` and **auto-retries 429 rate limits with exponential backoff** — batch submits no longer leave dead records
 - 💾 Local video archival (v1.3): completed videos auto-download to `data/artifacts` (`video_local_url` preferred for playback/download); startup sweep backfills history
 - 🗑️ Superseded governance (v1.3): stale failed records of a shot with a newer successful task are auto-marked superseded
 - 📝 Shot narration (v1.3): storyboard LLM emits per-shot `narration` copy (editable), one-click per-shot TTS bound via `shot_id`, aligned onto the final-cut timeline
 - 🔀 Per-shot reference toggle (v1.3): pure-landscape/no-character shots can skip the character reference and submit in text mode
 - 📡 Self-describing API (v1.3): `GET /api/openapi.json`; `/api/meta` carries upstream rate-limit hints
-- 🎬 Creation workspace (4-step pipeline): one-line idea → AI copywriting (script / character / scene, editable, multi-version) → AI character sheet (pick a final) → video tasks (reference mode auto-references the character image with a `<Picture 1>` consistency injection)
+- 🎬 Creation workspace (6-step pipeline): one-line idea → AI copywriting (script / character / scene, editable, multi-version) → AI character sheet (pick a final) → video tasks (reference mode auto-references the character image with a `<Picture 1>` consistency injection) → narration → final cut
 - 🎞️ Storyboard (M2): AI breaks the idea into multi-shot storyboards (per-shot title + prompt + duration; auto/3/5/8 shots), each shot editable / reorderable / deletable with versioned history; submit per shot or batch-submit unfinished shots with configurable throttling; tasks are traced per shot
 - 🎬 Three models · per-model forms; model/aspect/duration lists served from `/api/meta` as the single source of truth
-- 📋 Kanban task board: queued / in-progress / completed / failed, live progress, search & filters
 - 🔄 Background poller: configurable interval (default 2s), exponential backoff on 429/network errors, automatic timeout
 - 🗄️ SQLite persistence via built-in `node:sqlite` (no native compilation), automatic migration, survives restarts
-- 🔁 One-click retry for failed tasks (keeps history for audit)
-- ▶️ Inline video preview & download for completed tasks
+- 🔁 One-click retry for failed tasks (video & image; keeps history for audit)
+- ▶️ Inline video preview & download for completed tasks; image tasks show a thumbnail wall
 - 🔍 Full audit: request JSON, create response, last poll response, poll count
 - ✍️ AI prompt optimizer in the new-task form with side-by-side before/after comparison — you decide whether to adopt; the workspace character description supports the same flow
 - 🖼️ Multi-candidate images: generate 1–4 character/scene images at once and pick one as the seed image
-- 🧭 Flow guidance: clickable step bar that follows scrolling, a dynamic "next step" hint bar, staged waiting messages, and one-click idea-to-storyboard on project creation
 - 🔐 API key stays server-side (SQLite), browser only sees a masked value; binds to `127.0.0.1` only
 - 🧾 Built-in log panel
-- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 62 assertions, including 429 retry, local archival, BGM search/select, and a real-ffmpeg final-cut render when ffmpeg is available)
+- ✅ End-to-end tests with a local fake Agnes API (no real key needed; 72 assertions, including 429 retry, local archival, async image tasks, the fully automated final-cut loop, BGM search/select, and a real-ffmpeg render when ffmpeg is available)
 
 ## 🚀 Quick Start
 
@@ -62,14 +66,16 @@ Open **http://127.0.0.1:8273**, click ⚙ settings and enter your Agnes API Key.
 
 ## 📖 Usage
 
-**Option A · Creation workspace (recommended)**: click "🎬 创作工作台" in the header → new project (one-line idea + aspect/duration) → AI copywriting (editable, versioned) → "✨ 生成分镜" to break the idea into shots (each editable/reorderable, or "升级为分镜" to reuse a hand-written prompt as one shot) → generate a character image and pick the final → submit shots one by one or "🚀 批量提交未完成镜头" (throttled by the "批量提交间隔" setting).
+**Option A · Fully automated final cut (best for beginners, v2.0)**: tick "🚀 全自动成片" when creating a project → enter one idea + pick a style card → **do nothing else**: copywriting, storyboard, AI self-review revisions, character sheet, per-shot videos, per-shot narration and rendering all run in the background (auto-retry on failure, TTS skipped when unavailable). A progress timeline at the top shows every stage; a stall parks at a human-intervention point and can be restarted with one click.
 
-**Option B · Task center (single tasks)**:
+**Option B · Creation workspace (step-by-step polishing)**: click "🎬 创作工作台" in the header → new project (one-line idea + style card + aspect/duration) → AI copywriting (editable, versioned) → "✨ 生成分镜" to break the idea into shots (use "🔍 AI 审查分镜" for structured revisions you adopt per item) → generate a character image and pick the final → submit shots one by one or "🚀 批量提交未完成镜头" (throttled by the "批量提交间隔" setting) → step ⑤ narration → step ⑥ pick a style preset (or tune the advanced panel) and render.
+
+**Option C · Task center (single tasks)**:
 
 1. **Settings**: API Key, Base URL (default `https://apihub.agnes-ai.com`), polling interval, task timeout.
-2. **New task**: choose model → the form adapts automatically → write the prompt → add media URLs per mode (must be publicly accessible `http(s)`) → submit.
-3. **Track on the board**: tasks flow through queued → in-progress → completed/failed. Play or download when done.
-4. **On failure**: view the error in the detail panel, or retry with the same parameters (creates a new task).
+2. **New task**: choose "🎬 generate video / 🖼️ generate image" → for video pick a model/mode and write the prompt (AI optimizer available); for image write the description and pick size/ratio/count → submit.
+3. **Track in the list**: the timeline list shows every task newest-first (status filter + search + pagination); tasks flow through queued → in-progress → completed/failed. Switch back to the kanban view from the top-right toggle.
+4. **On failure**: view the error in the detail panel, or retry with the same parameters (video & image alike).
 
 **V2.0 tip** (backend API / historical tasks only; retired from the UI): duration = `num_frames / frame_rate` (e.g. 121/24 ≈ 5s); `num_frames` must be ≤ 441 and follow 8n+1 (81/121/241/441).
 
@@ -87,7 +93,9 @@ agnes-video-console/
 ├── agnes.js             # Agnes API client (video create/query / chat / images)
 ├── submitter.js         # Background submitter (throttled submits with 429 exponential backoff)
 ├── poller.js            # Background poller (backoff / timeout / stuck-task cleanup)
-├── render.js            # Final-cut renderer (normalize → xfade → narration-aligned mix → title/end cards)
+├── image-worker.js      # Image task worker (v2.0: async image generation + backoff retry + archival)
+├── auto.js              # Fully automated final-cut orchestrator (v2.0 state machine)
+├── render.js            # Final-cut renderer (normalize → xfade → narration-aligned mix → QC report → covers)
 ├── netmusic.js          # Music API client (BGM search / play URL / local cache)
 ├── fish-tts.js          # Fish Audio TTS client
 ├── logger.js            # In-memory ring-buffer log
@@ -102,7 +110,7 @@ agnes-video-console/
 No real API key required:
 
 ```bash
-npm test          # 61 unit tests (jest) + e2e smoke (fake Agnes API + real ffmpeg render)
+npm test          # 74 unit tests (jest) + e2e smoke (fake Agnes API + real ffmpeg render)
 ```
 
 CI runs lint → format check → unit tests → e2e on every push / PR.

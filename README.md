@@ -3,8 +3,8 @@
 ![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
-![Tests](https://img.shields.io/badge/tests-61%20unit%20%2B%2065%20e2e-brightgreen)
-本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（四步流水线）+ 任务队列看板 + 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
+![Tests](https://img.shields.io/badge/tests-74%20unit%20%2B%2072%20e2e-brightgreen)
+本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（六步流水线 + 全自动成片）+ 任务中心（视频/图片统一列表）+ 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
 [English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
 
@@ -20,30 +20,34 @@
 
 ## ✨ 特性
 
+- 🚀 **全自动成片（v2.0）**：新建项目勾选「🚀 全自动成片」，从创意到成片全自动推进——文案 → 分镜 → AI 自审 → 角色图 → 逐镜视频 → 配音 → 渲染，失败自动重试、失败镜头自动重拍、TTS 不可用自动跳过，卡住停在人工介入点可一键重启；进度时间线实时可视化
+- 🎨 **图片任务统一（v2.0）**：新建任务「生成视频 / 生成图片」双入口；图片任务与视频任务共用任务中心列表 / 详情 / 重试 / 下载（异步后台生成 + 退避重试 + 本地归档），支持不挂项目的独立创作
+- 📋 **任务中心时间线列表（v2.0）**：全部任务单列表按创建时间倒序（类型/状态徽章 + 进度 + 失败原因 + 相对时间），真分页（每页 10/20/50 条）；每行带「📁 来源」徽章（所属项目名、镜头序号与标题、角色图/场景图、独立创作）；四列看板保留为可切换视图
+- 🎬 **成片风格预设（v2.0）**：治愈慢综 / 热血快剪 / 纪录解说 / 知识口播 / 童话绘本一键套用整套渲染配方；高级配置面板支持转场类型（7 种）/ 字幕样式（3 种）/ 字幕位置 / 音频微调，小白也能剪出专业成片
+- 🔍 **AI 自审与质检（v2.0）**：分镜生成后可一键「AI 审查分镜」（一致性/节奏/提示词质量 → 结构化修订建议，逐条采纳）；渲染完成自动产出质检报告（时长偏差 / 响度 LUFS / 旁白覆盖 / 字幕行数）
+- 🧭 **分步向导（v2.0）**：创作工作台每步带「💡 这一步做什么」新手说明卡 + 上一步/下一步导航（带前置校验）+ 完成度计数；新建项目风格卡片化（8 种预设）
 - 📱 **竖屏 9:16 产线 + 封面自动生成（v1.8）**：渲染方向跟随项目画幅（16:9 横屏 / 9:16 竖屏直通抖音快手），字卡/字幕/安全边距全链自适应；渲染完成自动产出 3 张封面候选（关键帧 + 片名），工作台直接预览下载
 - 🎵 **在线 BGM 配乐（v1.4）**：工作台第⑥步搜索在线曲库（自托管音乐接口，网易云源）→ 试听 → 一键选用；渲染时 BGM 循环铺底、首尾淡入淡出，**有旁白时自动闪避**（sidechaincompress 压低音乐让人声突出），音量可调
-- 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（叠化转场、旁白按镜头对齐、片头/片尾卡、自动限幅），产出直接播放/下载
+- 🎞️ **一键成片渲染（v1.3）**：创作工作台第⑥步把已完成镜头 + 逐镜旁白在本地用 ffmpeg 合成完整短片（转场可选、旁白按镜头对齐、片头/片尾卡、响度标准化），产出直接播放/下载
 - 🚦 **服务端提交队列（v1.3）**：任务创建为「入队」语义，后台提交器按 `submit_interval_ms` 节流提交上游，**429 限流自动指数退避重试**——批量提交不再产生撞墙死记录
 - 💾 **视频本地归档（v1.3）**：任务完成即自动下载到 `data/artifacts`，播放/下载优先本地（远端链接过期也有兜底）；历史完成任务启动时自动补扫归档
 - 🗑️ **superseded 失败治理（v1.3）**：同镜头已有更新成功任务时，旧失败记录自动标记「已作废」，看板不再被废记录误导
 - 📝 **分镜旁白（v1.3）**：分镜生成同步产出每镜旁白文案（可编辑），一键按镜头合成配音（`shot_id` 绑定），成片渲染自动对齐时间轴
 - 🔀 **镜头级引用开关（v1.3）**：纯空镜/无人镜头可关闭「引用角色图」，以纯文生模式提交，不再被强制注入角色参考
 - 📡 **API 自描述（v1.3）**：`GET /api/openapi.json` 输出机器可读端点文档（自动化脚本 / AI Agent 无需读源码即可对接）；`/api/meta` 附带上游限流提示
-- 🎬 **创作工作台（四步流水线）**：一句话创意 → AI 结构化文案（梗概/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
+- 🎬 **创作工作台（六步流水线）**：一句话创意 → AI 结构化文案（梗概/角色/场景，可编辑多版本）→ AI 角色设定图（定稿）→ 发起视频任务（reference 模式自动引用角色图，`<Picture 1>` 保持角色一致）
 - 🎞️ **分镜脚本（M2）**：AI 按创意一次生成多镜头分镜（每镜头标题 + 提示词 + 时长，可选自动/3/5/8 镜），镜头可独立编辑/增删/排序/选用历史版本；支持单镜头提交与「批量提交未完成镜头」（按设置间隔节流），任务按镜头溯源分组
 - 🎬 **三模型 · 多模式**：任务中心选模型后表单自动切换参数体系；模型/画幅/时长清单由后端 `/api/meta` 统一下发
-- 📋 **任务队列看板**：队列中 / 生成中 / 已完成 / 失败 四列实时看板，进度条、搜索、状态过滤
 - 🔄 **后台自动轮询**：可配置间隔（默认 2s）；429 / 网络错误指数退避；超时任务自动标记失败
 - 🗄️ **SQLite 本地持久化**：Node 内置 `node:sqlite`，零原生编译；旧库自动迁移、重启不丢
-- 🔁 **失败重试**：一键以原参数重新提交（保留失败记录，便于审计）
-- ▶️ **视频预览/下载**：完成的任务在看板与详情中直接播放
+- 🔁 **失败重试（v2.1 原地重试）**：一键重新排队，原任务状态重走 队列中→生成中→完成/失败 完整流转（ID 不变，重试次数可查），不再产生废弃的失败残留记录
+- ▶️ **视频预览/下载**：完成的任务在列表与详情中直接播放；图片任务展示缩略图墙
 - 🔍 **任务审计**：完整请求 JSON、创建响应、轮询响应、轮询次数一目了然
-- ✍️ **AI 优化提示词**：新建任务时调文本模型把手写描述优化为结构化提示词，优化前后并排对比、由你决定是否采用；工作台角色描述同样支持 AI 优化对比
+- ✍️ **AI 优化提示词**：新建任务时调文本模型把手写描述优化为结构化提示词（视频六段式 / 图片五段式），优化前后并排对比、由你决定是否采用；工作台角色描述同样支持 AI 优化对比
 - 🖼️ **图片多张候选**：角色/场景图支持一次生成 1–4 张，点选其一作为种子图定稿
-- 🧭 **流程引导**：步骤条点击跳转、随滚动高亮；「下一步」动态引导条；生成等待分阶段提示；新建项目可一键直达分镜
 - 🔐 **密钥安全**：API Key 仅存服务端 SQLite，浏览器只见掩码；服务只监听 `127.0.0.1`
 - 🧾 **内置日志面板**：轮询 / 提交事件在前端可视
-- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路（65 项断言）；另有 **61 项单元测试**（jest：payload 校验矩阵 / LLM 解析 / ASS 字幕 / 退避数学），`npm test` 一键全跑
+- ✅ **端到端测试**：内置本地模拟 Agnes API，无需真实 Key 即可验证全链路（72 项断言，含全自动成片闭环）；另有 **74 项单元测试**（jest：payload 校验矩阵 / LLM 解析 / ASS 字幕 / 退避数学），`npm test` 一键全跑
 
 ## 🚀 快速开始
 
@@ -61,18 +65,20 @@ npm start
 
 ## 📖 使用流程
 
-**方式一 · 创作工作台（推荐）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 画幅/时长）→ AI 自动生成文案（可编辑、多版本选用）→「✨ 生成分镜」把创意拆成多镜头（每镜头含旁白文案，可独立编辑/排序；纯空镜镜头可关闭「引用角色图」）→ 生成角色设定图并点选定稿 → 逐镜头「🚀 提交」或「🚀 批量提交未完成镜头」（服务端提交队列按间隔节流，429 自动重试，关闭页面入队任务也会继续提交）→ 第⑤步「🎙️ 配音」逐镜合成旁白 → 第⑥步「🎞️ 成片渲染」一键合成完整短片。
+**方式一 · 全自动成片（小白推荐，v2.0）**：新建项目时勾选「🚀 全自动成片」→ 填一句创意 + 选风格卡片 → 之后**什么都不用做**：文案、分镜、AI 自审修订、角色图、逐镜视频、逐镜配音、渲染全链自动推进（失败自动重试、TTS 未配置自动跳过）；页面顶部进度时间线实时显示每个阶段，卡住时停在「人工介入」点，处理完可一键重新启动。
 
-**方式二 · 任务中心（单任务）**：
+**方式二 · 创作工作台（逐步精修）**：点顶部「🎬 创作工作台」→ 新建项目（一句话创意 + 风格卡片 + 画幅/时长）→ AI 自动生成文案（可编辑、多版本选用）→「✨ 生成分镜」把创意拆成多镜头（可「🔍 AI 审查分镜」获得修订建议并逐条采纳）→ 生成角色设定图并点选定稿 → 逐镜头「🚀 提交」或「🚀 批量提交未完成镜头」（服务端提交队列按间隔节流，429 自动重试，关闭页面入队任务也会继续提交）→ 第⑤步「🎙️ 配音」逐镜合成旁白 → 第⑥步「🎞️ 成片渲染」选风格预设或高级配置后一键合成完整短片。
+
+**方式三 · 任务中心（单任务）**：
 
 1. **设置**：填写 API Key、Base URL（默认 `https://apihub.agnes-ai.com`）、轮询间隔、任务超时。
-2. **新建任务**：选模型 → 表单自动适配 → 填 prompt → 按模式补充素材 URL（需**可公开访问**的 http(s) 地址，任务完成前保持有效）→ 提交。
-3. **看板跟踪**：任务自动流转「队列中 → 生成中 → 已完成/失败」，完成即可播放/下载。
-4. **失败处理**：详情查看错误，或一键「重试」（以原参数新建任务）。
+2. **新建任务**：选「🎬 生成视频 / 🖼️ 生成图片」→ 视频选模型/模式填 prompt（可 AI 优化），图片填描述选分辨率/画幅/张数 → 提交。
+3. **列表跟踪**：时间线列表按创建时间倒序展示全部任务（状态筛选 + 搜索 + 分页），自动流转「队列中 → 生成中 → 已完成/失败」，完成即可播放/下载；右上角可切换回看板视图。
+4. **失败处理**：详情查看错误，或一键「重试」（视频/图片任务均可，以原参数新建任务）。
 
-**TTS 配音（旁白）**：在「设置」中填写 **Fish Audio API Key**（免费档模型 `s2.1-pro-free`，[官方文档](https://docs.fish.audio)）→ 创作工作台项目第⑤步「🎙️ 配音」：粘贴文稿（支持逐句换行）→ 选音色/语速 → 生成 → 浏览器试听/选用/删除。旁白支持逐镜头绑定（分镜卡片中填写旁白 → 生成配音，`shot_id` 自动关联），成片渲染时按镜头对齐时间轴混入。接口：`POST /api/tts/generate`、`GET /api/tts/voices`、`POST /api/tts/:id/select`、`DELETE /api/tts/:id`。
+**TTS 配音（旁白）**：在「设置」中填写 **Fish Audio API Key**（免费档模型 `s2.1-pro-free`，[官方文档](https://docs.fish.audio)）→ 创作工作台第⑤步「🎙️ 配音」：**推荐「🎙️ 为所有镜头生成配音」**——按每镜「旁白文案」（第②步分镜卡片中填写）逐条合成并自动绑定镜头，渲染时与画面自动对齐；也可在每张镜头卡上单镜配音，或用「自由文稿」整段合成（不绑镜头）。配音墙可试听/重生成/重新绑定。接口：`POST /api/tts/generate`、`GET /api/tts/voices`、`POST /api/tts/:id/select`、`DELETE /api/tts/:id`。
 
-**成片渲染**：第⑥步「🎞️ 成片渲染」把已完成镜头视频（本地归档优先）与逐镜旁白合成为完整短片——镜头间叠化转场（可调 0.4–1.0s）、旁白按镜头起幅点对齐（偏移可调）、可选片头/片尾卡、混音自动限幅；1280×720@30 输出到 `data/artifacts/`，完成后页面内直接播放/下载。需要本机安装 **ffmpeg**（加入 PATH）。接口：`POST /api/projects/:id/render`、`GET /api/projects/:id/render/jobs`、`GET /api/render/jobs/:id`、`DELETE /api/render/jobs/:id`。
+**成片渲染**：第⑥步「🎞️ 成片渲染」把已完成镜头视频（本地归档优先）与逐镜旁白合成为完整短片——选风格预设（一键套用转场/字幕/音频整套配方）或展开「高级配置」微调：转场类型（淡入淡出/溶解/擦除/滑动/圆形展开）与时长、字幕样式（白字描边/金字底框/底部字幕条）与位置字号、旁白偏移对齐、可选片头/片尾卡；混音链含响度标准化（-16 LUFS）；1280×720@30 输出到 `data/artifacts/`，完成后页面内直接播放/下载并附质检报告与 3 张封面候选。需要本机安装 **ffmpeg**（加入 PATH）。接口：`POST /api/projects/:id/render`、`GET /api/projects/:id/render/jobs`、`GET /api/render/jobs/:id`、`DELETE /api/render/jobs/:id`。
 
 **BGM 配乐（v1.4）**：在「设置 → 音乐接口」填写自托管音乐接口地址与 Token（网易云源；Token 仅存本地 SQLite、只做服务端调用）→ 第⑥步「🎵 背景音乐」搜索歌曲 → ▶ 试听（服务端流代理，现取现播）→ 选用（立即下载到 `data/artifacts` 缓存，播放地址有时效性因此落本地）→ 渲染成片时自动循环铺底、首尾淡入淡出；有旁白时默认开启「旁白闪避」，BGM 音量可调（有旁白建议 30–40%）。接口：`GET /api/music/search`、`GET /api/music/stream`、`POST/DELETE /api/projects/:id/bgm`。
 
@@ -85,7 +91,7 @@ npm start
 ```
 agnes-video-console/
 ├── server.js            # Express 装配 + 静态服务 + 统一错误中间件 + 启动编排（单实例锁 / 优雅退出）
-├── constants.js         # 模型清单 / 参数白名单 / 输入上限 / TTS 预设（零依赖单一事实来源）
+├── constants.js         # 模型清单 / 参数白名单 / 输入上限 / 转场与字幕预设（零依赖单一事实来源）
 ├── config.js            # 跨模块单源常量（DEFAULT_BASE_URL / probeDuration / 渲染默认参数）
 ├── errors.js            # ApiError + ah（统一业务错误协议）
 ├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
@@ -94,7 +100,9 @@ agnes-video-console/
 ├── agnes.js             # Agnes API 客户端（视频创建/查询 / chat / 图片）
 ├── submitter.js         # 后台提交器（v1.3：按 submit_interval_ms 服务端节流，429 自动退避重试）
 ├── poller.js            # 后台轮询器（退避 / 超时 / 完成视频自动归档 / 启动补扫）
-├── render.js            # 成片渲染器（v1.3：归一化 → xfade 叠化 → 旁白对齐混音 → 片头尾卡）
+├── image-worker.js      # 图片任务工作器（v2.0：异步图片生成 + 退避重试 + 产物归档/项目落库）
+├── auto.js              # 全自动成片编排器（v2.0：文案→分镜→自审→角色图→视频→配音→渲染状态机）
+├── render.js            # 成片渲染器（归一化 → xfade 转场 → 旁白对齐混音 → 质检报告 → 封面候选）
 ├── artifacts.js         # 本地产物归档（远程图片/视频/音频下载备份，供 server/poller 共用）
 ├── openapi.js           # API 自描述文档（GET /api/openapi.json）
 ├── netmusic.js          # 音乐接口客户端（v1.4 BGM：搜索 / 播放地址 / 本地缓存下载）
@@ -102,7 +110,7 @@ agnes-video-console/
 ├── logger.js            # 内存环形日志
 ├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
-├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流与真实 ffmpeg 渲染用例）
+├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流、图片任务、全自动成片与真实 ffmpeg 渲染用例）
 └── data/                # 运行时生成：agnes-console.db + artifacts 本地归档（已被 .gitignore 忽略）
 ```
 
@@ -117,10 +125,10 @@ GET  /api/meta                         模型/画幅/时长元数据（含上游
 GET  /api/settings                     获取设置（API Key 仅返回掩码）
 PUT  /api/settings                     保存设置
 GET  /api/stats                        按状态统计
-GET  /api/tasks?status=&q=&limit=      任务列表（过滤 / 搜索 / 分页）
+GET  /api/tasks?status=&q=&limit=&offset=  任务列表（过滤 / 搜索 / 分页，返回 total 总数）
 POST /api/tasks                        创建任务（含模式规则校验）
-GET  /api/tasks/:id                    任务详情
-POST /api/tasks/:id/retry              失败重试（新建任务记录）
+GET  /api/tasks/:id                    任务详情（kind 区分 video|image）
+POST /api/tasks/:id/retry              失败重试（v2.1：原任务原地重新排队，ID 不变；视频/图片任务均可）
 POST /api/tasks/:id/poll               立即强制轮询
 DELETE /api/tasks/:id                  删除任务
 POST /api/tasks/bulk/clear-completed   清空已完成
@@ -129,17 +137,22 @@ GET  /api/logs                         最近运行日志
 POST /api/llm/chat                     通用文本生成（提示词优化）
 POST /api/llm/script                   创意 → 结构化文案（可关联项目落库）
 POST /api/llm/storyboard               创意 → 多镜头分镜（可关联项目，重建镜头工作副本）
-POST /api/images/generate              图片生成（文生图/图生图，可关联项目）
+POST /api/images/generate              图片生成（同步，文生图/图生图，可关联项目）
+POST /api/images/tasks                 图片生成任务（异步·v2.0，入队即返回，后台工作器执行）
 DELETE /api/images/:id                 删除项目图片记录
 POST /api/projects                     创建创作项目
 GET  /api/projects                     项目列表
 GET  /api/projects/:id                 项目详情（聚合文案/图片/镜头/任务）
 PATCH /api/projects/:id                更新项目
 DELETE /api/projects/:id               删除项目（级联清理文案/图片/镜头，任务解绑）
+POST /api/projects/:id/auto            启动全自动成片（v2.0：文案→分镜→自审→角色图→视频→配音→渲染）
+GET  /api/projects/:id/auto            全自动成片状态（进度时间线数据源）
+POST /api/projects/:id/auto/stop       停止全自动成片（已完成内容保留）
 POST /api/projects/:id/select-text     选定文案版本
 PATCH /api/projects/:id/texts/:textId  编辑文案内容（校验归属）
 POST /api/projects/:id/select-image    定稿角色/场景图
 POST /api/projects/:id/storyboard/apply 选用历史分镜版本（重建镜头）
+POST /api/projects/:id/storyboard/review AI 审查分镜（v2.0：一致性/节奏/质量 → 修订建议）
 POST /api/projects/:id/shots           手动添加镜头
 PATCH /api/projects/:id/shots/:shotId  编辑镜头（校验归属）
 DELETE /api/projects/:id/shots/:shotId 删除镜头
@@ -148,7 +161,7 @@ POST /api/projects/:id/videos          从项目发起视频任务（旧入口�
 POST /api/projects/:id/shots/:shotId/videos  单镜头提交视频任务
 POST /api/projects/:id/render          一键成片渲染（镜头视频 + 逐镜旁白 + BGM → 完整短片）
 GET  /api/projects/:id/render/jobs     项目渲染任务列表
-GET  /api/render/jobs/:id              渲染任务详情（进度/产物）
+GET  /api/render/jobs/:id              渲染任务详情（进度/产物/质检报告）
 DELETE /api/render/jobs/:id            删除渲染任务（产物一并清理）
 GET  /api/music/search                 在线曲库搜索（BGM，v1.4）
 GET  /api/music/stream                 歌曲试听流代理（现取播放地址转发）
@@ -165,7 +178,7 @@ GET  /artifacts/*                      本地产物静态服务（图片/视频/
 npm run test:mock
 ```
 
-期望输出 `== 全部通过 ✔ ==`（当前 **65 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、流水线、分镜旁白、成片渲染、BGM 配乐、专业混音链、字幕烧录、多镜头重拍、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
+期望输出 `== 全部通过 ✔ ==`（当前 **72 项**断言，覆盖任务全链路、提交队列、本地归档、superseded 治理、异步图片任务、分页 total、流水线、分镜旁白、L1 分镜审查、全自动成片闭环、成片渲染与质检报告、BGM 配乐、专业混音链、字幕烧录、多镜头重拍、输入校验与安全约束）。CI（GitHub Actions）也会在每次 push / PR 时自动执行。
 
 ## 🔒 安全说明
 

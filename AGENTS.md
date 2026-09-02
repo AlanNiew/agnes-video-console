@@ -6,10 +6,10 @@
 
 ```bash
 npm test              # = jest 单测 + e2e 冒烟（提交前必跑）
-npm run test:unit     # 仅 61 项单测
-npm run test:mock     # 仅 e2e（自建 mock 上游 :8392，应用拉起于 :8391，约 25s）
+npm run test:unit     # 仅 74 项单测
+npm run test:mock     # 仅 e2e（自建 mock 上游 :8392，应用拉起于 :8391，约 2–4min：含全自动成片闭环 + 3 次真实 ffmpeg 渲染）
 npx jest test/unit/payloads.test.js   # 跑单个测试文件
-npm run lint          # eslint（0 errors 才算过；11 个既有 warning 勿需修）
+npm run lint          # eslint（0 errors 才算过；10 个既有 warning 勿需修）
 npm run format        # prettier 写入；format:check 用于 CI 校验
 npm start             # http://127.0.0.1:8273（仅回环，勿改对外监听）
 ```
@@ -26,22 +26,26 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 ## 架构分层（新增代码放对地方）
 
 ```
-server.js     装配层（132 行）：require 路由 + 错误中间件 + 启动编排。不写业务。
-constants.js  模型清单/白名单/上限/TTS 预设（零依赖，勿 require 其他模块）
+server.js     装配层（135 行）：require 路由 + 错误中间件 + 启动编排（5 个后台 worker）。不写业务。
+constants.js  模型清单/白名单/上限/TTS 预设/转场与字幕预设（零依赖，勿 require 其他模块）
 config.js     跨模块单源常量：DEFAULT_BASE_URL / probeDuration / 渲染默认参数
 errors.js     ApiError + ah —— 业务错误唯一协议，勿再造裸 Error+expose
 services/     纯校验与组装（payloads / prompts / voice-pool）；pipeline 为依赖注入编排
 routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序一致（保持现有顺序追加）
+后台 worker   submitter（视频提交节流）/ poller（轮询归档）/ image-worker（图片任务）
+              / render（成片渲染）/ auto（全自动成片状态机）—— 均受单实例工作锁约束
 ```
 
-- 54 条 API 路由的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
+- 59 条 API 路由的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
 - 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload）。
+- **ffmpeg 调用必须经 `render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
+- 全自动成片编排在 `auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
 
 ## 已知技术债（勿扩散，勿顺手大改）
 
 - `db.js` 的 `projects` 对象混装 6 个实体、superseded 业务规则写死在数据层——拆分是既定后续工作，改动前先对齐方案。
 - `netmusic.js` 直读 db settings（客户端耦合数据层），新客户端勿模仿。
-- `workspace.js`（约 1900 行）全量 innerHTML 重渲染 + `window.__ws`/`window.__app` 全局互调——已知，未列入本次改造范围。
+- `workspace.js`（约 2200 行）全量 innerHTML 重渲染 + `window.__ws`/`window.__app` 全局互调——已知，未列入本次改造范围。
 - 单实例锁的**误接管窗口**（已知不修，收益<成本）：持有者进程存在 >15s 的事件循环同步阻塞（渲染 spawnSync/大文件写盘）会饿死 10s 心跳，锁过期被接管后原持有者在途 tick/renderJob 不复查锁 → 双 worker 并行数分钟（重复轮询/限流失效，产物文件带时间戳不冲突）。锁**获取**已是原子 CAS（v1.9.2，跨进程并发验证通过）；渲染中崩溃遗留任务由 start() 自愈复位。
 
 ## 前端约定
