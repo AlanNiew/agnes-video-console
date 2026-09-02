@@ -13,6 +13,27 @@
     submit_error: '提交失败',
   };
   const MODE_LABEL = { text: '文生', keyframe: '首尾帧', reference: '参考', image: '图生', keyframes: '关键帧' };
+  // P0：任务类型（kind 后端字段 P1 落地，缺省视为视频任务，前端徽章先行就绪）
+  const KIND_ICON = { video: '🎬', image: '🖼️' };
+  const KIND_LABEL = { video: '视频', image: '图片' };
+  const taskKind = (t) => (t.kind === 'image' ? 'image' : 'video');
+  /** v2.1 来源标签：项目名 / 镜头序号与标题 / 角色图·场景图 / 独立创作（看板与列表共用） */
+  function taskSourceLabel(t) {
+    const kind = taskKind(t);
+    const parts = [];
+    if (t.project_name) parts.push(`项目「${t.project_name}」`);
+    if (kind === 'image') {
+      // 图片任务：image_id 指向 project_images（角色图/场景图溯源）
+      if (t.image_kind === 'character') parts.push('角色设定图');
+      else if (t.image_kind === 'scene') parts.push('场景图');
+    } else if (t.shot_seq) {
+      parts.push(`镜头 ${t.shot_seq}${t.shot_title ? `「${t.shot_title}」` : ''}`);
+    } else if (t.image_kind === 'character' && t.project_name) {
+      parts.push('引用角色图');
+    }
+    if (!parts.length) parts.push(t.project_id ? `项目 #${t.project_id}` : '独立创作');
+    return parts.join(' · ');
+  }
   // 模型元数据（GET /api/meta，单一事实来源；加载完成前的静态兜底）
   let META = null;
   const MODEL_NAME_FALLBACK = {
@@ -32,7 +53,14 @@
     settings: null,
     search: '',
     statusFilter: '',
+    taskType: 'video', // P1：新建任务类型（video | image）
+    page: 1, // P0：当前页码（1 起，筛选/搜索变更时重置）
+    pageSize: 20, // P0：每页条数
+    total: 0, // P0：满足当前筛选的总条数（后端返回）
+    viewMode: 'list', // P0：任务中心视图（list=时间线列表 / board=看板）
     lastColSig: {}, // 列签名，避免无谓重建（防止视频播放被打断）
+    lastListSig: null, // P0：列表行集合签名（同上）
+    lastPageSig: null, // P0：分页条签名
     detailSig: null,
   };
 
@@ -64,25 +92,42 @@
 
   /* ---------------- 卡片 ---------------- */
   function cardHTML(t) {
-    const isFlash = t.model.includes('flash');
-    const metas = [
-      MODE_LABEL[t.mode] || t.mode,
-      t.seconds ? `${t.seconds}s` : null,
-      t.aspect_ratio,
-      t.size,
-      modelShort(t.model),
-      t.seed !== null && t.seed !== undefined ? `seed ${t.seed}` : null,
-      t.video_id ? t.video_id.slice(-10) : null,
-    ].filter(Boolean);
+    const kind = taskKind(t);
+    const req = t.request_json || {};
+    const metas =
+      kind === 'image'
+        ? [
+            t.size,
+            t.aspect_ratio,
+            `${(t.images || []).length || Number(req.count) || 1} 张`,
+            modelShort(t.model),
+          ].filter(Boolean)
+        : [
+            MODE_LABEL[t.mode] || t.mode,
+            t.seconds ? `${t.seconds}s` : null,
+            t.aspect_ratio,
+            t.size,
+            modelShort(t.model),
+            t.seed !== null && t.seed !== undefined ? `seed ${t.seed}` : null,
+            t.video_id ? t.video_id.slice(-10) : null,
+          ].filter(Boolean);
     const metaHtml = metas.map((m) => `<span class="meta-tag">${esc(m)}</span>`).join('');
-    const mediaN = (t.images?.length || 0) + (t.audios?.length || 0) + (t.videos?.length || 0);
+    const mediaN = kind === 'image' ? 0 : (t.images?.length || 0) + (t.audios?.length || 0) + (t.videos?.length || 0);
 
     let extra = '';
     if (t.status === 'in_progress') {
       extra = `<div class="pbar"><div style="width:${Math.max(2, Number(t.progress) || 0)}%"></div></div>`;
     }
     const playSrc = t.video_local_url || t.metadata_url; // v1.3：本地归档优先（远端链接会过期）
-    if (t.status === 'completed' && playSrc) {
+    if (kind === 'image' && t.status === 'completed' && (t.images || []).length) {
+      // P1：图片任务看板缩略图墙
+      extra = `<div class="img-preview-row">${t.images
+        .map(
+          (im) =>
+            `<a href="${esc(im.local_url || im.remote_url)}" target="_blank" rel="noopener" title="查看/下载原图"><img src="${esc(im.local_url || im.remote_url)}" loading="lazy" alt="生成图片" /></a>`,
+        )
+        .join('')}</div>`;
+    } else if (t.status === 'completed' && playSrc) {
       extra = `
         <div class="video-preview" title="点击查看详情播放">
           <video muted playsinline preload="metadata" data-src="${esc(playSrc)}"></video>
@@ -111,13 +156,15 @@
     return `
       <article class="card status-${t.status}" data-id="${t.id}">
         <div class="card-top">
-          <span class="badge">${esc(MODE_LABEL[t.mode] || t.mode)}</span>
+          <span class="badge">${kind === 'image' ? '🖼️ 图片' : '🎬 ' + esc(MODE_LABEL[t.mode] || t.mode)}</span>
           <span class="badge">${esc(t.size || '-')}</span>
           <span class="card-id">#${t.id}</span>
           ${t.superseded ? '<span class="badge" style="opacity:.65" title="该镜头已有更新成功的任务，此失败记录仅供参考">已作废</span>' : ''}
+          ${t.retry_count ? `<span class="badge" style="opacity:.75" title="该任务已手动重试过 ${t.retry_count} 次">已重试×${t.retry_count}</span>` : ''}
           ${mediaN ? `<span class="badge" title="参考素材数">素材×${mediaN}</span>` : ''}
           <span class="card-time" title="${fmtTime(t.created_at)}">${relTime(t.created_at)}</span>
         </div>
+        <div class="card-src" title="${esc(taskSourceLabel(t))}">📁 ${esc(taskSourceLabel(t))}</div>
         <div class="card-prompt" title="${esc(t.prompt)}">${esc(t.prompt)}</div>
         <div class="card-meta">${metaHtml}</div>
         ${extra}
@@ -134,6 +181,154 @@
           : [t.id, t.status, t.progress, t.video_id, t.error_message],
       ),
     );
+  }
+
+  /* ---------------- P0：时间线列表（默认视图） ---------------- */
+  /** 紧凑任务行：类型徽章 + 状态徽章 + prompt 摘要 + 规格 + 相对时间 + 操作 */
+  function rowHTML(t) {
+    const kind = taskKind(t);
+    const req = t.request_json || {};
+    const metas =
+      kind === 'image'
+        ? [
+            t.size,
+            t.aspect_ratio,
+            `${(t.images || []).length || Number(req.count) || 1} 张`,
+            modelShort(t.model),
+          ].filter(Boolean)
+        : [
+            MODE_LABEL[t.mode] || t.mode,
+            t.seconds ? `${t.seconds}s` : null,
+            t.aspect_ratio,
+            t.size,
+            modelShort(t.model),
+            t.seed !== null && t.seed !== undefined ? `seed ${t.seed}` : null,
+          ].filter(Boolean);
+    const metaHtml = metas.map((m) => `<span class="meta-tag">${esc(m)}</span>`).join('');
+    const mediaN = kind === 'image' ? 0 : (t.images?.length || 0) + (t.audios?.length || 0) + (t.videos?.length || 0);
+    const playSrc = t.video_local_url || t.metadata_url;
+
+    // 状态徽章：生成中带迷你进度条，其余纯文本徽章
+    let statusHtml;
+    if (t.status === 'in_progress') {
+      const pct = Math.max(2, Number(t.progress) || 0);
+      statusHtml = `<span class="chip-mini in_progress t-st">${pct}%</span><div class="t-pbar"><div style="width:${pct}%"></div></div>`;
+    } else {
+      statusHtml = `<span class="chip-mini ${t.status} t-st">${esc(STATUS_LABEL[t.status] || t.status)}</span>`;
+    }
+
+    // 失败行：错误摘要单行截断（完整信息看详情）
+    const errHtml =
+      t.status === 'failed' || t.status === 'submit_error'
+        ? `<div class="t-err" title="${esc(t.error_message || '未知错误')}">⚠ ${esc(t.error_message || '未知错误')}</div>`
+        : '';
+
+    const actions = [];
+    actions.push(`<button class="act" data-act="detail">详情</button>`);
+    if (t.video_id) actions.push(`<button class="act" data-act="poll">查询</button>`);
+    if (t.status === 'completed' && playSrc) {
+      actions.push(`<a class="act green" href="${esc(playSrc)}" target="_blank" rel="noopener">下载</a>`);
+    }
+    if (t.status === 'failed' || t.status === 'submit_error') {
+      actions.push(`<button class="act" data-act="retry">重试</button>`);
+    }
+    actions.push(`<button class="act red" data-act="del">删除</button>`);
+
+    return `
+      <article class="task-row status-${t.status}" data-id="${t.id}">
+        <span class="t-kind" title="${esc(KIND_LABEL[kind])}任务">${KIND_ICON[kind]}</span>
+        <div class="t-status">${statusHtml}</div>
+        <div class="t-main">
+          <div class="t-src" title="${esc(taskSourceLabel(t))}">📁 ${esc(taskSourceLabel(t))}${t.retry_count ? ` · <span class="t-retry" title="该任务已手动重试过 ${t.retry_count} 次">已重试×${t.retry_count}</span>` : ''}</div>
+          <div class="t-prompt" title="${esc(t.prompt)}">${esc(t.prompt)}</div>
+          <div class="t-metas">
+            <span class="card-id">#${t.id}</span>
+            ${t.superseded ? '<span class="meta-tag" title="该镜头已有更新成功的任务，此失败记录仅供参考">已作废</span>' : ''}
+            ${mediaN ? `<span class="meta-tag" title="参考素材数">素材×${mediaN}</span>` : ''}
+            ${metaHtml}
+          </div>
+          ${errHtml}
+        </div>
+        <div class="t-side">
+          <span class="t-time" title="${fmtTime(t.created_at)}">${relTime(t.created_at)}</span>
+          <div class="t-actions">${actions.join('')}</div>
+        </div>
+      </article>`;
+  }
+
+  function updateEmptyTip() {
+    const emptyEl = $('#emptyTip');
+    emptyEl.hidden = state.tasks.length > 0;
+    if (!emptyEl.hidden) {
+      emptyEl.querySelector('h3').textContent = state.search
+        ? `没有匹配「${state.search}」的任务`
+        : state.statusFilter
+          ? `暂无${STATUS_LABEL[state.statusFilter] || '该状态'}任务`
+          : '还没有任务';
+    }
+  }
+
+  function renderTaskList() {
+    const sig = columnSig('list', state.tasks);
+    const rowsEl = $('#taskRows');
+    if (state.lastListSig !== sig) {
+      state.lastListSig = sig;
+      rowsEl.innerHTML = state.tasks.length
+        ? state.tasks.map(rowHTML).join('')
+        : '<div class="muted" style="text-align:center;padding:26px 0;font-size:12px">本页暂无任务</div>';
+    }
+    updateEmptyTip();
+  }
+
+  /** 分页条（含每页条数选择）；仅签名的页码信息变化时重建，按钮状态实时更新 */
+  function renderPagination() {
+    const el = $('#pagination');
+    const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    const sig = JSON.stringify([state.page, state.total, state.pageSize]);
+    if (state.lastPageSig !== sig) {
+      state.lastPageSig = sig;
+      el.innerHTML = `
+        <button class="pg-btn" data-pg="prev">← 上一页</button>
+        <span class="pg-info">第 <b>${state.page}</b> / ${totalPages} 页 · 共 ${state.total} 条</span>
+        <button class="pg-btn" data-pg="next">下一页 →</button>
+        <select class="pg-size" title="每页条数">
+          <option value="10" ${state.pageSize === 10 ? 'selected' : ''}>每页 10 条</option>
+          <option value="20" ${state.pageSize === 20 ? 'selected' : ''}>每页 20 条</option>
+          <option value="50" ${state.pageSize === 50 ? 'selected' : ''}>每页 50 条</option>
+        </select>`;
+      // 绑定事件（重建时整体替换，闭包安全）
+      el.querySelector('[data-pg=prev]').onclick = () => changePage(state.page - 1);
+      el.querySelector('[data-pg=next]').onclick = () => changePage(state.page + 1);
+      el.querySelector('.pg-size').onchange = (e) => {
+        state.pageSize = Number(e.target.value) || 20;
+        state.page = 1;
+        loadTasks();
+      };
+    }
+    // 按钮可用态不参与签名（避免整条重建吃掉点击）
+    el.querySelector('[data-pg=prev]').disabled = state.page <= 1;
+    el.querySelector('[data-pg=next]').disabled = state.page >= totalPages;
+  }
+
+  function changePage(p) {
+    const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
+    const np = Math.min(Math.max(1, p), totalPages);
+    if (np === state.page) return;
+    state.page = np;
+    loadTasks();
+    // 翻页后回到列表顶部
+    $('#taskListView').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  /** 列表 ⇄ 看板 视图切换（列表为默认；看板保留富媒体卡片形态） */
+  function switchTaskView(mode) {
+    state.viewMode = mode === 'board' ? 'board' : 'list';
+    $('#taskListView').hidden = state.viewMode !== 'list';
+    $('#board').hidden = state.viewMode !== 'board';
+    $$('#viewToggle .vt-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === state.viewMode));
+    // 看板需要重渲染（可能刚从列表切回且数据已变化）
+    if (state.viewMode === 'board') renderBoard();
+    else renderTaskList();
   }
 
   function renderBoard() {
@@ -166,23 +361,15 @@
         : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
     }
     $('#board').classList.toggle('focus', Boolean(filter));
-    // 空态文案：区分「全局无任务」与「搜索/筛选无结果」
-    const emptyEl = $('#emptyTip');
-    emptyEl.hidden = state.tasks.length > 0;
-    if (!emptyEl.hidden) {
-      emptyEl.querySelector('h3').textContent = state.search
-        ? `没有匹配「${state.search}」的任务`
-        : state.statusFilter
-          ? `暂无${STATUS_LABEL[state.statusFilter] || '该状态'}任务`
-          : '还没有任务';
-    }
+    updateEmptyTip();
     observeVideos();
   }
 
   /* ---------------- 视频懒加载（IntersectionObserver） ---------------- */
   let videoObserver = null;
   function observeVideos() {
-    const videos = document.querySelectorAll('#board video[data-src]');
+    // P0：看板与列表两个视图容器内的视频统一懒加载
+    const videos = document.querySelectorAll('#board video[data-src], #taskListView video[data-src]');
     if (!videos.length) return;
     if ('IntersectionObserver' in window) {
       if (!videoObserver) {
@@ -242,13 +429,27 @@
 
   async function loadTasks() {
     try {
-      const params = new URLSearchParams({ limit: '200' });
+      // P0 分页：limit=每页条数，offset=(页码-1)*每页条数；轮询时保持页码与筛选不变
+      const params = new URLSearchParams({
+        limit: String(state.pageSize),
+        offset: String((state.page - 1) * state.pageSize),
+      });
       if (state.statusFilter) params.set('status', state.statusFilter);
       if (state.search) params.set('q', state.search);
       const data = await api(`/api/tasks?${params}`);
       state.tasks = data.items;
+      state.total = Number(data.total) || 0;
+      // 页码越界回退：筛选清理/批量删除导致当前页超出范围时，回到最后一页（只回退一次，防循环）
+      if (!state.tasks.length && state.total > 0 && state.page > 1) {
+        state.page = Math.ceil(state.total / state.pageSize);
+        return loadTasks();
+      }
       renderStats(data.stats);
-      renderBoard();
+      if (state.viewMode === 'board') renderBoard();
+      else {
+        renderTaskList();
+        renderPagination();
+      }
       if (loadFailCount > 0) {
         loadFailCount = 0;
         renderConn(true);
@@ -265,7 +466,7 @@
   /* ---------------- 元数据（模型/画幅/时长单一事实来源） ---------------- */
   async function loadMeta() {
     META = await api('/api/meta');
-    // 新建任务表单下拉
+    // 新建任务表单下拉（视频）
     $('#fModel').innerHTML = selectableModels()
       .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
       .join('');
@@ -274,6 +475,14 @@
       .join('');
     $('#fAspect').innerHTML = META.aspect_ratios
       .map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`)
+      .join('');
+    // P1：新建任务表单下拉（图片）
+    const img = META.image || {};
+    $('#fiSize').innerHTML = (img.sizes?.length ? img.sizes : ['1K'])
+      .map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`)
+      .join('');
+    $('#fiRatio').innerHTML = (img.ratios?.length ? img.ratios : ['1:1'])
+      .map((r) => `<option value="${esc(r)}" ${r === '1:1' ? 'selected' : ''}>${esc(r)}</option>`)
       .join('');
     // 设置弹窗默认模型下拉（同样只列未下架模型）
     $('#setModel').innerHTML = selectableModels()
@@ -329,19 +538,20 @@
     }
   }
 
-  function bindCardEvents() {
-    $('#board').addEventListener('click', async (ev) => {
+  /** 任务行/卡片交互（列表与看板共用同一套 data-act 协议） */
+  function bindTaskEvents(container) {
+    container.addEventListener('click', async (ev) => {
       const vp = ev.target.closest('.video-preview');
       const btn = ev.target.closest('[data-act]');
       if (!btn) {
         // 点击视频预览（或卡片其余区域仅当点击预览）→ 打开详情播放
         if (vp) {
-          const card = vp.closest('.card');
+          const card = vp.closest('.card, .task-row');
           if (card) openDetail(Number(card.dataset.id));
         }
         return;
       }
-      const card = ev.target.closest('.card');
+      const card = ev.target.closest('.card, .task-row');
       if (!card) return;
       const id = Number(card.dataset.id);
       const actName = btn.dataset.act;
@@ -349,10 +559,10 @@
       if (actName === 'poll')
         return act(id, '查询', async () => (await api(`/api/tasks/${id}/poll`, { method: 'POST' })).status);
       if (actName === 'retry') {
-        if (confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) {
+        if (confirm(`重新提交任务 #${id}？该任务将重新排队（队列中 → 生成中 → 完成/失败），任务编号不变。`)) {
           await act(id, '重试', async () => {
             const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
-            return `新任务 #${r.task.id}`;
+            return `任务 #${r.task.id} 已重新排队（第 ${r.task.retry_count} 次重试）`;
           });
         }
         return;
@@ -408,22 +618,36 @@
     } else {
       state.detailSig = sig;
 
+      const kind = taskKind(t);
       const playSrc = t.video_local_url || t.metadata_url; // v1.3：本地归档优先
       let play = '';
-      if (t.status === 'completed' && playSrc) {
+      if (kind === 'image' && t.status === 'completed' && (t.images || []).length) {
+        // P1：图片任务产物墙（点击新窗口查看原图，右键/详情页可下载）
+        play = `<div class="detail-image-wall">${t.images
+          .map(
+            (im) => `
+          <a href="${esc(im.local_url || im.remote_url)}" target="_blank" rel="noopener" title="查看/下载原图">
+            <img src="${esc(im.local_url || im.remote_url)}" loading="lazy" alt="生成图片" />
+          </a>`,
+          )
+          .join('')}</div>`;
+      } else if (t.status === 'completed' && playSrc) {
         play = `<div class="detail-body-play"><video controls preload="metadata" src="${esc(playSrc)}"></video></div>`;
       }
 
       const req = t.request_json || {};
       const mediaRows = [];
-      ['images', 'audios', 'videos'].forEach((k) => {
-        const arr = t[k] || [];
-        arr.forEach((v, i) => {
-          const label = { images: 'Picture', audios: 'Audio', videos: 'Video' }[k];
-          const url = typeof v === 'string' ? v : v?.url;
-          mediaRows.push(dlRow(`<${label} ${i + 1}>`, url, 'url'));
+      if (kind !== 'image') {
+        // 视频任务的参考素材；图片任务的 images 列是生成结果（见产物墙），不走这里
+        ['images', 'audios', 'videos'].forEach((k) => {
+          const arr = t[k] || [];
+          arr.forEach((v, i) => {
+            const label = { images: 'Picture', audios: 'Audio', videos: 'Video' }[k];
+            const url = typeof v === 'string' ? v : v?.url;
+            mediaRows.push(dlRow(`<${label} ${i + 1}>`, url, 'url'));
+          });
         });
-      });
+      }
 
       body.innerHTML = `
         <div class="detail-section">
@@ -434,31 +658,34 @@
           ${play}
           <div class="detail-dl">
             ${dlRow('ID', '#' + t.id)}
+            ${dlRow('类型', kind === 'image' ? '图片任务' : '视频任务')}
+            ${dlRow('来源', taskSourceLabel(t))}
             ${dlRow('状态', STATUS_LABEL[t.status] || t.status)}
-            ${dlRow('模式', (MODE_LABEL[t.mode] || t.mode) + '（' + t.mode + '）')}
+            ${t.retry_count ? dlRow('重试次数', `已重试 ${t.retry_count} 次`) : ''}
+            ${kind === 'image' ? '' : dlRow('模式', (MODE_LABEL[t.mode] || t.mode) + '（' + t.mode + '）')}
             ${dlRow('模型', t.model)}
             ${dlRow('提示词', t.prompt)}
-            ${dlRow('时长', t.seconds + 's')}
+            ${kind === 'image' ? dlRow('张数', `${(t.images || []).length || Number(req.count) || 1} 张`) : ''}
+            ${kind === 'image' ? '' : dlRow('时长', t.seconds + 's')}
             ${dlRow('画幅', t.aspect_ratio)}
             ${dlRow('分辨率', t.size)}
-            ${t.num_frames !== null ? dlRow('帧数 num_frames', t.num_frames) : ''}
-            ${t.frame_rate !== null ? dlRow('帧率 frame_rate', t.frame_rate) : ''}
+            ${kind === 'image' ? '' : dlRow('种子 seed', t.seed === null ? '' : t.seed)}
+            ${kind === 'image' ? '' : dlRow('num_frames / frame_rate', (t.num_frames ?? '-') + ' / ' + (t.frame_rate ?? '-'))}
             ${t.image ? dlRow('图生图片 image', t.image, 'url') : ''}
             ${t.negative_prompt ? dlRow('反向提示词 negative_prompt', t.negative_prompt) : ''}
-            ${dlRow('seed', t.seed === null ? '' : t.seed)}
-            ${dlRow('task_id', t.task_id)}
-            ${dlRow('video_id', t.video_id)}
             ${dlRow('创建时间', fmtTime(t.created_at) + '（' + relTime(t.created_at) + '）')}
             ${dlRow('完成时间', fmtTime(t.completed_at))}
-            ${dlRow('轮询次数', t.poll_count + ' 次' + (t.last_polled_at ? `（最后 ${relTime(t.last_polled_at)}）` : ''))}
+            ${kind === 'image' ? dlRow('项目', t.project_id ? `#${t.project_id}` : '独立创作') : ''}
+            ${kind === 'image' ? '' : dlRow('task_id / video_id', (t.task_id || '-') + ' / ' + (t.video_id || '-'))}
+            ${kind === 'image' ? '' : dlRow('轮询次数', t.poll_count + ' 次' + (t.last_polled_at ? `（最后 ${relTime(t.last_polled_at)}）` : ''))}
             ${t.video_local_url ? dlRow('本地归档', t.video_local_url, 'url') : ''}
-            ${dlRow('视频地址', t.metadata_url, 'url')}
+            ${dlRow(kind === 'image' ? '图片地址' : '视频地址', t.metadata_url, 'url')}
             ${t.error_message ? dlRow('错误信息', t.error_message) : ''}
             ${mediaRows.join('')}
           </div>
         </div>
         <div class="detail-section"><h4>提交请求（request_json）</h4>${jsonBox(req)}</div>
-        <div class="detail-section"><h4>最近一次查询响应</h4>${jsonBox(t.last_poll_response)}</div>
+        ${kind === 'image' ? '' : `<div class="detail-section"><h4>最近一次查询响应</h4>${jsonBox(t.last_poll_response)}</div>`}
         ${t.submit_response ? `<div class="detail-section"><h4>创建任务响应</h4>${jsonBox(t.submit_response)}</div>` : ''}
       `;
       body.dataset.rendered = '1';
@@ -468,10 +695,12 @@
     const acts = [];
     if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
     if (t.status === 'failed' || t.status === 'submit_error')
-      acts.push(`<button class="btn primary" id="dRetry">重试（新建任务）</button>`);
+      acts.push(`<button class="btn primary" id="dRetry">重试（重新排队）</button>`);
     if (t.status === 'completed' && (t.video_local_url || t.metadata_url)) {
       const dl = t.video_local_url || t.metadata_url;
-      acts.push(`<a class="btn primary" href="${esc(dl)}" target="_blank" rel="noopener">下载视频</a>`);
+      acts.push(
+        `<a class="btn primary" href="${esc(dl)}" target="_blank" rel="noopener">${taskKind(t) === 'image' ? '下载原图' : '下载视频'}</a>`,
+      );
     }
     acts.push(`<button class="btn ghost danger" id="dDel">删除任务</button>`);
     const actsSig = acts.join('|');
@@ -497,11 +726,11 @@
         }
       });
       bind('dRetry', async () => {
-        if (!confirm(`确认以原参数重新提交任务 #${id}？将创建一条新任务记录。`)) return;
+        if (!confirm(`重新提交任务 #${id}？该任务将重新排队（队列中 → 生成中 → 完成/失败），任务编号不变。`)) return;
         try {
           const r = await api(`/api/tasks/${id}/retry`, { method: 'POST' });
-          toast(`已创建新任务 #${r.task.id}`, 'ok');
-          closeDetail();
+          toast(`任务 #${r.task.id} 已重新排队（第 ${r.task.retry_count} 次重试）`, 'ok');
+          await refreshDetail();
           await loadTasks();
         } catch (e) {
           toast(e.message, 'err');
@@ -530,6 +759,29 @@
   function openNewTask(initial) {
     $('#newTaskModal').hidden = false;
     if (initial) applyTemplate(initial);
+  }
+
+  /** P1：新建任务类型切换（视频 ⇄ 图片），两套表单互斥 */
+  function switchTaskType(ptype) {
+    state.taskType = ptype === 'image' ? 'image' : 'video';
+    $$('#taskTypeTabs .type-tab').forEach((t) => t.classList.toggle('active', t.dataset.ptype === state.taskType));
+    $('#v25Form').hidden = state.taskType !== 'video';
+    $('#imageForm').hidden = state.taskType !== 'image';
+  }
+
+  /** P1：图片任务请求体 */
+  function collectImageBody() {
+    return {
+      prompt: $('#fiPrompt').value.trim(),
+      size: $('#fiSize').value || '1K',
+      ratio: $('#fiRatio').value || '1:1',
+      count: Number($('#fiCount').value) || 1,
+    };
+  }
+
+  function resetImageForm() {
+    $('#fiPrompt').value = '';
+    $('#fiTemplate').value = '';
   }
 
   function switchMode(mode) {
@@ -583,15 +835,24 @@
     btn.disabled = true;
     btn.textContent = '提交中…';
     try {
-      const body = collectBody();
-      const t = await api('/api/tasks', { method: 'POST', body });
-      toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
+      // P1：按当前表单类型分流（视频 → /api/tasks；图片 → /api/images/tasks）
+      let t;
+      if (state.taskType === 'image') {
+        if (!$('#fiPrompt').value.trim()) throw new Error('请填写图片描述 prompt');
+        t = await api('/api/images/tasks', { method: 'POST', body: collectImageBody() });
+        toast(`图片任务 #${t.id} 已入队，生成完成后在列表中查看`, 'ok');
+      } else {
+        const body = collectBody();
+        t = await api('/api/tasks', { method: 'POST', body });
+        toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
+      }
       $('#newTaskModal').hidden = true;
-      resetNewTaskForm();
+      if (state.taskType === 'image') resetImageForm();
+      else resetNewTaskForm();
       await loadTasks();
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
-      await loadTasks(); // 失败也刷新看板，让 submit_error 任务立即显示在“失败”列
+      await loadTasks(); // 失败也刷新列表，让 submit_error 任务立即显示
     } finally {
       btn.disabled = false;
       btn.textContent = '提交任务';
@@ -675,6 +936,15 @@
     },
   };
 
+  /* P1：图片任务示例模板 */
+  const IMAGE_TEMPLATES = {
+    'img-cat': '一只橘色虎斑猫趴在洒满阳光的窗台上打盹，窗外是虚化的城市街景，温暖逆光，浅景深特写，胶片质感，高细节',
+    'img-landscape': '晨雾笼罩的雪山与山脚湖泊，水面倒映粉色朝霞，前景几棵墨绿松树，超广角风光摄影，国家地理风格',
+    'img-portrait':
+      '古风少女半身像，青色汉服银色步摇，发丝随风轻扬，柔和侧逆光，浅景深，工笔画与写实结合风格，细腻肌肤质感',
+    'img-product': '极简风格产品静物：磨砂玻璃香水瓶置于浅灰石板上，一束柔和顶光，大面积留白，商业摄影质感',
+  };
+
   function applyTemplate(key) {
     const t = TEMPLATES[key];
     if (!t) return;
@@ -695,6 +965,57 @@
       .join('');
     const grpVideos = $('#grpVideos');
     if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
+  }
+
+  /* ---------------- P1：AI 优化提示词（视频/图片通用，系统提示词可覆盖） ---------------- */
+  const VIDEO_OPTIMIZE_SYSTEM =
+    '你是视频生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 视频生成的专业提示词，150~220 字，六段式按序书写：主体与场景（外观与空间具体化）→ 动作与变化（2~3 个有先后顺序的连续动作）→ 镜头语言（景别 + 运镜 + 转场）→ 光线与色调（时段、光源方向、色温）→ 视觉风格与画质 → 声音与节奏。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。';
+
+  async function runAiOptimize(opts = {}) {
+    const promptEl = $(opts.promptEl || '#fPrompt');
+    const idea = promptEl.value.trim();
+    if (!idea) {
+      toast('请先填写原始描述', 'err');
+      return;
+    }
+    // 触发按钮（默认视频优化按钮；图片按钮由调用处传入）
+    const btn = opts.btn || $('#btnAiOptimize');
+    const btnLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '优化中…';
+    try {
+      const r = await api('/api/llm/chat', {
+        method: 'POST',
+        body: {
+          system: opts.system || VIDEO_OPTIMIZE_SYSTEM,
+          messages: [{ role: 'user', content: idea }],
+          temperature: 0.8,
+        },
+      });
+      const adopt = () => {
+        promptEl.value = r.content;
+        toast('已采用优化后的描述', 'ok');
+      };
+      if (window.__ui?.compare) {
+        // 优化结果先对比，由用户决定采用；是否用 AI 优化始终由用户发起
+        window.__ui.compare({
+          title: opts.title || '提示词优化对比',
+          oldLabel: '我的原始描述',
+          newLabel: 'AI 优化后',
+          oldText: idea,
+          newText: r.content,
+          onAdopt: adopt,
+          onKeep: () => toast('已保留原始描述', 'ok'),
+        });
+      } else {
+        adopt();
+      }
+    } catch (e) {
+      toast('优化失败：' + e.message, 'err');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = btnLabel;
+    }
   }
 
   /* ---------------- 设置 ---------------- */
@@ -798,6 +1119,16 @@
       const tab = e.target.closest('.tab');
       if (tab) switchMode(tab.dataset.mode);
     });
+    // P1：任务类型切换（视频 ⇄ 图片）
+    $('#taskTypeTabs').addEventListener('click', (e) => {
+      const tab = e.target.closest('.type-tab');
+      if (tab) switchTaskType(tab.dataset.ptype);
+    });
+    // P1：图片模板应用
+    $('#fiTemplate').addEventListener('change', (e) => {
+      const p = IMAGE_TEMPLATES[e.target.value];
+      if (p) $('#fiPrompt').value = p;
+    });
     // 参考素材行
     $('#grpReference').addEventListener('click', (e) => {
       const addBtn = e.target.closest('[data-add]');
@@ -823,51 +1154,17 @@
     // 模型切换
     $('#fModel').addEventListener('change', onModelChange);
 
-    // ✨ AI 优化提示词（调文本模型）
-    $('#btnAiOptimize').addEventListener('click', async () => {
-      const idea = $('#fPrompt').value.trim();
-      if (!idea) {
-        toast('请先填写原始描述', 'err');
-        return;
-      }
-      const btn = $('#btnAiOptimize');
-      btn.disabled = true;
-      btn.textContent = '优化中…';
-      try {
-        const r = await api('/api/llm/chat', {
-          method: 'POST',
-          body: {
-            system:
-              '你是视频生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 视频生成的专业提示词，150~220 字，六段式按序书写：主体与场景（外观与空间具体化）→ 动作与变化（2~3 个有先后顺序的连续动作）→ 镜头语言（景别 + 运镜 + 转场）→ 光线与色调（时段、光源方向、色温）→ 视觉风格与画质 → 声音与节奏。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。',
-            messages: [{ role: 'user', content: idea }],
-            temperature: 0.8,
-          },
-        });
-        const adopt = () => {
-          $('#fPrompt').value = r.content;
-          toast('已采用优化后的提示词', 'ok');
-        };
-        if (window.__ui?.compare) {
-          // 优化结果先对比，由用户决定采用；是否用 AI 优化始终由用户发起
-          window.__ui.compare({
-            title: '提示词优化对比',
-            oldLabel: '我的原始描述',
-            newLabel: 'AI 优化后',
-            oldText: idea,
-            newText: r.content,
-            onAdopt: adopt,
-            onKeep: () => toast('已保留原始描述', 'ok'),
-          });
-        } else {
-          adopt();
-        }
-      } catch (e) {
-        toast('优化失败：' + e.message, 'err');
-      } finally {
-        btn.disabled = false;
-        btn.textContent = '✨ AI 优化提示词';
-      }
-    });
+    // ✨ AI 优化提示词（调文本模型；视频与图片两套系统提示词）
+    $('#btnAiOptimize').addEventListener('click', () => runAiOptimize({ btn: $('#btnAiOptimize') }));
+    $('#btnAiOptimizeImage').addEventListener('click', () =>
+      runAiOptimize({
+        btn: $('#btnAiOptimizeImage'),
+        promptEl: '#fiPrompt',
+        system:
+          '你是图片生成提示词优化器。把用户零散的想法改写为一条可直接用于 AI 绘图的提示词，60~120 字，五段式按序书写：主体与外观（具体到材质、颜色、形态）→ 场景与光线（时段、光源方向、氛围）→ 构图与视角（景别、机位、透视）→ 艺术风格 → 画质细节。规则：把抽象词替换为可视细节；不得增加用户未提及的新主体；保留用户原意与全部关键元素；只输出优化后的提示词本身，不要任何解释、前缀或引号。',
+        title: '图片描述优化对比',
+      }),
+    );
 
     // 提交与按钮
     $('#btnSubmitTask').addEventListener('click', submitTask);
@@ -905,12 +1202,13 @@
       }
     });
 
-    // 搜索 + 状态过滤
+    // 搜索 + 状态过滤（变更后回到第 1 页）
     let searchTimer = null;
     $('#searchInput').addEventListener('input', (e) => {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => {
         state.search = e.target.value.trim();
+        state.page = 1;
         loadTasks();
       }, 350);
     });
@@ -920,10 +1218,17 @@
       $$('#statusChips .chip').forEach((c) => c.classList.remove('active'));
       chip.classList.add('active');
       state.statusFilter = chip.dataset.status;
+      state.page = 1;
       loadTasks();
     });
+    // P0：列表 ⇄ 看板 视图切换
+    $('#viewToggle').addEventListener('click', (e) => {
+      const btn = e.target.closest('.vt-btn');
+      if (btn) switchTaskView(btn.dataset.view);
+    });
 
-    bindCardEvents();
+    bindTaskEvents($('#board'));
+    bindTaskEvents($('#taskRows'));
     // 悬停视频预览 → 静音自动播放；移出 → 暂停并回到开头
     $('#board').addEventListener('mouseover', (e) => {
       const v = e.target.closest('#board .video-preview video');
@@ -959,10 +1264,13 @@
       $('#navWorkspace').classList.toggle('active', ws);
       $('#navTasks').classList.toggle('active', !ws);
       $('#workspaceView').hidden = !ws;
-      ['.stats', '.toolbar', '#board', '#emptyTip', '#btnNewTask'].forEach((sel) => {
+      ['.stats', '.toolbar', '#emptyTip', '#btnNewTask'].forEach((sel) => {
         const el = $(sel);
         if (el) el.hidden = ws;
       });
+      // P0：任务中心内部视图（列表/看板）恢复用户所选模式，避免两个容器同时显示
+      $('#taskListView').hidden = ws || state.viewMode !== 'list';
+      $('#board').hidden = ws || state.viewMode !== 'board';
       if (ws) window.__ws?.refresh?.();
     }
     $('#navWorkspace').addEventListener('click', () => switchView('workspace'));

@@ -23,10 +23,303 @@
   let scriptBusy = false;
   let storyBusy = false; // M2：分镜生成中
   let currentShotCount = 0; // M2：当前项目镜头数（供重生成确认判断）
+  let projectsShotsCache = null; // P3：当前项目 shots 缓存（审查报告采纳时按 seq 找镜头 id）
   let batchBusy = false; // M2：批量提交进行中
   let batchStop = false; // M2：批量提交停止标记
   let batchHint = ''; // M2：批量提交进度提示
   let currentStep = 1; // 当前视区所在步骤（步骤条高亮跟随）
+
+  /* ---------------- P0：新手引导 + 步骤导航 ---------------- */
+  /** 各步骤的新手说明（标题一句话 + 展开正文）；①创意由顶部引导条覆盖 */
+  const STEP_GUIDES = {
+    2: {
+      tip: '把创意变成「导演剧本」',
+      body: 'AI 会把你的创意拆成四份文案（梗概 / 角色外观 / 场景 / 视频提示词）和一份多镜头分镜脚本——每个镜头都有独立的画面描述与旁白。之后所有步骤都基于这份剧本展开，写得越具体，生成越可控。不满意可随时重新生成或手动编辑，历史版本全部保留。',
+    },
+    3: {
+      tip: '给主角拍一张「定妆照」',
+      body: '先生成主角的立绘候选，点击其中一张定稿。之后每个镜头的视频都会自动参考这张图，保证主角在所有镜头里长相一致（自动注入「以 Picture 1 为参考，保持外观一致」）。还没定稿也能继续，但镜头提交会受限——强烈推荐先完成这一步。',
+    },
+    4: {
+      tip: '逐镜头出片',
+      body: '每个镜头单独生成一段视频：可以单镜提交，也可以「批量提交未完成镜头」（按间隔自动节流，防止触发上游限流；关掉页面也会由后台继续）。完成后镜头下方出现候选区，可「重拍」获取更多版本，点「用这条」为该镜头定稿。',
+    },
+    5: {
+      tip: '给片子配上人声旁白（可选）',
+      body: '把文稿交给 TTS 合成人声：用「从分镜填充旁白」快速带入每镜文案，生成后在配音墙试听并「绑定到镜头」，渲染时旁白会与画面自动对齐。想换声音？到「声音广场」试听喜欢的音色加入备选池。',
+    },
+    6: {
+      tip: '一键合成完整短片',
+      body: '把已完成镜头 + 旁白 + BGM 用本地 ffmpeg 合成完整短片：自动叠化转场、字幕烧录、旁白闪避、全片响度标准化（-16 LUFS）。至少需要 2 个已完成镜头。渲染在后台进行，完成后可直接播放、下载，并附 3 张封面候选。',
+    },
+  };
+  const STEP_TITLES = { 2: '文案与提示词', 3: '角色设定图', 4: '视频生成', 5: '配音', 6: '成片渲染' };
+
+  /* ---------------- P2：成片风格预设（一键套用整套渲染配方） ---------------- */
+  const FILM_PRESETS = [
+    {
+      id: 'healing',
+      emoji: '🌿',
+      label: '治愈慢综',
+      desc: '长叠化 + 大字幕 + 音乐温柔铺底，适合风景 / 情感 / 治愈叙事',
+      params: {
+        transition_ms: 900,
+        transition_type: 'dissolve',
+        subtitle_style: 'white-outline',
+        subtitle_position: 'bottom',
+        subtitle_fontsize: 48,
+        bgm_volume: 0.4,
+        narration_volume: 1.4,
+        narration_offset_ms: 500,
+        bgm_duck: true,
+      },
+    },
+    {
+      id: 'energy',
+      emoji: '🔥',
+      label: '热血快剪',
+      desc: '短硬转场 + 金色字幕 + 高能量配乐，适合燃向混剪 / 运动集锦',
+      params: {
+        transition_ms: 200,
+        transition_type: 'wipeleft',
+        subtitle_style: 'yellow-box',
+        subtitle_position: 'bottom',
+        subtitle_fontsize: 36,
+        bgm_volume: 0.55,
+        narration_volume: 1.5,
+        narration_offset_ms: 300,
+        bgm_duck: true,
+      },
+    },
+    {
+      id: 'documentary',
+      emoji: '🗺️',
+      label: '纪录解说',
+      desc: '溶解转场 + 底部字幕条 + 低音量配乐，适合人文 / 科普解说',
+      params: {
+        transition_ms: 600,
+        transition_type: 'fade',
+        subtitle_style: 'bottom-bar',
+        subtitle_position: 'bottom',
+        subtitle_fontsize: 40,
+        bgm_volume: 0.2,
+        narration_volume: 1.5,
+        narration_offset_ms: 500,
+        bgm_duck: true,
+      },
+    },
+    {
+      id: 'lecture',
+      emoji: '🎤',
+      label: '知识口播',
+      desc: '无长转场 + 居中大字幕 + 人声为主，适合口播 / 知识讲解',
+      params: {
+        transition_ms: 200,
+        transition_type: 'fade',
+        subtitle_style: 'white-outline',
+        subtitle_position: 'center',
+        subtitle_fontsize: 52,
+        bgm_volume: 0.12,
+        narration_volume: 1.6,
+        narration_offset_ms: 400,
+        bgm_duck: true,
+      },
+    },
+    {
+      id: 'fairy',
+      emoji: '🧸',
+      label: '童话绘本',
+      desc: '柔和滑动转场 + 大字幕 + 轻音乐，适合故事 / 儿童内容',
+      params: {
+        transition_ms: 800,
+        transition_type: 'slideup',
+        subtitle_style: 'white-outline',
+        subtitle_position: 'bottom',
+        subtitle_fontsize: 44,
+        bgm_volume: 0.35,
+        narration_volume: 1.3,
+        narration_offset_ms: 600,
+        bgm_duck: true,
+      },
+    },
+  ];
+  const TRANSITION_LABELS = {
+    fade: '淡入淡出',
+    dissolve: '溶解',
+    wipeleft: '左擦除',
+    wiperight: '右擦除',
+    slideup: '上滑',
+    slidedown: '下滑',
+    circleopen: '圆形展开',
+  };
+  const SUBSTYLE_LABELS = { 'white-outline': '白字描边', 'yellow-box': '金字底框', 'bottom-bar': '底部字幕条' };
+  const SUBPOS_LABELS = { bottom: '画面底部', center: '画面居中' };
+  let wsFilmPresetId = ''; // 当前选中预设（手动改参数后清空 = 自定义配方）
+
+  /* ---------------- P3：全自动成片进度时间线 ---------------- */
+  const AUTO_STAGES = [
+    ['script', '文案'],
+    ['storyboard', '分镜'],
+    ['review', 'AI 自审'],
+    ['character', '角色图'],
+    ['videos', '视频生成'],
+    ['tts', '配音'],
+    ['render', '渲染成片'],
+  ];
+  const AUTO_STAGE_ALIAS = { wait_videos: 'videos', wait_render: 'render', done: '__done__' };
+  const AUTO_STAGE_LABEL = {
+    script: '生成文案',
+    storyboard: '拆分分镜',
+    review: 'AI 自审分镜',
+    character: '生成角色图',
+    videos: '逐镜生成视频',
+    wait_videos: '等待视频完成',
+    tts: '逐镜配音',
+    render: '渲染成片',
+    wait_render: '等待渲染完成',
+    done: '完成',
+    error: '人工介入',
+    stopped: '已停止',
+  };
+  /** 自动成片时间线：按阶段推导 done/active/pending，展示最近一条历史 */
+  function autoTimelineHTML(st) {
+    if (!st) return '';
+    const key = AUTO_STAGE_ALIAS[st.stage] || st.stage;
+    const curIdx = AUTO_STAGES.findIndex(([k]) => k === key);
+    const isDone = st.stage === 'done';
+    const isError = st.stage === 'error';
+    const isStopped = st.stage === 'stopped';
+    const steps = AUTO_STAGES.map(([, label], i) => {
+      let cls = 'pending';
+      if (isDone || (curIdx >= 0 && i < curIdx)) cls = 'done';
+      else if (i === curIdx) cls = isError ? 'failed' : isStopped ? 'stopped' : st.running ? 'active' : 'done';
+      const icon =
+        cls === 'done' ? '✓' : cls === 'failed' ? '✗' : cls === 'stopped' ? '⏸' : cls === 'active' ? '' : i + 1;
+      return `<span class="at-step ${cls}">${cls === 'active' ? '<span class="spinner"></span>' : `<b>${icon}</b>`}${esc(label)}</span>`;
+    }).join('<span class="at-arrow">→</span>');
+    const last = (st.history || []).at(-1);
+    const head = isError
+      ? `🚨 全自动成片中断 · 需人工介入`
+      : isDone
+        ? '🎉 全自动成片完成'
+        : isStopped
+          ? '⏸ 全自动成片已停止（可重新启动）'
+          : `🚀 全自动成片进行中 · ${esc(AUTO_STAGE_LABEL[st.stage] || st.stage)}`;
+    return `
+      <div class="auto-timeline ${isError ? 'at-error' : ''} ${isDone ? 'at-done' : ''}" id="wsAutoTimeline" data-project="${st.projectId || ''}">
+        <div class="at-head">
+          <span class="at-title">${head}</span>
+          ${st.running ? `<button class="btn ghost sm" id="wsAutoStop">停止</button>` : ''}
+          ${isError || isStopped ? `<button class="btn primary sm" id="wsAutoRestart">重新自动成片</button>` : ''}
+          <span class="spacer" style="flex:1"></span>
+          ${st.error ? `<span class="at-err" title="${esc(st.error)}">⚠ ${esc(String(st.error).slice(0, 60))}${st.error.length > 60 ? '…' : ''}</span>` : ''}
+        </div>
+        <div class="at-steps">${steps}</div>
+        ${last ? `<div class="at-last">最近：${esc(last.detail || AUTO_STAGE_LABEL[last.stage] || last.stage)} · ${relTimeAuto(last.ts)}</div>` : ''}
+      </div>`;
+  }
+  function relTimeAuto(ts) {
+    if (!ts) return '';
+    const s = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+    if (s < 60) return `${s}秒前`;
+    if (s < 3600) return `${Math.floor(s / 60)}分钟前`;
+    return `${Math.floor(s / 3600)}小时前`;
+  }
+
+  /** 自动成片状态轮询：局部更新时间线，落定后整页刷新一次展示产物 */
+  let autoPollTimer = null;
+  let autoPollSig = '';
+  function startAutoPoll(projectId) {
+    clearInterval(autoPollTimer);
+    autoPollSig = '';
+    autoPollTimer = setInterval(async () => {
+      if (currentProjectId !== projectId || $('#workspaceView')?.hidden) {
+        clearInterval(autoPollTimer);
+        autoPollTimer = null;
+        return;
+      }
+      let st;
+      try {
+        const r = await api(`/api/projects/${projectId}/auto`);
+        st = r.auto_state;
+      } catch {
+        return;
+      }
+      if (!st) {
+        clearInterval(autoPollTimer);
+        autoPollTimer = null;
+        return;
+      }
+      const sig = JSON.stringify([st.stage, st.running, st.error, (st.history || []).length]);
+      const box = $('#wsAutoTimeline');
+      if (sig !== autoPollSig || !box) {
+        autoPollSig = sig;
+        // 局部替换时间线（不整页重绘，不打断用户查看）
+        const holder = $('#wsAutoHolder');
+        if (holder) {
+          holder.hidden = false;
+          holder.innerHTML = autoTimelineHTML(st);
+          bindAutoTimelineEvents(projectId);
+        }
+      }
+      if (!st.running) {
+        clearInterval(autoPollTimer);
+        autoPollTimer = null;
+        if (currentProjectId === projectId) await renderProject(projectId); // 落定：整页刷新展示产物
+      }
+    }, 4000);
+  }
+  function bindAutoTimelineEvents(projectId) {
+    const stopBtn = $('#wsAutoStop');
+    if (stopBtn)
+      stopBtn.onclick = async () => {
+        try {
+          await api(`/api/projects/${projectId}/auto/stop`, { method: 'POST' });
+          toast('已停止全自动成片（已完成的部分保留）', 'warn');
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      };
+    const restartBtn = $('#wsAutoRestart');
+    if (restartBtn)
+      restartBtn.onclick = async () => {
+        try {
+          await api(`/api/projects/${projectId}/auto`, { method: 'POST' });
+          toast('已重新启动全自动成片', 'ok');
+          startAutoPoll(projectId);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      };
+  }
+  const guideOff = () => {
+    try {
+      return localStorage.getItem('wsGuideOff') === '1';
+    } catch {
+      return false;
+    }
+  };
+  const setGuideOff = (off) => {
+    try {
+      localStorage.setItem('wsGuideOff', off ? '1' : '0');
+    } catch {
+      /* 隐私模式下 localStorage 不可用，忽略 */
+    }
+  };
+  function stepGuideHTML(n) {
+    const g = STEP_GUIDES[n];
+    if (!g || guideOff()) return '';
+    return `<details class="step-guide">
+      <summary>💡 这一步做什么？—— ${esc(g.tip)}</summary>
+      <div class="step-guide-body">${esc(g.body)}</div>
+    </details>`;
+  }
+  /** 步骤底部导航：上一步 / 下一步（下一步的校验在 bindStepNav 内做） */
+  function stepNavHTML(n, firstStep = 2, lastStep = 6) {
+    if (n >= lastStep) return '';
+    const prev = n > firstStep ? `<button class="btn ghost sm" data-step-prev="${n}">← 上一步</button>` : '';
+    return `<div class="step-nav">${prev}<span class="spacer" style="flex:1"></span><button class="btn primary sm" data-step-next="${n}">下一步：${esc(STEP_TITLES[n + 1] || '')} →</button></div>`;
+  }
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -160,6 +453,18 @@
       </div>`;
   }
 
+  /* P0：风格预设卡片（新手一键选风格；仍可自定义输入） */
+  const STYLE_PRESETS = [
+    { emoji: '🎥', label: '电影写实', value: '电影写实，自然光影，浅景深，胶片质感' },
+    { emoji: '🌿', label: '治愈温暖', value: '治愈系，暖色调，柔和光线，宫崎骏动画风格' },
+    { emoji: '🔥', label: '热血燃向', value: '热血动漫风，强对比色彩，动感构图' },
+    { emoji: '🕵️', label: '悬疑紧张', value: '悬疑氛围，冷色调，低调布光，电影感构图' },
+    { emoji: '🖌️', label: '国风水墨', value: '中国水墨画风，留白意境，淡雅配色' },
+    { emoji: '🧸', label: '童话绘本', value: '童话绘本插画风，明快色彩，圆润造型' },
+    { emoji: '🌆', label: '赛博朋克', value: '赛博朋克，霓虹光效，未来都市质感' },
+    { emoji: '🗺️', label: '纪录片', value: '纪录片质感，真实自然，高清细节，平实运镜' },
+  ];
+
   async function openNewProject() {
     const meta = await getMeta();
     const overlay = document.createElement('div');
@@ -170,7 +475,15 @@
         <div class="modal-body">
           <div class="field"><label>项目名称 *</label><input type="text" id="npName" placeholder="如：夏日麦田少年" /></div>
           <div class="field"><label>一句话创意 *</label><textarea id="npIdea" rows="3" placeholder="例：黄昏麦田，穿黄胶鞋的少年沿着土路走向远方，暖金色逆光"></textarea></div>
-          <div class="field"><label>风格偏好（可选）</label><input type="text" id="npStyle" placeholder="如：电影写实 / 国风水墨 / 赛博朋克" /></div>
+          <div class="field"><label>风格偏好 <span class="hint">点选卡片，或在下方自定义</span></label>
+            <div class="style-presets" id="npStylePresets">
+              ${STYLE_PRESETS.map(
+                (s) =>
+                  `<button type="button" class="style-preset" data-style="${esc(s.value)}" title="${esc(s.value)}"><span class="sp-emoji">${s.emoji}</span><span>${esc(s.label)}</span></button>`,
+              ).join('')}
+            </div>
+            <input type="text" id="npStyle" placeholder="自定义风格，如：胶片质感 / 水墨×赛博混合" style="margin-top:8px" />
+          </div>
           <div class="grid2">
             <div class="field"><label>画幅</label>
               <select id="npAspect">${meta.aspect_ratios.map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
@@ -183,13 +496,35 @@
             <input type="checkbox" id="npAutoStoryboard" checked style="width:auto" />
             <label for="npAutoStoryboard" style="margin:0;cursor:pointer">生成文案后自动生成分镜（一键到分镜，失败即停）</label>
           </div>
+          <div class="field" style="display:flex;align-items:flex-start;gap:8px;border:1px dashed var(--border,#2a3040);border-radius:10px;padding:10px 12px;background:rgba(99,102,241,.06)">
+            <input type="checkbox" id="npAutoAll" style="width:auto;margin-top:2px" />
+            <label for="npAutoAll" style="margin:0;cursor:pointer">
+              <b>🚀 全自动成片</b>：创建后从「文案 → 分镜 → AI 自审 → 角色图 → 逐镜视频 → 配音 → 渲染成片」全自动推进，
+              失败自动重试，卡住时停在人工介入点。适合把创意直接变成成片。<span class="hint">（需已配置 API Key；配音需 Fish Key，未配置自动跳过）</span>
+            </label>
+          </div>
         </div>
         <div class="modal-foot">
           <button class="btn ghost">取消</button>
-          <button class="btn primary" id="npCreate">创建并生成文案</button>
+          <button class="btn primary" id="npCreate">创建并逐步制作</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
+    // P0：风格预设卡片点击 → 填入风格输入框并高亮；手动编辑时取消高亮
+    const styleInput = $('#npStyle', overlay);
+    overlay.querySelectorAll('.style-preset').forEach((b) => {
+      b.addEventListener('click', () => {
+        overlay.querySelectorAll('.style-preset').forEach((x) => x.classList.remove('active'));
+        b.classList.add('active');
+        styleInput.value = b.dataset.style;
+      });
+    });
+    if (styleInput)
+      styleInput.addEventListener('input', () => {
+        overlay
+          .querySelectorAll('.style-preset')
+          .forEach((x) => x.classList.toggle('active', x.dataset.style === styleInput.value));
+      });
     const close = () => overlay.remove();
     overlay.addEventListener('click', (e) => {
       if (
@@ -216,14 +551,30 @@
           body: {
             name,
             idea,
-            style: $('#npStyle', overlay).value.trim(),
+            style: styleInput.value.trim(),
             aspect_ratio: $('#npAspect', overlay).value,
             seconds: $('#npSeconds', overlay).value,
           },
         });
         const autoStoryboard = $('#npAutoStoryboard', overlay)?.checked !== false;
+        const autoAll = $('#npAutoAll', overlay)?.checked === true;
         close();
         currentProjectId = p.id;
+        if (autoAll) {
+          // P3 全自动成片：先启动状态机，再渲染页面——保证首屏就带 auto_state 时间线容器，
+          // 轮询即可局部刷新（v2.1 修复：先渲染后启动会导致容器缺失、页面看起来毫无反应）
+          try {
+            await api(`/api/projects/${p.id}/auto`, { method: 'POST' });
+            toast('全自动成片已启动：文案→分镜→自审→角色图→视频→配音→渲染 将自动推进', 'ok');
+            await renderProject(p.id); // auto_state 已落库，这次渲染必含时间线
+            bindAutoTimelineEvents(p.id);
+            startAutoPoll(p.id);
+          } catch (e) {
+            toast('全自动启动失败（可手动逐步制作）：' + e.message, 'err');
+            await renderProject(p.id);
+          }
+          return;
+        }
         await renderProject(p.id);
         toast('项目已创建，正在生成文案…', 'ok');
         // 一键到分镜：文案成功且勾选时自动接续生成分镜（失败即停）
@@ -240,7 +591,7 @@
       } catch (e) {
         toast('创建失败：' + e.message, 'err');
         btn.disabled = false;
-        btn.textContent = '创建并生成文案';
+        btn.textContent = '创建并逐步制作';
       }
     };
   }
@@ -263,6 +614,7 @@
     const tasks = d.tasks || [];
     const shots = d.shots || [];
     currentShotCount = shots.length;
+    projectsShotsCache = shots;
     const selVideo = (t) =>
       t.find((x) => x.kind === 'video_prompt' && x.selected) || t.find((x) => x.kind === 'video_prompt');
     const selChar =
@@ -301,6 +653,7 @@
     })();
 
     const ws = $('#workspaceView');
+    const doneCount = [1, 2, 3, 4, 5, 6].filter((n) => stepsDone[n]).length;
     ws.innerHTML = `
       <div class="ws-pad">
         <div class="ws-head">
@@ -308,6 +661,7 @@
           <h2>${esc(p.name)}</h2>
           ${p.idea ? `<span class="muted">${esc(p.idea)}</span>` : ''}
           <span class="spacer"></span>
+          <button class="btn ghost sm" id="wsGuideToggle" title="显示/隐藏各步骤的新手说明卡">${guideOff() ? '📖 新手引导：关' : '📖 新手引导：开'}</button>
           <button class="btn ghost danger" id="wsDel" title="删除项目（关联的视频任务保留）">删除</button>
         </div>
         <div class="steps">
@@ -318,11 +672,13 @@
           <div class="step ${stepState(5)} ${currentStep === 5 ? 'active' : ''}" data-step="5"><span class="n">⑤</span>配音</div>
           <div class="step ${stepState(6)} ${currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>成片</div>
         </div>
-        ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b></span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
+        ${p.auto_state ? `<div id="wsAutoHolder" class="mt">${autoTimelineHTML(p.auto_state)}</div>` : '<div id="wsAutoHolder" class="mt" hidden></div>'}
+        ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b>（已完成 ${doneCount}/6 步）</span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
 
         <!-- ② 文案与分镜 -->
         <div class="copy-sect">
           <h4>📝 文案与提示词 <span class="badge-selected" hidden id="wsCopyDone">已生成</span></h4>
+          ${stepGuideHTML(2)}
           ${
             scriptBusy
               ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在分析创意，梳理故事结构…</span></div>'
@@ -331,14 +687,16 @@
           <div class="hint mt">梗概、角色描述、场景描述一次生成；分镜在下方独立生成与编辑。</div>`
           }
           <div id="wsCopySections" class="mt">
-            ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta)}
+            ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta, d.tts || [])}
             ${renderTextSections(texts, ['script', 'character_desc', 'scene_desc'])}
           </div>
+          ${stepNavHTML(2)}
         </div>
 
         <!-- ③ 角色设定 -->
         <div class="copy-sect" id="wsCharSection">
           <h4>🧑‍🎨 角色设定图 <span class="muted" style="font-weight:400">（参考图用于视频，减少角色幻觉）</span></h4>
+          ${stepGuideHTML(3)}
           <div class="grid2">
             <div class="field"><label>角色外观描述（可手动调整）</label>
               <textarea id="wsCharDesc" rows="3">${esc((texts.find((t) => t.kind === 'character_desc' && t.selected) || texts.find((t) => t.kind === 'character_desc') || {}).content || p.idea || '')}</textarea>
@@ -370,11 +728,13 @@
             .filter((x) => x.kind === 'character')
             .map(imgCell)
             .join('')}</div>
+          ${stepNavHTML(3)}
         </div>
 
         <!-- ④ 视频 -->
         <div class="copy-sect" id="wsVideoSection">
           <h4>🎬 发起视频任务</h4>
+          ${stepGuideHTML(4)}
           <div class="video-assemble">
             <div class="ref-row">
               <div class="ref-img">${selChar ? `<img src="${esc(selChar.local_url || selChar.remote_url)}" alt="角色定稿图" />` : '<div class="muted" style="padding:30px 8px;text-align:center">未定稿</div>'}</div>
@@ -405,34 +765,50 @@
             }
           </div>
           ${`<div id="wsTaskList">${renderTaskList(tasks, shots)}</div>`}
+          ${stepNavHTML(4)}
         </div>
 
         <!-- ⑤ 配音（Fish Audio TTS） -->
         <div class="copy-sect" id="wsTtsSection">
-          <h4>🎙️ 配音（旁白 · Fish Audio TTS） <span class="muted" style="font-weight:400">可选：把文案/分镜变成人声旁白，混入成片</span></h4>
+          <h4>🎙️ 配音（旁白 · Fish Audio TTS） <span class="muted" style="font-weight:400">可选：把分镜旁白变成人声，混入成片</span></h4>
+          ${stepGuideHTML(5)}
           <div class="grid2">
             <div class="field">
-              <label>配音文稿（可手动编辑；支持多句分段，每句一行）</label>
-              <textarea id="wsTtsText" rows="4" placeholder="粘贴要配音的文稿…">${esc(defaultTtsText(texts, shots))}</textarea>
-              <div class="row" style="margin-top:6px;display:flex;gap:8px;align-items:center">
-                <button class="btn ghost sm" id="wsTtsFillNarration" title="用选定分镜的旁白行填充">📖 从分镜填充旁白</button>
-                <button class="btn ghost sm" id="wsTtsFillScript" title="用选定故事梗概填充">✍️ 从故事梗概填充</button>
-                <span class="hint">每行一句；生成后逐句合成，第一句自动选用。</span>
+              <label>逐镜配音（推荐）<span class="hint">按每镜「旁白文案」逐条合成并自动绑定对应镜头，渲染时与画面自动对齐</span></label>
+              <div class="hint" id="wsTtsShotSummary" style="margin-bottom:8px">${(() => {
+                const narrated = (shots || []).filter((s) => (s.narration || '').trim());
+                const bound = (d.tts || []).filter(
+                  (t) => t.kind === 'shot' && t.shot_id && t.local_path && !t.error_message,
+                );
+                return narrated.length
+                  ? `分镜共 ${shots.length} 镜，其中 ${narrated.length} 镜有旁白文案 · 已生成配音 ${bound.length} 条`
+                  : '分镜还没有旁白文案——到第②步给镜头填写「🎙️ 旁白文案」后再回来';
+              })()}</div>
+              <div class="row" style="display:flex;gap:8px;align-items:center">
+                <button class="btn primary sm" id="wsTtsGenShots" ${(shots || []).some((s) => (s.narration || '').trim()) ? '' : 'disabled'}>🎙️ 为所有镜头生成配音</button>
+                <span class="hint" id="wsTtsShotsHint"></span>
               </div>
             </div>
             <div class="field">
-              <label>音色 / 语速</label>
-              <div class="grid2">
-                <select id="wsTtsVoice"></select>
-                <input type="number" id="wsTtsSpeed" min="0.5" max="2" step="0.05" value="${esc(String(wsDefaultSpeed()))}" title="语速 0.5–2.0（旁白建议 0.9–1.0）" />
+              <label>自由文稿配音（可选）<span class="hint">粘贴任意文稿整段合成，不绑定具体镜头</span></label>
+              <textarea id="wsTtsText" rows="4" placeholder="粘贴要配音的文稿…">${esc(defaultTtsText(texts, shots))}</textarea>
+              <div class="row" style="margin-top:6px;display:flex;gap:8px;align-items:center">
+                <button class="btn ghost sm" id="wsTtsFillNarration" title="用每镜「旁白文案」字段填充（不包含画面提示词）">📖 从分镜旁白填充</button>
+                <button class="btn ghost sm" id="wsTtsFillScript" title="用选定故事梗概填充">✍️ 从故事梗概填充</button>
               </div>
               <div class="row mt" style="display:flex;gap:8px;align-items:center">
-                <button class="btn primary sm" id="wsTtsGen">🗣️ 生成配音</button>
-                <span class="hint" id="wsTtsHint"></span>
+                <label class="hint" style="display:flex;gap:6px;align-items:center">音色
+                  <select id="wsTtsVoice"></select></label>
+                <label class="hint" style="display:flex;gap:6px;align-items:center">语速
+                  <input type="number" id="wsTtsSpeed" min="0.5" max="2" step="0.05" value="${esc(String(wsDefaultSpeed()))}" title="语速 0.5–2.0（旁白建议 0.9–1.0）" style="width:70px" /></label>
               </div>
-              <div class="hint mt">配音为本地 mp3（存 data/artifacts），可在浏览器试听、选用；「下载」可拿去做后期混音。</div>
+              <div class="row mt" style="display:flex;gap:8px;align-items:center">
+                <button class="btn ghost sm" id="wsTtsGen">🗣️ 合成自由文稿</button>
+                <span class="hint" id="wsTtsHint">自由文稿配音不会绑定镜头，成片默认使用逐镜配音。</span>
+              </div>
             </div>
           </div>
+          <div class="hint mt">逐镜配音与画面自动对齐（渲染时按镜头起幅点混入）；配音为本地 mp3，可在下方配音墙试听/重生成/重新绑定。</div>
           <div id="wsTtsWall" class="mt">${renderTtsWall(d.tts || [], shots)}</div>
           <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
             <b>🎤 声音广场</b> <span class="hint">浏览 Fish 社区真实音色（按热度排行），试听后「＋备选」加入音色池，即出现在上方「默认音色」下拉</span>
@@ -454,42 +830,98 @@
             <div id="wsMkResults" class="mt"></div>
             <audio id="wsMkAudio" preload="none" style="display:none"></audio>
           </div>
+          ${stepNavHTML(5)}
         </div>
 
-        <!-- ⑥ 成片渲染（v1.3） -->
+        <!-- ⑥ 成片渲染（v1.3；v2.0 风格预设 + 高级配置） -->
         <div class="copy-sect" id="wsRenderSection">
           <h4>🎞️ 成片渲染 <span class="muted" style="font-weight:400">已完成镜头 + 逐镜旁白 → 完整短片（本地 ffmpeg 合成）</span></h4>
+          ${stepGuideHTML(6)}
+          <!-- P2：成片风格预设卡片（一键套用整套配方，小白一步到位） -->
+          <div class="film-preset-row" id="wsFilmPresets">
+            ${FILM_PRESETS.map(
+              (p) => `
+              <button type="button" class="film-preset" data-preset="${esc(p.id)}" title="${esc(p.desc)}">
+                <span class="fp-emoji">${p.emoji}</span><span class="fp-label">${esc(p.label)}</span>
+              </button>`,
+            ).join('')}
+          </div>
+          <div class="film-recipe" id="wsFilmRecipe"></div>
           <div class="row" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
             <select id="wsRAspect" class="meta-tag" style="background:var(--bg)" title="成片方向（默认跟随项目画幅）">
               <option value="16:9" ${p.aspect_ratio !== '9:16' ? 'selected' : ''}>横屏 16:9</option>
               <option value="9:16" ${p.aspect_ratio === '9:16' ? 'selected' : ''}>竖屏 9:16</option>
             </select>
-            <label class="hint" style="display:flex;gap:6px;align-items:center">叠化
-              <select id="wsRTransition" class="meta-tag" style="background:var(--bg)" title="镜头间叠化时长">
-                <option value="400">0.4s</option><option value="600" selected>0.6s</option><option value="1000">1.0s</option>
-              </select></label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center">旁白偏移
-              <select id="wsRNarrOffset" class="meta-tag" style="background:var(--bg)" title="旁白相对镜头起幅点的进入时间">
-                <option value="300">0.3s</option><option value="500" selected>0.5s</option><option value="1000">1.0s</option>
-              </select></label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRTitle" checked /> 片头卡</label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsREnd" checked /> 片尾卡</label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center">BGM 音量
-              <input type="range" id="wsRBgmVol" min="5" max="90" value="35" style="width:90px" title="背景音乐音量（有旁白时建议 30–40%）" />
-              <span id="wsRBgmVolV">35%</span></label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center">旁白增益
-              <input type="range" id="wsRNarrVol" min="80" max="220" value="140" style="width:90px" title="旁白音量增益（默认 140%，让人声稳坐音乐之上）" />
-              <span id="wsRNarrVolV">140%</span></label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRDuck" checked /> 旁白闪避</label>
-            <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRSubs" checked /> 烧录字幕</label>
-            <select id="wsRSubSize" class="meta-tag" style="background:var(--bg)" title="字幕字号">
-              <option value="36">小字</option><option value="42" selected>中字</option><option value="52">大字</option>
-            </select>
             <span class="meta-tag" title="已绑定镜头配音的镜头数（在第⑤步配音墙中绑定）">🎙️ 旁白 ${narratedShots}/${shots.length} 镜</span>
             <span class="spacer" style="flex:1"></span>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>
-          <div class="hint mt">旁白取每个镜头最新绑定的配音（第⑤步配音墙中「绑定到镜头」）；混音链：旁白高通+压缩+增益 → BGM 循环铺底+首尾淡入淡出 → 旁白闪避 → 全片响度标准化（-16 LUFS）。成片 1280×720@30，服务端后台渲染。</div>
+          <!-- P2：高级配置（分组折叠，默认收起；选中预设后可展开微调） -->
+          <details class="adv-config" id="wsAdvConfig">
+            <summary>⚙ 高级配置（转场 / 字幕 / 音频 / 卡片）</summary>
+            <div class="adv-grid">
+              <div class="adv-group">
+                <b>🎬 转场</b>
+                <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <select id="wsRTransitionType" class="meta-tag" style="background:var(--bg)" title="镜头间转场类型">
+                    ${Object.entries(TRANSITION_LABELS)
+                      .map(([v, l]) => `<option value="${esc(v)}" ${v === 'fade' ? 'selected' : ''}>${esc(l)}</option>`)
+                      .join('')}
+                  </select>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center">时长
+                    <input type="range" id="wsRTransition" min="200" max="1500" step="100" value="600" style="width:110px" title="转场时长（毫秒）" />
+                    <span id="wsRTransitionV">0.6s</span></label>
+                </div>
+              </div>
+              <div class="adv-group">
+                <b>💬 字幕</b>
+                <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRSubs" checked /> 烧录</label>
+                  <select id="wsRSubStyle" class="meta-tag" style="background:var(--bg)" title="字幕样式">
+                    ${Object.entries(SUBSTYLE_LABELS)
+                      .map(
+                        ([v, l]) =>
+                          `<option value="${esc(v)}" ${v === 'white-outline' ? 'selected' : ''}>${esc(l)}</option>`,
+                      )
+                      .join('')}
+                  </select>
+                  <select id="wsRSubPos" class="meta-tag" style="background:var(--bg)" title="字幕位置">
+                    ${Object.entries(SUBPOS_LABELS)
+                      .map(
+                        ([v, l]) => `<option value="${esc(v)}" ${v === 'bottom' ? 'selected' : ''}>${esc(l)}</option>`,
+                      )
+                      .join('')}
+                  </select>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center">字号
+                    <input type="range" id="wsRSubSize" min="24" max="72" step="2" value="42" style="width:110px" title="字幕字号" />
+                    <span id="wsRSubSizeV">42</span></label>
+                </div>
+              </div>
+              <div class="adv-group">
+                <b>🔊 音频</b>
+                <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <label class="hint" style="display:flex;gap:6px;align-items:center">BGM
+                    <input type="range" id="wsRBgmVol" min="0" max="90" value="35" style="width:90px" title="背景音乐音量（有旁白时建议 20–40%）" />
+                    <span id="wsRBgmVolV">35%</span></label>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center">旁白增益
+                    <input type="range" id="wsRNarrVol" min="80" max="220" step="10" value="140" style="width:90px" title="旁白音量增益（默认 140%，让人声稳坐音乐之上）" />
+                    <span id="wsRNarrVolV">140%</span></label>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center">旁白偏移
+                    <input type="range" id="wsRNarrOffset" min="0" max="1500" step="100" value="500" style="width:110px" title="旁白相对镜头起幅点的进入时间" />
+                    <span id="wsRNarrOffsetV">0.5s</span></label>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRDuck" checked /> 旁白闪避</label>
+                </div>
+              </div>
+              <div class="adv-group">
+                <b>🏷️ 片头 / 片尾卡</b>
+                <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+                  <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsRTitle" checked /> 片头卡</label>
+                  <label class="hint" style="display:flex;gap:6px;align-items:center"><input type="checkbox" id="wsREnd" checked /> 片尾卡</label>
+                </div>
+              </div>
+            </div>
+            <div class="hint mt">混音链：旁白高通+压缩+增益 → BGM 循环铺底+首尾淡入淡出 → 旁白闪避 → 全片响度标准化（-16 LUFS）。成片 1280×720@30，服务端后台渲染。</div>
+          </details>
           <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
             <b>🎵 背景音乐（BGM）</b> <span class="hint">搜索在线曲库选用一首，渲染时循环铺底、首尾淡入淡出；有旁白时自动闪避（压低音乐让人声突出）</span>
             <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
@@ -531,6 +963,39 @@
         document.querySelector(guideBtn.dataset.guideGoto)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     }
     bindStepScrollFollow();
+    // P0：新手引导开关（记忆到 localStorage，重渲染以显示/隐藏说明卡）
+    const guideToggle = $('#wsGuideToggle');
+    if (guideToggle) {
+      guideToggle.onclick = () => {
+        setGuideOff(!guideOff());
+        renderProject(p.id);
+      };
+    }
+    // P0：步骤间导航（下一步带前置校验：拦截「下一步根本无法操作」的情况，可选步骤提示后放行）
+    const gotoStep = (n) => {
+      currentStep = n;
+      stepFollowUntil = Date.now() + 1500; // 滚动途中不让跟随逻辑覆盖点击选择
+      document
+        .querySelectorAll('.steps .step')
+        .forEach((s) => s.classList.toggle('active', s.dataset.step === String(n)));
+      document.querySelector(stepTargets[n])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    ws.querySelectorAll('[data-step-prev]').forEach((b) => {
+      b.onclick = () => gotoStep(Math.max(2, Number(b.dataset.stepPrev) - 1));
+    });
+    ws.querySelectorAll('[data-step-next]').forEach((b) => {
+      b.onclick = () => {
+        const n = Number(b.dataset.stepNext); // 当前步骤 → 跳 n+1
+        if (n === 2 && !stepsDone[2]) {
+          toast('先点本步「✨ 生成文案」与「✨ 生成分镜」，完成剧本再继续', 'warn');
+          return;
+        }
+        if (n === 3 && !selChar && !confirm('尚未定稿角色图——后续镜头视频将无法引用角色外观一致性。仍要继续？')) return;
+        if (n === 4 && !tasks.length) toast('提示：还没有提交镜头任务，配音可先准备', 'warn');
+        if (n === 5 && completedShots < 2) toast('提示：渲染需要至少 2 个已完成镜头，可先了解成片设置', 'warn');
+        gotoStep(n + 1);
+      };
+    });
     $('#wsDel').onclick = async () => {
       if (!confirm(`确认删除项目「${p.name}」？文案与角色图将一并删除，视频任务保留。`)) return;
       try {
@@ -615,7 +1080,7 @@
     bindGotoTaskLinks();
     // TTS 配音事件
     bindTtsEvents(p.id);
-    // v1.3 成片渲染
+    // v1.3 成片渲染（v2.0：新增转场类型 / 字幕样式 / 字幕位置）
     const rbtn = $('#wsRenderBtn');
     if (rbtn) {
       rbtn.onclick = async () => {
@@ -625,6 +1090,7 @@
             method: 'POST',
             body: {
               transition_ms: Number($('#wsRTransition')?.value || 600),
+              transition_type: $('#wsRTransitionType')?.value || 'fade',
               narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
               title_card: $('#wsRTitle')?.checked !== false,
               end_card: $('#wsREnd')?.checked !== false,
@@ -633,6 +1099,8 @@
               narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
               burn_subtitles: $('#wsRSubs')?.checked !== false,
               subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
+              subtitle_style: $('#wsRSubStyle')?.value || 'white-outline',
+              subtitle_position: $('#wsRSubPos')?.value || 'bottom',
               aspect: $('#wsRAspect')?.value || '16:9',
             },
           });
@@ -644,6 +1112,67 @@
         }
       };
     }
+    // P2：风格预设交互 —— 点击卡片套用整套配方；手动改高级配置即切换为“自定义配方”
+    const filmRecipeEl = $('#wsFilmRecipe');
+    const renderRecipe = () => {
+      if (!filmRecipeEl) return;
+      if (wsFilmPresetId) {
+        const preset = FILM_PRESETS.find((x) => x.id === wsFilmPresetId);
+        if (preset) {
+          filmRecipeEl.innerHTML = `🎬 当前配方：<b>${preset.emoji} ${esc(preset.label)}</b> —— ${esc(preset.desc)}`;
+          return;
+        }
+      }
+      filmRecipeEl.innerHTML = `🎬 当前配方：<b>自定义</b> —— ${esc(TRANSITION_LABELS[$('#wsRTransitionType')?.value] || '淡入淡出')}转场 ${((Number($('#wsRTransition')?.value) || 600) / 1000).toFixed(1)}s · ${esc(SUBSTYLE_LABELS[$('#wsRSubStyle')?.value] || '白字描边')}字幕 · BGM ${$('#wsRBgmVol')?.value || 35}%`;
+    };
+    document.querySelectorAll('#wsFilmPresets .film-preset').forEach((b) => {
+      b.addEventListener('click', () => {
+        wsFilmPresetId = b.dataset.preset;
+        document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.toggle('active', x === b));
+        const preset = FILM_PRESETS.find((x) => x.id === wsFilmPresetId);
+        const pa = preset?.params || {};
+        const setVal = (sel, v) => {
+          const el = $(sel);
+          if (el && v !== undefined) el.value = v;
+        };
+        setVal('#wsRTransition', pa.transition_ms);
+        setVal('#wsRTransitionType', pa.transition_type);
+        setVal('#wsRSubStyle', pa.subtitle_style);
+        setVal('#wsRSubPos', pa.subtitle_position);
+        setVal('#wsRSubSize', pa.subtitle_fontsize);
+        setVal('#wsRBgmVol', Math.round((pa.bgm_volume ?? 0.35) * 100));
+        setVal('#wsRNarrVol', Math.round((pa.narration_volume ?? 1.4) * 100));
+        setVal('#wsRNarrOffset', pa.narration_offset_ms);
+        if (pa.bgm_duck !== undefined && $('#wsRDuck')) $('#wsRDuck').checked = pa.bgm_duck;
+        updateRenderRangeLabels();
+        renderRecipe();
+      });
+    });
+    const advConfig = $('#wsAdvConfig');
+    if (advConfig) {
+      advConfig.addEventListener('change', () => {
+        // 手动调整任何参数 → 脱离预设（配方说明切为自定义）
+        wsFilmPresetId = '';
+        document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.remove('active'));
+        renderRecipe();
+      });
+      advConfig.addEventListener('input', updateRenderRangeLabels);
+    }
+    function updateRenderRangeLabels() {
+      const pairs = [
+        ['#wsRTransition', '#wsRTransitionV', (v) => (Number(v) / 1000).toFixed(1) + 's'],
+        ['#wsRSubSize', '#wsRSubSizeV', (v) => String(v)],
+        ['#wsRBgmVol', '#wsRBgmVolV', (v) => v + '%'],
+        ['#wsRNarrVol', '#wsRNarrVolV', (v) => v + '%'],
+        ['#wsRNarrOffset', '#wsRNarrOffsetV', (v) => (Number(v) / 1000).toFixed(1) + 's'],
+      ];
+      for (const [sel, labelSel, fmt] of pairs) {
+        const el = $(sel);
+        const lbl = $(labelSel);
+        if (el && lbl) lbl.textContent = fmt(el.value);
+      }
+    }
+    renderRecipe();
     if (renderJobs.some((j) => j.status === 'queued' || j.status === 'rendering')) startRenderPoll(p.id);
     // v1.4 BGM：搜索 / 试听 / 选用 / 清除
     let bgmAudio = null;
@@ -726,22 +1255,16 @@
         }
       };
     }
-    const volRange = $('#wsRBgmVol');
-    if (volRange) {
-      volRange.oninput = () => {
-        const l = $('#wsRBgmVolV');
-        if (l) l.textContent = volRange.value + '%';
-      };
-    }
-    const narrRange = $('#wsRNarrVol');
-    if (narrRange) {
-      narrRange.oninput = () => {
-        const l = $('#wsRNarrVolV');
-        if (l) l.textContent = narrRange.value + '%';
-      };
-    }
     // v1.9 声音广场：备选池展示 + 浏览/试听/入池
     bindVoiceMarket(p.id);
+    // P3：全自动成片运行中 → 时间线事件 + 状态轮询
+    if (p.auto_state?.running) {
+      bindAutoTimelineEvents(p.id);
+      startAutoPoll(p.id);
+    } else if (autoPollTimer && currentProjectId !== p.id) {
+      clearInterval(autoPollTimer);
+      autoPollTimer = null;
+    }
   }
 
   async function refreshVoicePool() {
@@ -866,13 +1389,11 @@
     return wsSettingsCache?.fish_speed ?? 1;
   }
   function defaultTtsText(texts, shots) {
-    // 优先：分镜已有旁白行（video_prompt 首段）→ 故事梗概
-    if (shots.length) {
-      const lines = shots
-        .map((s) => (s.title || '') + '。' + (s.video_prompt || '').split(/[。\n]/)[0])
-        .filter(Boolean);
-      if (lines.length) return lines.join('\n');
-    }
+    // v2.1 修正：只取每镜的「旁白文案」字段（shots.narration）——
+    // 镜头标题与画面提示词（景别/运镜/主视角等）属于画面描述，绝不进入配音文稿。
+    // 无分镜旁白时回退故事梗概。
+    const lines = (shots || []).map((s) => (s.narration || '').trim()).filter(Boolean);
+    if (lines.length) return lines.join('\n');
     const script = texts.find((t) => t.kind === 'script' && t.selected) || texts.find((t) => t.kind === 'script');
     return script ? script.content : '';
   }
@@ -995,6 +1516,68 @@
         toast('已用故事梗概填充', 'ok');
       };
     genBtn.onclick = () => genTts(projectId);
+    // v2.1：为所有有旁白的镜头逐条生成配音并自动绑定
+    const genShotsBtn = $('#wsTtsGenShots');
+    if (genShotsBtn) genShotsBtn.onclick = () => genAllShotTts(projectId);
+  }
+
+  /** v2.1：单镜头配音——用该镜「旁白文案」合成并绑定 shot_id（覆盖该镜旧绑定） */
+  async function genShotTts(projectId, shotId, shotLabel) {
+    const d = await api(`/api/projects/${projectId}`);
+    const shot = (d.shots || []).find((s) => s.id === shotId);
+    const text = (shot?.narration || '').trim();
+    if (!text) {
+      toast(`${shotLabel || '该镜头'}没有旁白文案，先在第②步填写`, 'warn');
+      return false;
+    }
+    const voice = $('#wsTtsVoice')?.value || 'default';
+    const speed = Number($('#wsTtsSpeed')?.value || 1);
+    try {
+      const r = await api('/api/tts/generate', {
+        method: 'POST',
+        body: { text, voice, speed, kind: 'shot', shot_id: shotId, project_id: projectId },
+      });
+      toast(`${shotLabel || '镜头'}配音已生成并绑定（${r.duration ?? '?'}s）`, 'ok');
+      return true;
+    } catch (e) {
+      toast(`${shotLabel || '镜头'}配音失败：${e.message}`, 'err');
+      return false;
+    }
+  }
+
+  /** v2.1：批量逐镜配音——所有有旁白文案的镜头依次合成（逐个请求，失败不阻塞后续） */
+  async function genAllShotTts(projectId) {
+    const btn = $('#wsTtsGenShots');
+    const hint = $('#wsTtsShotsHint');
+    const d = await api(`/api/projects/${projectId}`);
+    const targets = (d.shots || []).filter((s) => (s.narration || '').trim());
+    if (!targets.length) {
+      toast('没有镜头填写旁白文案', 'warn');
+      return;
+    }
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '逐镜配音中…';
+    }
+    let ok = 0;
+    let fail = 0;
+    try {
+      for (let i = 0; i < targets.length; i++) {
+        const s = targets[i];
+        if (hint) hint.textContent = `正在合成镜头 ${s.seq}/${targets.length}…`;
+        const done = await genShotTts(projectId, s.id, `镜头 ${s.seq}${s.title ? `「${s.title}」` : ''}`);
+        if (done) ok += 1;
+        else fail += 1;
+      }
+      if (hint) hint.textContent = '';
+      toast(`逐镜配音完成：成功 ${ok}${fail ? `，失败 ${fail}` : ''}`, fail ? 'warn' : 'ok');
+      if (currentProjectId === projectId) await renderProject(projectId);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🎙️ 为所有镜头生成配音';
+      }
+    }
   }
 
   async function genTts(projectId) {
@@ -1026,7 +1609,7 @@
     } finally {
       if (genBtn) {
         genBtn.disabled = false;
-        genBtn.textContent = '🗣️ 生成配音';
+        genBtn.textContent = '🗣️ 合成自由文稿';
       }
     }
   }
@@ -1295,7 +1878,16 @@
 
   /* ---------------- M2：分镜区（生成 / 编辑 / 排序 / 历史版本） ---------------- */
 
-  function renderStoryboardArea(texts, shots, p, meta) {
+  /** v2.1：单镜头配音按钮（有旁白才显示；已有绑定配音则提示可重新生成） */
+  function ttsBtnForShot(s, ttsList) {
+    if (!(s.narration || '').trim()) return '';
+    const bound = (ttsList || []).some(
+      (t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message,
+    );
+    return `<button class="btn ghost sm" data-shot-tts="${s.id}" title="${bound ? '重新生成本镜配音（覆盖旧绑定）' : '用本镜旁白文案合成配音并自动绑定'}">${bound ? '🎙️ 重配本镜' : '🎙️ 配本镜旁白'}</button>`;
+  }
+
+  function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
     const sbVersions = texts.filter((t) => t.kind === 'storyboard');
     const secondsOpts = (sel) =>
       meta.seconds
@@ -1339,6 +1931,7 @@
         <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
           ${countSelect}
           <button class="btn primary sm" id="wsGenStoryboard">✨ 重新生成分镜</button>
+          <button class="btn ghost sm" id="wsReviewSb" title="AI 审查分镜与文案的一致性、节奏与提示词质量，给出可采纳的修订建议">🔍 AI 审查分镜</button>
           <button class="btn ghost sm" id="wsAddShot">＋ 添加镜头</button>
           ${
             sbVersions.length > 1
@@ -1356,20 +1949,23 @@
           <div class="copy-sect shot-card" data-shot-id="${s.id}">
             <div class="shot-head">
               <span class="badge">镜头 ${s.seq}</span>
-              <input class="shot-title" data-shot-title value="${esc(s.title || '')}" placeholder="镜头标题（可选）" />
+              <input class="shot-title" data-shot-title value="${esc(s.title || '')}" placeholder="镜头标题（可选，仅用于区分镜头）" title="镜头标题：给你自己看的标记（如「开场·麦田全景」），不会提交给视频模型，也不会被配音朗读" />
               <button class="btn ghost sm" data-shot-up ${i === 0 ? 'disabled' : ''} title="上移">↑</button>
               <button class="btn ghost sm" data-shot-down ${i === shots.length - 1 ? 'disabled' : ''} title="下移">↓</button>
               <button class="btn ghost sm danger" data-shot-del title="删除镜头">✕</button>
             </div>
-            <textarea data-shot-prompt rows="3">${esc(s.video_prompt)}</textarea>
-            <textarea data-shot-narration rows="2" placeholder="旁白文案（可选；成片渲染时按镜头合成配音并对齐时间轴）" style="margin-top:6px">${esc(s.narration || '')}</textarea>
+            <label class="shot-field-label">🖼️ 画面提示词<span class="hint">提交给视频模型生成这一镜的画面（景别、主体、动作、运镜、光线、风格）</span></label>
+            <textarea data-shot-prompt rows="3" title="本镜的画面生成提示词">${esc(s.video_prompt)}</textarea>
+            <label class="shot-field-label">🎙️ 旁白文案<span class="hint">本镜的人声朗读文稿（渲染时自动与画面对齐；画面提示词不会被拿去配音）</span></label>
+            <textarea data-shot-narration rows="2" placeholder="此镜头的旁白台词（可选；留空则该镜无配音）" title="本镜旁白：只用于合成人声，成片时按镜头对齐混入" style="margin-top:2px">${esc(s.narration || '')}</textarea>
             <label class="hint" style="display:flex;gap:6px;align-items:center;margin-top:6px">
               <input type="checkbox" data-shot-ref ${s.use_character_ref !== 0 ? 'checked' : ''} />
               引用角色定稿图（纯空镜 / 无人镜头可取消勾选，将以纯文生模式提交）
             </label>
-            <div class="row" style="display:flex;gap:10px;align-items:center;margin-top:6px">
+            <div class="row" style="display:flex;gap:10px;align-items:center;margin-top:6px;flex-wrap:wrap">
               <select data-shot-seconds class="meta-tag" style="background:var(--bg)">${secondsOpts(s.seconds)}</select>
               <button class="btn ghost sm" data-shot-save>保存修改</button>
+              ${ttsBtnForShot(s, ttsList)}
             </div>
           </div>`,
             )
@@ -1381,6 +1977,9 @@
   function bindStoryboardEvents(projectId) {
     const gen = $('#wsGenStoryboard');
     if (gen) gen.onclick = () => genStoryboard(projectId);
+    // P3 L1：AI 审查分镜（报告窗逐条采纳修订）
+    const reviewBtn = $('#wsReviewSb');
+    if (reviewBtn) reviewBtn.onclick = () => reviewStoryboard(projectId);
     const promote = $('#wsPromoteShot');
     if (promote) promote.onclick = () => promoteToStoryboard(projectId);
     const add = $('#wsAddShot');
@@ -1414,6 +2013,20 @@
     );
     document.querySelectorAll('#wsShotList .shot-card').forEach((card) => {
       const id = Number(card.dataset.shotId);
+      // v2.1：单镜头配音（用该镜旁白文案合成并自动绑定）
+      const ttsBtn = card.querySelector('[data-shot-tts]');
+      if (ttsBtn) {
+        ttsBtn.onclick = async () => {
+          ttsBtn.disabled = true;
+          ttsBtn.textContent = '配音中…';
+          const done = await genShotTts(projectId, id, '本镜');
+          if (currentProjectId === projectId) await renderProject(projectId);
+          if (!done && ttsBtn.isConnected) {
+            ttsBtn.disabled = false;
+            ttsBtn.textContent = '🎙️ 配本镜旁白';
+          }
+        };
+      }
       const save = card.querySelector('[data-shot-save]');
       if (save) {
         save.onclick = async () => {
@@ -1467,6 +2080,96 @@
     } catch (e) {
       toast(e.message, 'err');
     }
+  }
+
+  /* ---------------- P3 L1：分镜 AI 审查（报告窗 + 逐条采纳修订） ---------------- */
+  const SEV_LABEL = { high: '高', medium: '中', low: '低' };
+  const FIELD_LABEL = { video_prompt: '画面提示词', narration: '旁白', seconds: '时长' };
+
+  async function reviewStoryboard(projectId) {
+    const btn = $('#wsReviewSb');
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = '审查中…';
+    }
+    let r;
+    try {
+      r = await api(`/api/projects/${projectId}/storyboard/review`, { method: 'POST' });
+    } catch (e) {
+      toast('审查失败：' + e.message, 'err');
+      return;
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔍 AI 审查分镜';
+      }
+    }
+    if (!r.parsed) {
+      toast('模型未按结构化输出审查结果（原始内容见日志）', 'warn');
+      return;
+    }
+    if (!r.issues || !r.issues.length) {
+      toast(`审查通过：${r.overall || '未发现问题'}`, 'ok');
+      return;
+    }
+    // 报告窗（动态 modal）
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    const itemHTML = (it, i) => `
+      <div class="rv-item" data-i="${i}">
+        <div class="rv-head">
+          <span class="rv-sev sev-${esc(it.severity)}">${SEV_LABEL[it.severity] || it.severity}</span>
+          <b>镜头 ${esc(String(it.shot_seq))} · ${esc(FIELD_LABEL[it.field] || it.field)}</b>
+          <span class="spacer" style="flex:1"></span>
+          <button class="btn primary sm" data-adopt="${i}">采纳修订</button>
+        </div>
+        <div class="rv-issue">${esc(it.issue)}</div>
+        <details class="rv-rev"><summary>修订后文本</summary><div>${esc(it.revised)}</div></details>
+      </div>`;
+    overlay.innerHTML = `
+      <div class="modal wide">
+        <div class="modal-head"><h2>🔍 分镜 AI 审查报告</h2><button class="modal-close">✕</button></div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:10px">总体：${esc(r.overall || '')} —— 共 ${r.issues.length} 项建议。逐条采纳会直接写入对应镜头；全自动模式下中低优先级已自动采纳。</div>
+          <div class="rv-list">${r.issues.map(itemHTML).join('')}</div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn ghost">关闭</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay || e.target.closest('.modal-close') || e.target.closest('.btn.ghost')) close();
+    });
+    const shots = projectsShotsCache;
+    overlay.querySelectorAll('[data-adopt]').forEach((b) => {
+      b.onclick = async () => {
+        const it = r.issues[Number(b.dataset.adopt)];
+        // 按 seq 找镜头 id（renderProject 缓存当前 shots）
+        const shot = (shots || []).find((s) => s.seq === Number(it.shot_seq));
+        if (!shot) {
+          toast('找不到对应镜头（分镜可能已变化，请刷新后重试）', 'err');
+          return;
+        }
+        b.disabled = true;
+        b.textContent = '写入中…';
+        try {
+          await api(`/api/projects/${projectId}/shots/${shot.id}`, {
+            method: 'PATCH',
+            body: { [it.field]: it.revised },
+          });
+          b.textContent = '✓ 已采纳';
+          b.closest('.rv-item').classList.add('rv-done');
+          toast(`镜头 ${it.shot_seq} 的${FIELD_LABEL[it.field] || it.field}已更新`, 'ok');
+          if (currentProjectId === projectId) await renderProject(projectId);
+        } catch (e2) {
+          toast('采纳失败：' + e2.message, 'err');
+          b.disabled = false;
+          b.textContent = '采纳修订';
+        }
+      };
+    });
   }
 
   async function genStoryboard(projectId) {
@@ -1627,6 +2330,21 @@
 
   function renderJobItem(j) {
     const active = j.status === 'queued' || j.status === 'rendering';
+    // P3 质检摘要：时长/偏差/响度/镜头覆盖/旁白覆盖/字幕行数
+    let qualityHtml = '';
+    if (j.status === 'completed' && j.quality) {
+      const q = j.quality;
+      const dev = q.duration_deviation_pct;
+      const devTxt = dev === null || dev === undefined ? '' : ` · 时长偏差 ${dev > 0 ? '+' : ''}${dev}%`;
+      const loud = q.loudness_lufs !== null && q.loudness_lufs !== undefined ? `${q.loudness_lufs} LUFS` : '?';
+      qualityHtml = `<div class="quality-row" title="P3 质检报告">
+        <span class="meta-tag">🔍 质检</span>
+        <span class="meta-tag">${q.duration_s}s${devTxt}</span>
+        <span class="meta-tag">响度 ${loud}</span>
+        <span class="meta-tag">${q.shots} 镜 · 旁白 ${q.narrated_shots}/${q.shots}</span>
+        <span class="meta-tag">字幕 ${q.sub_lines} 行</span>
+      </div>`;
+    }
     return `
     <div class="ver-item" data-render-job="${j.id}">
       <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%` : ''} · ${fmtTime(j.created_at)}
@@ -1637,6 +2355,7 @@
         <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>`
           : ''
       }
+      ${qualityHtml}
       ${
         (j.covers || []).length
           ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">

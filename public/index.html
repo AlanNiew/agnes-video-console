@@ -45,13 +45,24 @@
         <button class="chip" data-status="failed">失败</button>
       </div>
       <div class="toolbar-right">
+        <!-- P0：列表 ⇄ 看板 视图切换（列表为默认视图） -->
+        <div class="view-toggle" id="viewToggle" title="切换任务展示方式">
+          <button class="vt-btn active" data-view="list">☰ 列表</button>
+          <button class="vt-btn" data-view="board">▦ 看板</button>
+        </div>
         <button class="btn ghost sm" id="btnClearDone" title="删除全部已完成任务">清空已完成</button>
         <button class="btn ghost sm" id="btnClearFailed" title="删除全部失败任务">清空失败</button>
       </div>
     </div>
 
-    <!-- 看板 -->
-    <main class="board" id="board">
+    <!-- P0：时间线列表视图（默认）——全部任务单列表，按创建时间倒序 -->
+    <main id="taskListView" class="task-list-view">
+      <div id="taskRows" class="task-rows"></div>
+      <div class="pagination" id="pagination"></div>
+    </main>
+
+    <!-- 看板（可切换的次要视图） -->
+    <main class="board" id="board" hidden>
       <section class="col" data-col="queued">
         <header class="col-head amber">
           <span class="dot"></span>队列中 <span class="cnt" id="cntQueued">0</span>
@@ -76,7 +87,7 @@
     <div class="empty-tip" id="emptyTip" hidden>
       <div class="empty-box">
         <h3>还没有任务</h3>
-        <p>点击右上角「新建任务」，选择生成模式并填写描述，任务会出现在看板中并自动轮询进度。</p>
+        <p>点击右上角「新建任务」，选择生成模式并填写描述，任务会出现在列表中并自动轮询进度。</p>
       </div>
     </div>
 
@@ -87,10 +98,17 @@
     <div class="modal-overlay" id="newTaskModal" hidden>
       <div class="modal wide">
         <div class="modal-head">
-          <h2>新建视频生成任务</h2>
+          <h2>新建生成任务</h2>
           <button class="modal-close" data-close>✕</button>
         </div>
         <div class="modal-body">
+          <!-- P1：任务类型大 Tab（视频 / 图片），切换两套表单 -->
+          <div class="type-tabs" id="taskTypeTabs">
+            <button class="type-tab active" data-ptype="video"><span class="pt-emoji">🎬</span>生成视频</button>
+            <button class="type-tab" data-ptype="image"><span class="pt-emoji">🖼️</span>生成图片</button>
+          </div>
+
+          <!-- 视频任务表单 -->
           <div id="v25Form">
             <div class="tabs" id="modeTabs">
               <button class="tab active" data-mode="text">文生视频</button>
@@ -178,6 +196,64 @@
             </div>
           </div>
           <!-- /v25Form -->
+
+          <!-- P1：图片任务表单（与视频表单互斥显示） -->
+          <div id="imageForm" hidden>
+            <div class="field">
+              <label
+                >图片描述 prompt <span class="hint">建议：主体 → 外观细节 → 场景与光线 → 构图视角 → 风格</span></label
+              >
+              <textarea
+                id="fiPrompt"
+                rows="4"
+                placeholder="例：一只橘色虎斑猫趴在洒满阳光的窗台上，窗外是模糊的城市街景，温暖逆光，特写镜头，胶片质感"
+              ></textarea>
+              <div class="tmpl-row">
+                <span class="hint">示例模板：</span>
+                <select id="fiTemplate">
+                  <option value="">— 选择示例 —</option>
+                  <option value="img-cat">窗台上的橘猫</option>
+                  <option value="img-landscape">雪山湖泊晨雾</option>
+                  <option value="img-portrait">古风少女半身像</option>
+                  <option value="img-product">极简产品静物</option>
+                </select>
+                <button
+                  type="button"
+                  class="btn ghost sm"
+                  id="btnAiOptimizeImage"
+                  title="用文本模型把当前描述优化为结构化图片提示词"
+                >
+                  ✨ AI 优化描述
+                </button>
+              </div>
+              <p class="media-hint" id="fiHint">
+                多张候选可在生成完成后逐张下载；挂接创作项目时（工作台内发起）会自动进入项目图库。
+              </p>
+            </div>
+            <div class="grid2">
+              <div class="field">
+                <label>size 分辨率</label>
+                <select id="fiSize"></select>
+              </div>
+              <div class="field">
+                <label>ratio 画幅比例</label>
+                <select id="fiRatio"></select>
+              </div>
+              <div class="field">
+                <label>候选张数 count</label>
+                <select id="fiCount">
+                  <option value="1">1 张</option>
+                  <option value="2" selected>2 张</option>
+                  <option value="3">3 张</option>
+                  <option value="4">4 张</option>
+                </select>
+              </div>
+              <div class="field">
+                <label>&nbsp;</label>
+                <p class="hint" style="margin: 0">生成约需 10–90 秒/张，提交后在任务中心跟踪进度。</p>
+              </div>
+            </div>
+          </div>
         </div>
         <div class="modal-foot">
           <button class="btn ghost" data-close>取消</button>
