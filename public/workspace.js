@@ -49,11 +49,22 @@
       body: '把文稿交给 TTS 合成人声：用「从分镜填充旁白」快速带入每镜文案，生成后在配音墙试听并「绑定到镜头」，渲染时旁白会与画面自动对齐。想换声音？到「声音广场」试听喜欢的音色加入备选池。',
     },
     6: {
+      tip: '给片子挑一首背景音乐（可选）',
+      body: '搜索在线曲库、试听、一键选用一首 BGM。渲染时音乐会循环铺底、首尾淡入淡出，有旁白时自动闪避（说话时压低音乐让人声突出）；音量可在下一步「高级配置」中微调。不选 BGM 也可以直接渲染成片。',
+    },
+    7: {
       tip: '一键合成完整短片',
-      body: '把已完成镜头 + 旁白 + BGM 用本地 ffmpeg 合成完整短片：自动叠化转场、字幕烧录、旁白闪避、全片响度标准化（-16 LUFS）。至少需要 2 个已完成镜头。渲染在后台进行，完成后可直接播放、下载，并附 3 张封面候选。',
+      body: '把已完成镜头 + 旁白 + BGM 用本地 ffmpeg 合成完整短片：自动叠化转场、字幕烧录、旁白闪避、全片响度标准化（-16 LUFS）。至少需要 2 个已完成镜头。渲染在后台进行，完成后可直接播放、下载，并附 3 张封面候选与质检报告。',
     },
   };
-  const STEP_TITLES = { 2: '文案与提示词', 3: '角色设定图', 4: '视频生成', 5: '配音', 6: '成片渲染' };
+  const STEP_TITLES = {
+    2: '文案与提示词',
+    3: '角色设定图',
+    4: '视频生成',
+    5: '配音',
+    6: '背景音乐',
+    7: '成片渲染',
+  };
 
   /* ---------------- P2：成片风格预设（一键套用整套渲染配方） ---------------- */
   const FILM_PRESETS = [
@@ -315,7 +326,7 @@
     </details>`;
   }
   /** 步骤底部导航：上一步 / 下一步（下一步的校验在 bindStepNav 内做） */
-  function stepNavHTML(n, firstStep = 2, lastStep = 6) {
+  function stepNavHTML(n, firstStep = 2, lastStep = 7) {
     if (n >= lastStep) return '';
     const prev = n > firstStep ? `<button class="btn ghost sm" data-step-prev="${n}">← 上一步</button>` : '';
     return `<div class="step-nav">${prev}<span class="spacer" style="flex:1"></span><button class="btn primary sm" data-step-next="${n}">下一步：${esc(STEP_TITLES[n + 1] || '')} →</button></div>`;
@@ -368,6 +379,9 @@
           if (!currentProjectId || $('#workspaceView')?.hidden) return;
           if (Date.now() < stepFollowUntil) return;
           const marks = [
+            ['#wsRenderSection', 7],
+            ['#wsBgmSection', 6],
+            ['#wsTtsSection', 5],
             ['#wsVideoSection', 4],
             ['#wsCharSection', 3],
             ['#wsCopySections', 2],
@@ -376,7 +390,7 @@
           const doc = document.documentElement;
           // 页面已滚到底 → 最后一步；否则取「顶部越过视口上沿 300px 内」的最近区块
           if (window.innerHeight + window.scrollY >= doc.scrollHeight - 60) {
-            cur = 4;
+            cur = 7;
           } else {
             for (const [sel, n] of marks) {
               const el = document.querySelector(sel);
@@ -631,7 +645,8 @@
       3: Boolean(selChar),
       4: tasks.length > 0, // M2 起 projects.status 退役，纯聚合推导
       5: (d.tts || []).length > 0,
-      6: completedShots >= 2, // v1.3：≥2 个完成镜头即可渲染成片
+      6: Boolean(p.bgm?.song_id), // v2.2：BGM 独立步骤（可选，未选不影响渲染）
+      7: completedShots >= 2, // v2.2：≥2 个完成镜头即可渲染成片（渲染置为最后一步）
     };
     const stepState = (n) => (stepsDone[n] ? 'done' : '');
     let renderJobs = [];
@@ -653,7 +668,7 @@
     })();
 
     const ws = $('#workspaceView');
-    const doneCount = [1, 2, 3, 4, 5, 6].filter((n) => stepsDone[n]).length;
+    const doneCount = [1, 2, 3, 4, 5, 6, 7].filter((n) => stepsDone[n]).length;
     ws.innerHTML = `
       <div class="ws-pad">
         <div class="ws-head">
@@ -664,13 +679,14 @@
           <button class="btn ghost sm" id="wsGuideToggle" title="显示/隐藏各步骤的新手说明卡">${guideOff() ? '📖 新手引导：关' : '📖 新手引导：开'}</button>
           <button class="btn ghost danger" id="wsDel" title="删除项目（关联的视频任务保留）">删除</button>
         </div>
-        <div class="steps">
+        <div class="steps" id="wsSteps">
           <div class="step ${stepState(1)} ${currentStep === 1 ? 'active' : ''}" data-step="1"><span class="n">①</span>创意</div>
           <div class="step ${stepState(2)} ${currentStep === 2 ? 'active' : ''}" data-step="2"><span class="n">②</span>文案与提示词</div>
           <div class="step ${stepState(3)} ${currentStep === 3 ? 'active' : ''}" data-step="3"><span class="n">③</span>角色设定图</div>
           <div class="step ${stepState(4)} ${currentStep === 4 ? 'active' : ''}" data-step="4"><span class="n">④</span>视频生成</div>
           <div class="step ${stepState(5)} ${currentStep === 5 ? 'active' : ''}" data-step="5"><span class="n">⑤</span>配音</div>
-          <div class="step ${stepState(6)} ${currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>成片</div>
+          <div class="step ${stepState(6)} ${currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>背景音乐</div>
+          <div class="step ${stepState(7)} ${currentStep === 7 ? 'active' : ''}" data-step="7"><span class="n">⑦</span>成片</div>
         </div>
         ${p.auto_state ? `<div id="wsAutoHolder" class="mt">${autoTimelineHTML(p.auto_state)}</div>` : '<div id="wsAutoHolder" class="mt" hidden></div>'}
         ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b>（已完成 ${doneCount}/6 步）</span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
@@ -833,10 +849,25 @@
           ${stepNavHTML(5)}
         </div>
 
-        <!-- ⑥ 成片渲染（v1.3；v2.0 风格预设 + 高级配置） -->
+        <!-- ⑥ 背景音乐（v2.2 独立步骤：渲染前置的最后准备，可选） -->
+        <div class="copy-sect" id="wsBgmSection">
+          <h4>🎵 背景音乐 <span class="muted" style="font-weight:400">可选：搜索在线曲库选用一首，渲染时循环铺底并自动闪避</span></h4>
+          ${stepGuideHTML(6)}
+          <div class="row" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input id="wsBgmQuery" placeholder="搜索歌曲 / 歌手，如：夜空中最亮的星" style="flex:1;min-width:200px" />
+            <button class="btn ghost sm" id="wsBgmSearch">🔍 搜索</button>
+          </div>
+          <div id="wsBgmCurrent" class="mt">${bgmCurrentHtml(p.bgm)}</div>
+          <div id="wsBgmResults" class="mt"></div>
+          <audio id="wsBgmAudio" preload="none" style="display:none"></audio>
+          <div class="hint mt">BGM 音量与「旁白闪避」开关在下一步「高级配置」中调整；不选 BGM 也可直接渲染。</div>
+          ${stepNavHTML(6)}
+        </div>
+
+        <!-- ⑦ 成片渲染（v2.2 置于最后一步；v2.0 风格预设 + 高级配置） -->
         <div class="copy-sect" id="wsRenderSection">
           <h4>🎞️ 成片渲染 <span class="muted" style="font-weight:400">已完成镜头 + 逐镜旁白 → 完整短片（本地 ffmpeg 合成）</span></h4>
-          ${stepGuideHTML(6)}
+          ${stepGuideHTML(7)}
           <!-- P2：成片风格预设卡片（一键套用整套配方，小白一步到位） -->
           <div class="film-preset-row" id="wsFilmPresets">
             ${FILM_PRESETS.map(
@@ -922,16 +953,6 @@
             </div>
             <div class="hint mt">混音链：旁白高通+压缩+增益 → BGM 循环铺底+首尾淡入淡出 → 旁白闪避 → 全片响度标准化（-16 LUFS）。成片 1280×720@30，服务端后台渲染。</div>
           </details>
-          <div class="mt" style="border-top:1px dashed #2a3244;padding-top:10px">
-            <b>🎵 背景音乐（BGM）</b> <span class="hint">搜索在线曲库选用一首，渲染时循环铺底、首尾淡入淡出；有旁白时自动闪避（压低音乐让人声突出）</span>
-            <div class="row" style="display:flex;gap:8px;align-items:center;margin-top:6px;flex-wrap:wrap">
-              <input id="wsBgmQuery" placeholder="搜索歌曲 / 歌手，如：夜空中最亮的星" style="flex:1;min-width:200px" />
-              <button class="btn ghost sm" id="wsBgmSearch">🔍 搜索</button>
-            </div>
-            <div id="wsBgmCurrent" class="mt">${bgmCurrentHtml(p.bgm)}</div>
-            <div id="wsBgmResults" class="mt"></div>
-            <audio id="wsBgmAudio" preload="none" style="display:none"></audio>
-          </div>
           <div id="wsRenderJobs" class="mt">${renderJobs.map(renderJobItem).join('')}</div>
         </div>
       </div>`;
@@ -947,7 +968,8 @@
       3: '#wsCharSection',
       4: '#wsVideoSection',
       5: '#wsTtsSection',
-      6: '#wsRenderSection',
+      6: '#wsBgmSection',
+      7: '#wsRenderSection',
     };
     ws.querySelectorAll('.step[data-step]').forEach((el) => {
       el.onclick = () => {
@@ -992,7 +1014,8 @@
         }
         if (n === 3 && !selChar && !confirm('尚未定稿角色图——后续镜头视频将无法引用角色外观一致性。仍要继续？')) return;
         if (n === 4 && !tasks.length) toast('提示：还没有提交镜头任务，配音可先准备', 'warn');
-        if (n === 5 && completedShots < 2) toast('提示：渲染需要至少 2 个已完成镜头，可先了解成片设置', 'warn');
+        if (n === 6 && !p.bgm?.song_id) toast('提示：未选 BGM 也可以渲染成片（纯旁白 / 静音）', 'warn');
+        if (n === 6 && completedShots < 2) toast('提示：渲染需要至少 2 个已完成镜头，可先了解成片设置', 'warn');
         gotoStep(n + 1);
       };
     });
