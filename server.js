@@ -13,6 +13,14 @@
  */
 const path = require('node:path');
 const fs = require('node:fs');
+// 屏蔽 node:sqlite 的 ExperimentalWarning（Node 22 内置模块标记为实验特性，
+// 首次打开数据库即打印；功能已稳定验证，此警告无行动价值）。必须在 require('./db') 之前注册。
+process.removeAllListeners('warning');
+process.on('warning', (w) => {
+  if (w?.name === 'ExperimentalWarning' && String(w?.message || '').includes('SQLite')) return;
+  // 其余警告正常输出到 stderr（行为与默认一致）
+  console.error(w?.stack || w);
+});
 const express = require('express');
 const { settings, DB_PATH, acquireInstanceLock, refreshInstanceLock, DEFAULT_SETTINGS } = require('./db');
 const poller = require('./poller');
