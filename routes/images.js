@@ -2,7 +2,7 @@
 /**
  * routes/images.js —— 图片生成（文生图 / 图生图，多张候选）（v1.9.1 拆分自 server.js）
  */
-const { settings, DEFAULT_SETTINGS, projects } = require('../db');
+const { settings, DEFAULT_SETTINGS, projects, tasks } = require('../db');
 const agnes = require('../agnes');
 const { downloadArtifact } = require('../artifacts');
 const { log } = require('../logger');
@@ -11,6 +11,41 @@ const { ApiError, ah } = require('../errors');
 const { buildImagePayload, safeUrl } = require('../services/payloads');
 
 module.exports = function registerImageRoutes(app) {
+  // P1：图片生成异步任务入口（入队即返回，由 image-worker 后台执行；
+  // 产物统一进任务中心列表/详情，可重试；不挂项目时结果仅留在任务记录中）
+  app.post(
+    '/api/images/tasks',
+    ah(async (req, res) => {
+      const { payload, prompt, size, ratio } = buildImagePayload(req.body);
+      const b = req.body || {};
+      const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
+      const imageKind = ['character', 'scene'].includes(b.kind) ? b.kind : 'character';
+      let projectId = null;
+      if (b.project_id !== undefined && b.project_id !== null && b.project_id !== '') {
+        projectId = Number(b.project_id);
+        if (!projects.get(projectId)) throw new ApiError(404, '项目不存在');
+      }
+      const apiKey = settings.get('api_key', '');
+      if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+      const id = tasks.insert({
+        kind: 'image',
+        status: 'queued',
+        mode: 'text',
+        model: IMAGE_MODEL,
+        prompt,
+        size,
+        aspect_ratio: ratio || '1:1',
+        request_json: { ...payload, count, image_kind: projectId ? imageKind : null },
+        project_id: projectId,
+      });
+      log(
+        'info',
+        `图片任务 #${id} 已入队（${count} 张 · ${size}${ratio ? ` · ${ratio}` : ''}${projectId ? ` · 项目 #${projectId}` : ' · 独立创作'}），后台工作器将执行生成`,
+      );
+      res.status(201).json(tasks.get(id));
+    }),
+  );
+
   // 图片生成（文生图 / 图生图，同步；count 支持 1/2/4 张并行，供挑选种子图）
   app.post(
     '/api/images/generate',

@@ -5,24 +5,28 @@
  */
 const { tasks, projects, tx } = require('../db');
 const poller = require('../poller');
+const submitter = require('../submitter');
+const imageWorker = require('../image-worker');
 const { log } = require('../logger');
 const { ApiError, ah } = require('../errors');
-const { buildPayload, submitTask } = require('../services/payloads');
+const { buildPayload, submitTask } = require('../services/payloads'); // 创建任务仍走入队语义
 
 module.exports = function registerTaskRoutes(app) {
   // 统计
   app.get('/api/stats', (req, res) => res.json(tasks.stats()));
 
-  // 任务列表（过滤 + 搜索 + 分页）
+  // 任务列表（过滤 + 搜索 + 分页；v2.0 起返回 total=满足当前筛选的总条数，供前端翻页）
   app.get('/api/tasks', (req, res) => {
     const { status, q, limit, offset } = req.query;
+    const { items, total } = tasks.page({
+      status: ['queued', 'in_progress', 'completed', 'failed', 'submit_error'].includes(status) ? status : null,
+      q: q ? String(q).slice(0, 200) : null,
+      limit,
+      offset,
+    });
     res.json({
-      items: tasks.list({
-        status: ['queued', 'in_progress', 'completed', 'failed', 'submit_error'].includes(status) ? status : null,
-        q: q ? String(q).slice(0, 200) : null,
-        limit,
-        offset,
-      }),
+      items,
+      total,
       stats: tasks.stats(),
     });
   });
@@ -56,7 +60,8 @@ module.exports = function registerTaskRoutes(app) {
     res.json(t);
   });
 
-  // 重试（以原参数创建新任务，保留失败记录便于审计）
+  // 重试（v2.1：原任务原地重新入队——失败 → 队列中 → 生成中 → 完成/失败，任务 ID 不变，
+  // 不再新建记录；输入参数与 project/shot/image 溯源全部保留，retry_count 自增）
   app.post(
     '/api/tasks/:id/retry',
     ah(async (req, res) => {
@@ -65,36 +70,15 @@ module.exports = function registerTaskRoutes(app) {
       if (!['failed', 'submit_error'].includes(t.status)) {
         throw new ApiError(400, `仅 failed / submit_error 状态可重试，当前状态：${t.status}`);
       }
-      const meta = {
-        model: t.model,
-        mode: t.mode,
-        prompt: t.prompt,
-        seconds: t.seconds,
-        size: t.size,
-        aspect_ratio: t.aspect_ratio,
-        seed: t.seed,
-        first_frame: t.first_frame,
-        last_frame: t.last_frame,
-        images: t.images,
-        audios: t.audios,
-        videos: t.videos,
-        image: t.image,
-        num_frames: t.num_frames,
-        frame_rate: t.frame_rate,
-        width: t.width,
-        height: t.height,
-        negative_prompt: t.negative_prompt,
-      };
-      // v1.9 修复：重试保留溯源（网络波动重试不再丢 project/shot 关联，避免渲染跳过镜头）
-      const opts = {
-        project_id: t.project_id || null,
-        shot_id: t.shot_id || null,
-        image_id: t.image_id || null,
-      };
-      const { payload } = buildPayload(meta);
-      const task = await submitTask(payload, meta, opts);
-      log('info', `任务 #${t.id} 重试 → 新任务 #${task.id}（project=${t.project_id} shot=${t.shot_id}）`);
-      res.status(201).json({ old: t, task });
+      const retried = tasks.retry(t.id);
+      if (!retried) throw new ApiError(409, '重试失败（任务状态可能已被并发修改，请刷新后重试）');
+      submitter.kick(retried.id); // 清退避标记并唤醒提交器（图片任务由 image-worker 自然接管）
+      imageWorker.kick(retried.id);
+      log(
+        'info',
+        `任务 #${retried.id} 已重新入队（第 ${retried.retry_count} 次重试，原任务原地流转，${retried.kind === 'image' ? '图片' : '视频'}任务）`,
+      );
+      res.json({ ok: true, task: retried, reused: true });
     }),
   );
 
