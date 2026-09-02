@@ -6,8 +6,10 @@
 const {
   parseLLMJson,
   normalizeStoryboardShots,
+  clampNarration,
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
+  REVIEW_SYSTEM_PROMPT,
 } = require('../../services/prompts');
 
 describe('parseLLMJson', () => {
@@ -79,6 +81,45 @@ describe('normalizeStoryboardShots', () => {
     expect(out[0].title).toHaveLength(100);
     expect(out[0].video_prompt).toHaveLength(8000);
   });
+
+  test('v2.0.3 旁白按镜头秒数限长：5 秒镜 ≤ 20 字（含标点），超长在句读处截断', () => {
+    // 5s 镜 38 字旁白（旧 bug 真实样本形态）→ 截到 ≤21 字且以句读收尾
+    const long = '末班地铁开走后，只剩老周一人在车厢里慢慢拖着地。四十年了，他习惯了这种安静。';
+    const out = normalizeStoryboardShots([{ video_prompt: 'x', narration: long, seconds: '5' }]);
+    const n = out[0].narration;
+    expect(n.length).toBeLessThanOrEqual(21);
+    expect(/[。！？，；]$/.test(n)).toBe(true);
+    // 长镜不受 5 秒上限影响（10s ≤ 40 字）
+    const mid = '他数着自己的脚步，像数着一整个夏天的黄昏。';
+    expect(normalizeStoryboardShots([{ video_prompt: 'x', narration: mid, seconds: '10' }])[0].narration).toBe(mid);
+  });
+});
+
+describe('clampNarration（v2.0.3 旁白限长纯函数）', () => {
+  test('未超上限原样返回（含 null/空归一化为 null）', () => {
+    expect(clampNarration('短旁白。', 5)).toBe('短旁白。');
+    expect(clampNarration(null, 5)).toBeNull();
+    expect(clampNarration('', 5)).toBeNull();
+  });
+
+  test('上限 = 秒数 × 4（5s→20、12s→48）；无句读时硬截断', () => {
+    expect(clampNarration('一'.repeat(19), 5)).toHaveLength(19);
+    expect(clampNarration('一'.repeat(25), 5)).toHaveLength(20); // 无句读 → 硬截 20
+    expect(clampNarration('一'.repeat(50), 12)).toHaveLength(48);
+  });
+
+  test('超长优先在句读处截断，且保留至少 8 字', () => {
+    const r = clampNarration('前八个字没有句读然后出现逗号，后面是很长很长很长很长很长的尾巴内容超过上限。', 5);
+    expect(r.length).toBeLessThanOrEqual(21);
+    expect(r).toContain('，');
+    // 句读过早（截后不足 8 字）→ 舍弃句读硬截断
+    const early = clampNarration('两字，后面全是没有任何标点的超长内容超出五秒上限很多很多', 5);
+    expect(early.length).toBeLessThanOrEqual(21);
+  });
+
+  test('seconds 非法按 5 秒兜底', () => {
+    expect(clampNarration('一'.repeat(25), 'abc')).toHaveLength(20);
+  });
 });
 
 describe('prompt 模板完整性（防误删/篡改）', () => {
@@ -93,5 +134,11 @@ describe('prompt 模板完整性（防误删/篡改）', () => {
     expect(STORYBOARD_SYSTEM_PROMPT).toContain('"shots"');
     expect(STORYBOARD_SYSTEM_PROMPT).toContain('narration');
     expect(STORYBOARD_SYSTEM_PROMPT).toContain('"4"~"12"');
+    // v2.0.3：旁白字数与镜头秒数挂钩（配音约 5 字/秒，超长会被截断）
+    expect(STORYBOARD_SYSTEM_PROMPT).toContain('seconds × 4');
+  });
+
+  test('审查模板含旁白时长维度（v2.0.3）', () => {
+    expect(REVIEW_SYSTEM_PROMPT).toContain('seconds × 4');
   });
 });

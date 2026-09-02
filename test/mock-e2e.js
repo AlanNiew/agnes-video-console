@@ -167,7 +167,7 @@ const mockServer = http.createServer(async (req, res) => {
             severity: 'low',
             field: 'narration',
             issue: '旁白与画面内容重复，缺少推进感',
-            revised: '黄昏把土路拉得很长，少年把整个夏天走成了一行脚印。',
+            revised: '暮色拉长了土路，夏天走成了脚印。',
           },
           {
             shot_seq: 2,
@@ -189,7 +189,7 @@ const mockServer = http.createServer(async (req, res) => {
             title: '开场：麦田远景',
             video_prompt:
               '以 <Picture 1> 中的角色为参考，保持其外观一致。黄昏麦田大全景，少年背影走向远方，镜头缓慢推进，暖金色逆光，风声与自然环境声',
-            narration: '黄昏的麦田在风里起伏，少年把影子留在了土路上。',
+            narration: '黄昏麦田起伏，少年走在土路上。',
             seconds: '5',
           },
           {
@@ -1411,7 +1411,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     }
     // L1 自动修订：low 严重度的旁白修订应已写入镜头 1（medium/low 自动采纳，high 留人工）
     const autoDetail = (await api('GET', `/api/projects/${apid}`)).data;
-    if (!autoDetail.shots.some((s) => s.narration === '黄昏把土路拉得很长，少年把整个夏天走成了一行脚印。'))
+    if (!autoDetail.shots.some((s) => s.narration === '暮色拉长了土路，夏天走成了脚印。'))
       err('L1 自审的 low 严重度修订未自动应用到镜头旁白');
     if (autoDetail.tasks.some((t) => t.status !== 'completed')) err('全自动后存在未完成的视频任务');
     const autoJobs = (await api('GET', `/api/projects/${apid}/render/jobs`)).data.items;

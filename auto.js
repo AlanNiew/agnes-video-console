@@ -318,12 +318,8 @@ class AutoPipeline {
 
   /** ④ 角色图：入队异步图片任务（image-worker 接管），随后轮询其完成 */
   async doCharacter(projectId, p, st) {
-    // 已有定稿角色图 → 直接下一步
-    if (projects.selectedImage(projectId, 'character')) {
-      this.advance(projectId, 'videos', '角色图已定稿，跳过生成');
-      return;
-    }
-    // 有在途图片任务 → 等待完成（本 tick 只查状态）
+    // 有在途图片任务 → 先查状态（v2.0.3：此分支须在「已定稿」之前——
+    // 工作器完成时会自动定稿，若先查定稿会把「本流水线生成的图」误报为「跳过生成」）
     if (st.image_task_id) {
       const t = tasks.get(st.image_task_id);
       if (!t) {
@@ -347,6 +343,11 @@ class AutoPipeline {
         throw new Error(`角色图任务失败：${String(t.error_message || '').slice(0, 200)}`);
       }
       return; // queued / in_progress：下轮 tick 再查
+    }
+    // 无在途任务但已有定稿角色图（如全自动前手动定稿过）→ 直接下一步
+    if (projects.selectedImage(projectId, 'character')) {
+      this.advance(projectId, 'videos', '已有定稿角色图，跳过生成');
+      return;
     }
     // 无在途任务 → 入队（角色描述优先用文案中的 character_desc）
     const charDesc = projects.selectedText(projectId, 'character_desc')?.content || p.idea;
