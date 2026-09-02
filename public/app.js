@@ -1396,6 +1396,8 @@
     await loadSettings();
     await loadTasks();
     startLoop();
+    // v2.2.2：默认落在第一个 tab「创作工作台」（新手从创作入口开始；任务中心统计仍在顶栏常驻可见）
+    switchView('workspace');
   }
 
   document.addEventListener('DOMContentLoaded', init);
