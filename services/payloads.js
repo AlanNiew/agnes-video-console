@@ -1,12 +1,10 @@
 'use strict';
 /**
- * services/payloads.js —— 请求体校验与上游 payload 构建 + 任务入队（v1.9.1 拆分自 server.js）
- * 纯校验/组装逻辑，不依赖 express（可单测的部分占大头）；
- * submitTask 依赖 db/submitter/logger（入队即触发后台提交）。
+ * services/payloads.js —— 请求体校验与上游 payload 构建（v1.9.1 拆分自 server.js）
+ * 纯校验/组装逻辑，不依赖 express 与任何后台 worker（可单测的部分占大头）；
+ * 「任务入队」动作在 services/task-queue.js（M2 分层纪律：payloads 不接触提交器）。
  */
-const { settings, tasks, DEFAULT_SETTINGS } = require('../db');
-const submitter = require('../workers/submitter');
-const { log } = require('../core/logger');
+const { settings, DEFAULT_SETTINGS } = require('../db');
 const {
   MODELS,
   MODES,
@@ -314,29 +312,6 @@ function buildImagePayload(b) {
   return { payload, prompt, size, ratio: b.ratio !== undefined ? ratio : null, inputImages };
 }
 
-/* ---------------- 任务入队 ---------------- */
-
-/** 创建任务记录并进入提交队列（v1.3）：
- * 不再同步调用上游 —— 由后台提交器（submitter.js）按 submit_interval_ms 节流提交，
- * 429 / 网络错误自动退避重试，把「限流撞墙」变成「排队等待」。 */
-async function submitTask(payload, meta, opts = {}) {
-  const apiKey = settings.get('api_key', '');
-  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
-
-  const id = tasks.insert({
-    status: 'queued',
-    ...meta,
-    request_json: payload,
-    project_id: opts.project_id || null,
-    shot_id: opts.shot_id || null,
-    text_id: opts.text_id || null,
-    image_id: opts.image_id || null,
-  });
-  submitter.kick(id); // 立即唤醒提交器尝试首次提交（是否放行仍受最小间隔约束）
-  log('info', `任务 #${id} 已入队（${meta.model}，后台提交器按间隔提交，429 自动重试）`);
-  return tasks.get(id);
-}
-
 module.exports = {
   isHttpUrl,
   safeUrl,
@@ -347,5 +322,4 @@ module.exports = {
   buildV25Payload,
   buildPayload,
   buildImagePayload,
-  submitTask,
 };

@@ -16,7 +16,8 @@ const {
   SHOT_MODES,
 } = require('../core/constants');
 const { ApiError, ah } = require('../core/errors');
-const { buildPayload, submitTask } = require('../services/payloads');
+const { buildPayload } = require('../services/payloads');
+const { submitTask } = require('../services/task-queue');
 const { normalizeStoryboardShots } = require('../services/prompts');
 
 /* 流水线服务层（镜头/项目视频提交编排，M2） */

@@ -23,11 +23,7 @@ process.on('warning', (w) => {
 });
 const express = require('express');
 const { settings, DB_PATH, acquireInstanceLock, refreshInstanceLock, DEFAULT_SETTINGS } = require('./db');
-const poller = require('./workers/poller');
-const submitter = require('./workers/submitter');
-const imageWorker = require('./workers/image-worker');
-const renderer = require('./workers/render');
-const autoPipeline = require('./workers/auto');
+const workerManager = require('./workers/manager');
 const { ARTIFACTS_DIR, WORKS_DIR } = require('./lib/artifacts');
 const { log } = require('./core/logger');
 const { ApiError } = require('./core/errors');
@@ -90,11 +86,7 @@ for (const [k, v] of Object.entries(DEFAULT_SETTINGS)) {
 // v1.6.1 单实例工作锁：后台工作器（轮询/提交/渲染）全局只允许一份。
 // 拿到锁的实例运行工作器；未拿到的仅提供 API，并每 30s 尝试接管（持有者消亡后锁 15s 过期）。
 function startWorkers() {
-  poller.start();
-  submitter.start();
-  imageWorker.start();
-  renderer.start();
-  autoPipeline.start();
+  workerManager.startAll();
 }
 if (acquireInstanceLock()) {
   startWorkers();
@@ -125,9 +117,7 @@ const server = app.listen(PORT, '127.0.0.1', () => {
 
 function shutdown(signal) {
   log('info', `收到 ${signal}，正在关闭...`);
-  poller.stop();
-  imageWorker.stop();
-  autoPipeline.stop();
+  workerManager.stopAll();
   server.close(() => {
     require('./db').db.close();
     process.exit(0);

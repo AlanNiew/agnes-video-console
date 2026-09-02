@@ -6,7 +6,7 @@
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const agnes = require('../clients/agnes');
 const netmusic = require('../clients/netmusic');
-const poller = require('../workers/poller');
+const manager = require('../workers/manager');
 const { log } = require('../core/logger');
 const { MODELS } = require('../core/constants');
 const { ApiError } = require('../core/errors');
@@ -153,7 +153,7 @@ module.exports = function registerSettingsRoutes(app) {
       changed.push('fish_web_token');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
-    if (changed.includes('poll_interval_ms') || !poller.timer) poller.start();
+    manager.syncPoller(changed);
     log('info', `设置已更新: ${changed.join(', ') || '无'}`);
     res.json({ ok: true, changed });
   });

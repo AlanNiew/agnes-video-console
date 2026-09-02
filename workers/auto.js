@@ -37,7 +37,8 @@ const {
   normalizeStoryboardShots,
   normalizeReviewResult,
 } = require('../services/prompts');
-const { buildPayload, submitTask } = require('../services/payloads');
+const { buildPayload } = require('../services/payloads');
+const { submitTask } = require('../services/task-queue');
 const { createPipelineService } = require('../services/pipeline');
 
 const TICK_MS = 3000;

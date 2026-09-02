@@ -4,7 +4,8 @@
  * 注意：buildSubtitleAss 未从模块导出独立函数明细，但 assTime/wrapCJK 为内部函数，
  * 这里经 buildSubtitleAss 的输出间接断言（与 e2e 的做法一致但更细）。
  */
-const { buildSubtitleAss, buildSrt, escDrawtext } = require('../../workers/render');
+const { buildSubtitleAss, buildSrt } = require('../../services/subtitles');
+const { escDrawtext } = require('../../workers/render');
 
 describe('buildSubtitleAss', () => {
   test('生成标准 ASS 头（Script Info / Style / Events）', () => {

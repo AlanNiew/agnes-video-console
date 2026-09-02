@@ -1265,7 +1265,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       err(`subtitle_position 未生效: ${ren.data.params?.subtitle_position}`);
     // v1.6：ASS 字幕生成纯函数（时间轴格式 / 文本转义保留 / 淡入淡出标记）
     {
-      const { buildSubtitleAss } = require('../workers/render');
+      const { buildSubtitleAss } = require('../services/subtitles');
       const ass = buildSubtitleAss(
         [
           { start: 3.3, end: 7.05, text: '测试,字幕{文本}' },

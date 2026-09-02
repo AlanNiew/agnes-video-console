@@ -4,12 +4,11 @@
  * （v1.9.1 拆分自 server.js）
  */
 const { tasks, projects, tx } = require('../db');
-const poller = require('../workers/poller');
-const submitter = require('../workers/submitter');
-const imageWorker = require('../workers/image-worker');
+const manager = require('../workers/manager');
 const { log } = require('../core/logger');
 const { ApiError, ah } = require('../core/errors');
-const { buildPayload, submitTask } = require('../services/payloads'); // 创建任务仍走入队语义
+const { buildPayload } = require('../services/payloads');
+const { submitTask } = require('../services/task-queue'); // 创建任务仍走入队语义
 
 module.exports = function registerTaskRoutes(app) {
   // 统计
@@ -72,8 +71,7 @@ module.exports = function registerTaskRoutes(app) {
       }
       const retried = tasks.retry(t.id);
       if (!retried) throw new ApiError(409, '重试失败（任务状态可能已被并发修改，请刷新后重试）');
-      submitter.kick(retried.id); // 清退避标记并唤醒提交器（图片任务由 image-worker 自然接管）
-      imageWorker.kick(retried.id);
+      manager.kickTask(retried.id); // 清退避标记并唤醒提交器/图片工作器按其类型接管
       log(
         'info',
         `任务 #${retried.id} 已重新入队（第 ${retried.retry_count} 次重试，原任务原地流转，${retried.kind === 'image' ? '图片' : '视频'}任务）`,
@@ -87,7 +85,7 @@ module.exports = function registerTaskRoutes(app) {
     '/api/tasks/:id/poll',
     ah(async (req, res) => {
       try {
-        const status = await poller.pollNow(req.params.id);
+        const status = await manager.pollNow(req.params.id);
         res.json({ ok: true, status });
       } catch (e) {
         throw new ApiError(e.message === '任务不存在' ? 404 : 400, e.message);
