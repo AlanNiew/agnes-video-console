@@ -31,13 +31,17 @@ core/         零/低依赖基元：constants（模型清单/白名单/上限/TT
               · config（跨模块单源常量）· errors（ApiError/ah，勿再造裸 Error+expose）
               · logger（内存环形日志）· openapi（API 自描述，读 package.json）
 clients/      上游客户端：agnes（视频/chat/图片 API）· fish-tts（TTS，CONNECT 隧道）· netmusic（BGM）
-services/     纯校验与组装（payloads / prompts / voice-pool）；pipeline 为依赖注入编排
+services/     业务层：payloads（上游请求体校验/组装，不接触提交器）· task-queue（任务入队，
+              建 queued 记录并唤醒 submitter）· prompts（提示词/LLM 输出解析）
+              · subtitles（ASS/SRT 字幕纯函数）· voice-pool；pipeline 为依赖注入编排
 lib/          本地文件/产物支撑：artifacts（素材备份 + works 作品目录定位）· poster（社交海报）
 db.js         数据层（SQLite：任务/项目/文案/图片/镜头/配音/渲染任务表 + 迁移 + 事务 + 实例锁）
               —— import 即副作用（require 即开库），单测前先设 DATA_DIR/DB_PATH
 workers/      后台进程（均受单实例工作锁约束）：submitter（视频提交节流）/ poller（轮询归档）
               / image-worker（图片任务）/ render（成片渲染，ffmpeg 必须经其 runFfmpeg）
               / auto（全自动成片状态机，状态落 projects.auto_state）
+              / manager —— 统一启停全部 worker；routes 驱动后台（轮询间隔重载/重试唤醒/手动轮询）
+                一律经 manager，不得直接 require worker 实例做生命周期操作
 routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序一致（保持现有顺序追加）
 ```
 

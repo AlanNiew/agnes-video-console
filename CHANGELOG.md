@@ -7,6 +7,7 @@
 ### Refactored
 
 - **服务端模块目录归位（纯物理移动，零行为变化）**：根目录平铺的模块按职责收进语义子目录 —— `core/`（constants/config/errors/logger/openapi）、`clients/`（agnes/fish-tts/netmusic）、`workers/`（submitter/poller/image-worker/render/auto）、`lib/`（artifacts/poster），`pipeline.js` 移入 `services/`；全量相对 require 修正。`lint` / `format:check` / 74 单测 / 72 e2e 全绿，59 条 API 契约、`npm start` 运行方式与 `data/` 结构均不变。
+- **M2 分层纪律收拢（零行为变化）**：① 任务入队从 `services/payloads.js` 拆出为 `services/task-queue.js` —— payloads 恢复纯校验/组装、不再依赖提交器；② 新增 `workers/manager.js` 统一启停 5 个后台 worker，并把「轮询间隔重载 / 重试唤醒 / 手动轮询」的驱动向路由收敛（routes/settings、routes/tasks 不再直接 require poller/submitter/image-worker 实例）；③ 字幕纯函数（ASS/SRT）迁至 `services/subtitles.js`，`workers/render.js` 净减约 200 行、仅保留 ffmpeg 编排与归档。`lint` / `format:check` / 单测 / e2e 全绿，59 条 API 契约与运行方式不变。
 
 ## [2.2.1] - 2026-09-02
 

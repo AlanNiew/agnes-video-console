@@ -95,10 +95,10 @@ agnes-video-console/
 ├── server.js            # Express 装配 + 静态服务 + 统一错误中间件 + 启动编排（单实例锁 / 优雅退出）
 ├── core/                # 零/低依赖基元：constants（模型清单/白名单/上限/转场与字幕预设）· config（跨模块单源常量）· errors（ApiError/ah）· logger（内存环形日志）· openapi（API 自描述）
 ├── clients/             # 上游客户端：agnes（视频/chat/图片 API）· fish-tts（TTS，CONNECT 隧道）· netmusic（BGM 音乐接口）
-├── services/            # 纯校验与组装（payloads / prompts / voice-pool）+ pipeline（依赖注入编排）
+├── services/            # 业务层：payloads（请求体校验）· task-queue（任务入队）· prompts · subtitles（字幕纯函数）· voice-pool + pipeline（DI 编排）
 ├── lib/                 # 本地文件/产物支撑：artifacts（素材备份 artifacts + works 作品目录定位）· poster（社交海报）
 ├── db.js                # SQLite 数据层（任务/项目/文案/图片/镜头/配音/渲染任务表 + 自动迁移 + 事务 + 实例锁）
-├── workers/             # 后台进程（单实例工作锁约束）：submitter（提交节流 + 429 退避）· poller（轮询归档）· image-worker（图片任务）· render（成片渲染器）· auto（全自动成片编排器）
+├── workers/             # 后台进程（单实例工作锁约束）：submitter（提交节流 + 429 退避）· poller（轮询归档）· image-worker（图片任务）· render（成片渲染器）· auto（全自动成片编排器）· manager（worker 统一启停/唤醒）
 ├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
 ├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
