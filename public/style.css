@@ -1785,6 +1785,22 @@ html[data-theme='light'] .pc-chip.info {
   border-top: 1px dashed var(--border);
 }
 
+/* v2.2 作品归档目录提示行 */
+.work-dir-row {
+  margin-top: 8px;
+  padding: 6px 10px;
+  font-size: 11.5px;
+  color: #b6bdff;
+  background: rgba(99, 102, 241, 0.08);
+  border: 1px dashed rgba(99, 102, 241, 0.35);
+  border-radius: 7px;
+  word-break: break-all;
+  line-height: 1.6;
+}
+html[data-theme='light'] .work-dir-row {
+  color: #4f46e5;
+}
+
 /* ---------- 顶部导航 tabs ---------- */
 .nav-tabs {
   display: flex;

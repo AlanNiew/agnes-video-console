@@ -2496,6 +2496,11 @@
         <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载成片</a></div></div>`
           : ''
       }
+      ${
+        j.work_dir
+          ? `<div class="work-dir-row" title="${esc(j.work_dir)}">📁 作品已归档：${esc(j.work_dir)}（成片 / 字幕 / 旁白台词 / 海报）</div>`
+          : ''
+      }
       ${qualityHtml}
       ${
         (j.covers || []).length
