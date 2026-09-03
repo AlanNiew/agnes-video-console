@@ -11,6 +11,7 @@ npm run test:mock     # 仅 e2e（自建 mock 上游 :8392，应用拉起于 :83
 npx jest test/unit/payloads.test.js   # 跑单个测试文件
 npm run lint          # eslint（0 errors 才算过；10 个既有 warning 勿需修）
 npm run format        # prettier 写入；format:check 用于 CI 校验
+npm run build         # vite 构建前端 → dist/（M4-B0；dist 已 gitignore）
 npm start             # http://127.0.0.1:8273（仅回环，勿改对外监听）
 ```
 
@@ -64,7 +65,10 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 
 ## 前端约定
 
-- 无构建步骤：经典 `<script>` 顺序加载，`public/common.js` 必须最先加载（`window.__common` 提供 esc/api/fmtTime/toast/$）。
+- 构建：`npm run build`（vite → `dist/`，已 gitignore）。服务端先服务 `dist/`、未构建时回退 `public/`
+  （`public/main.js` 为原生 ESM 入口——顺序 import common→compare→app→workspace，现代浏览器可直接跑源码调试）。
+- 视图模块仍为经典 IIFE + `window.__*` 互调（B0 行为等价阶段）；`public/common.js` 必须最先加载
+  （`window.__common` 提供 esc/api/fmtTime/toast/$）。拆分/重写进度见 `docs/FRONTEND_REFACTOR_PLAN.md`。
 - 插值进 innerHTML 的任何动态内容必须过 `esc()`。
 - 前端无自动化测试——改动后需人工冒烟或跑 e2e 验证后端契约未破坏。
 

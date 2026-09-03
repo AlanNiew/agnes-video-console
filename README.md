@@ -109,7 +109,7 @@ agnes-video-console/
 
 > **找成品**：网页顶部「🏆 我的作品」直接浏览/播放/下载全部成品；本地目录在 `data/works/《作品名》-项目ID/`（工作台第⑦步渲染卡也显示确切路径）。
 
-> 开发命令：`npm test`（jest 单测 + e2e 冒烟全跑）；`npm run test:unit` / `npm run test:mock` 单独跑；`npm run lint` / `npm run format` 代码检查与格式化。
+> 开发命令：`npm test`（jest 单测 + e2e 冒烟全跑）；`npm run test:unit` / `npm run test:mock` 单独跑；`npm run lint` / `npm run format` 代码检查与格式化；`npm run build` 前端构建（vite → dist/，M4-B0）。
 
 ## 📡 本工具自带 API
 

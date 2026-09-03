@@ -7,6 +7,7 @@
 ### Refactored
 
 - **netmusic 客户端解耦数据层**：`clients/netmusic.js` 不再 require db —— 改为依赖注入工厂 `createNetmusicClient(settings)`，由装配方接线（routes/music、routes/settings 只取静态 `LEVELS`，workers/auto、workers/render 注入 settings 后使用）；消除客户端↔数据层耦合，行为不变（e2e BGM 搜索/试听/选用/渲染流全绿）。
+- **M4-B0：前端构建管线（vite）**——引入 `vite`（devDep）与 `vite.config.mjs`（root=public → `dist/`，已 gitignore）；`public/index.html` 改为 ESM 入口 `main.js`（顺序 import common/compare/app/workspace，行为等价阶段）；`server.js` 静态服务 dist 优先、public 回退（未构建时原生 ESM 源码可直接调试）；eslint/prettier 适配 `.mjs`/`dist` ignore，CI 增加 `npm run build`。`lint` / `format:check` / 单测 / e2e（含静态首页）全绿。后续 B1–B4 见 `docs/FRONTEND_REFACTOR_PLAN.md`。
 
 ## [2.2.2] - 2026-09-03
 
