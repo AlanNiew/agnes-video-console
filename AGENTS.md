@@ -35,8 +35,12 @@ services/     业务层：payloads（上游请求体校验/组装，不接触提
               建 queued 记录并唤醒 submitter）· prompts（提示词/LLM 输出解析）
               · subtitles（ASS/SRT 字幕纯函数）· voice-pool；pipeline 为依赖注入编排
 lib/          本地文件/产物支撑：artifacts（素材备份 + works 作品目录定位）· poster（社交海报）
-db.js         数据层（SQLite：任务/项目/文案/图片/镜头/配音/渲染任务表 + 迁移 + 事务）
-              —— import 即副作用（require 即开库），单测前先设 DATA_DIR/DB_PATH
+db/           数据层（require('./db') 由目录解析指向 db/index.js 组合出口，导出契约不变）：
+              ├ kernel.js   连接/PRAGMA/schema DDL/自动迁移/parseJson/tx —— import 即副作用，
+              │             （require 即开库），单测前先设 DATA_DIR/DB_PATH
+              ├ sql.js      prepare 语句注册表（全部 SQL 单一审查点，repos 从这里取）
+              └ repos/      settings / tasks / projects / renders 表族仓库（projects 含
+                            texts/images/shots/tts 子域 CRUD 与级联删除，契约 projects.* 不变）
 instance-lock.js  单实例工作锁（M3 自 db.js 拆出；settings 键原子 CAS），server/各 worker 经此判断锁
 workers/      后台进程（均受单实例工作锁约束）：submitter（视频提交节流）/ poller（轮询归档）
               / image-worker（图片任务）/ render（成片渲染，ffmpeg 必须经其 runFfmpeg）
@@ -53,7 +57,7 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 
 ## 已知技术债（勿扩散，勿顺手大改）
 
-- `db.js` 的 `projects` 对象混装 6 个实体、superseded 业务规则写死在数据层——拆分是既定后续工作，改动前先对齐方案。
+- ~~`db.js` 的 `projects` 对象混装 6 个实体、superseded 业务规则写死在数据层~~ ✅ M3 已还：数据层目录化（`db/`），superseded 标注上移至 API 聚合层，单实例锁独立为根模块。残余：`db/repos/projects.js` 按表族合并了 project/texts/images/shots/tts 四子域（A 档决策），如需可再细拆。
 - `netmusic.js` 直读 db settings（客户端耦合数据层），新客户端勿模仿。
 - `workspace.js`（约 2200 行）全量 innerHTML 重渲染 + `window.__ws`/`window.__app` 全局互调——已知，未列入本次改造范围。
 - 单实例锁的**误接管窗口**（已知不修，收益<成本）：持有者进程存在 >15s 的事件循环同步阻塞（渲染 spawnSync/大文件写盘）会饿死 10s 心跳，锁过期被接管后原持有者在途 tick/renderJob 不复查锁 → 双 worker 并行数分钟（重复轮询/限流失效，产物文件带时间戳不冲突）。锁**获取**已是原子 CAS（v1.9.2，跨进程并发验证通过）；渲染中崩溃遗留任务由 start() 自愈复位。

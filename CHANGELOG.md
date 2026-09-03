@@ -9,6 +9,7 @@
 - **服务端模块目录归位（纯物理移动，零行为变化）**：根目录平铺的模块按职责收进语义子目录 —— `core/`（constants/config/errors/logger/openapi）、`clients/`（agnes/fish-tts/netmusic）、`workers/`（submitter/poller/image-worker/render/auto）、`lib/`（artifacts/poster），`pipeline.js` 移入 `services/`；全量相对 require 修正。`lint` / `format:check` / 74 单测 / 72 e2e 全绿，59 条 API 契约、`npm start` 运行方式与 `data/` 结构均不变。
 - **M2 分层纪律收拢（零行为变化）**：① 任务入队从 `services/payloads.js` 拆出为 `services/task-queue.js` —— payloads 恢复纯校验/组装、不再依赖提交器；② 新增 `workers/manager.js` 统一启停 5 个后台 worker，并把「轮询间隔重载 / 重试唤醒 / 手动轮询」的驱动向路由收敛（routes/settings、routes/tasks 不再直接 require poller/submitter/image-worker 实例）；③ 字幕纯函数（ASS/SRT）迁至 `services/subtitles.js`，`workers/render.js` 净减约 200 行、仅保留 ffmpeg 编排与归档。`lint` / `format:check` / 单测 / e2e 全绿，59 条 API 契约与运行方式不变。
 - **M3 数据层收尾（一）**：① superseded 展示标注上移出数据层 —— `db.js` 的 `projects.tasks()` 恢复纯查询，该规则由 API 聚合层 `routes/projects.js` 的 `annotateSuperseded` 标注（e2e 项目详情契约不变）；② 单实例工作锁自 `db.js` 拆出为根模块 `instance-lock.js`（原子 CAS 语句随迁，server 与 5 个 worker 改从其引用），`db.js` 不再导出锁。`lint` / `format:check` / 单测 / e2e 全绿。
+- **M3 数据层收尾（二）：`db.js` 目录化 + repos 表族拆分** —— 1224 行单文件拆为 `db/` 目录：`kernel.js`（连接/PRAGMA/schema DDL/自动迁移/parseJson/tx，数据目录默认路径修正为仓库根 `data/`）· `sql.js`（全部 prepare 语句单一注册表）· `repos/{settings,tasks,projects,renders}.js`（表族仓库，projects 含 texts/images/shots/tts 子域，`db/index.js` 组合出口保持 `{ db, settings, tasks, projects, renders, tx, DEFAULT_SETTINGS, DB_PATH, DATA_DIR }` 导出契约）。19 处 `require('./db')` 与 `instance-lock.js` 零改动（Node 目录 index 解析）。`lint` / `format:check` / 84 单测 / 72 e2e 全绿。
 
 ## [2.2.1] - 2026-09-02
 
