@@ -60,7 +60,7 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 
 - ~~`db.js` 的 `projects` 对象混装 6 个实体、superseded 业务规则写死在数据层~~ ✅ M3 已还：数据层目录化（`db/`），superseded 标注上移至 API 聚合层，单实例锁独立为根模块。残余：`db/repos/projects.js` 按表族合并了 project/texts/images/shots/tts 四子域（A 档决策），如需可再细拆。
 - ~~`netmusic.js` 直读 db settings（客户端耦合数据层）~~ ✅ M4 已治理：改为依赖注入工厂 `createNetmusicClient(settings)`，装配方（routes/music、routes/settings、workers/auto、workers/render）接线，客户端不再 require db。
-- `workspace.js`（约 2200 行）全量 innerHTML 重渲染 + `window.__ws`/`window.__app` 全局互调——已知，未列入本次改造范围。
+- `workspace.js`（约 2200 行）全量 innerHTML 重渲染 + `window.__ws`/`window.__app` 全局互调——**M4 专项已立项，B0（vite 构建管线）已交付**，B1–B4（ESM 化/局部渲染）按 `docs/FRONTEND_REFACTOR_PLAN.md` 待专项执行。
 - 单实例锁的**误接管窗口**（已知不修，收益<成本）：持有者进程存在 >15s 的事件循环同步阻塞（渲染 spawnSync/大文件写盘）会饿死 10s 心跳，锁过期被接管后原持有者在途 tick/renderJob 不复查锁 → 双 worker 并行数分钟（重复轮询/限流失效，产物文件带时间戳不冲突）。锁**获取**已是原子 CAS（v1.9.2，跨进程并发验证通过）；渲染中崩溃遗留任务由 start() 自愈复位。
 
 ## 前端约定
