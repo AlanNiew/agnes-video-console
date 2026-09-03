@@ -29,6 +29,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node server.js",
+    "build": "vite build",
     "test": "npm run test:unit && npm run test:mock",
     "test:unit": "jest",
     "test:mock": "node test/mock-e2e.js",
@@ -48,6 +49,7 @@
     "eslint-config-prettier": "^10.1.8",
     "globals": "^17.11.0",
     "jest": "^30.5.0",
-    "prettier": "^3.9.6"
+    "prettier": "^3.9.6",
+    "vite": "^8.2.2"
   }
 }

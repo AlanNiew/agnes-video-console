@@ -59,6 +59,9 @@ try {
 app.use('/works', express.static(WORKS_DIR, { maxAge: '7d' }));
 
 /* ---------------- 静态前端 ---------------- */
+// M4-B0：构建产物优先（npm run build → dist/），未构建时回退 public 源码
+// （public/main.js 为原生 ES module 入口，现代浏览器可直接加载，开发/测试双模可用）
+app.use(express.static(path.join(__dirname, 'dist')));
 app.use(express.static(path.join(__dirname, 'public')));
 
 /* ---------------- 错误处理 ---------------- */

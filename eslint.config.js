@@ -42,6 +42,16 @@ module.exports = [
     },
   },
   {
+    // M4-B0：前端 ESM 入口（public/main.js 顺序 import 视图模块）
+    files: ['public/main.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
+  },
+  {
+    // M4-B0：vite 构建配置（ESM）
+    files: ['vite.config.mjs'],
+    languageOptions: { sourceType: 'module', globals: { ...globals.node } },
+  },
+  {
     // e2e 冒烟测试：进程级脚本风格
     files: ['test/mock-e2e.js'],
     languageOptions: { globals: { ...globals.node } },
@@ -54,6 +64,6 @@ module.exports = [
     rules: { 'no-process-exit': 'off' },
   },
   {
-    ignores: ['node_modules/**', 'data/**', 'coverage/**'],
+    ignores: ['node_modules/**', 'data/**', 'coverage/**', 'dist/**'],
   },
 ];

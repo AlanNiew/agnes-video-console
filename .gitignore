@@ -29,3 +29,6 @@ Thumbs.db
 
 # 测试产物
 coverage/
+
+# 前端构建产物（M4-B0：vite build → dist/）
+dist/

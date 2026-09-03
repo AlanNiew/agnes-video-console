@@ -25,6 +25,8 @@ jobs:
         run: npm run lint
       - name: Format check (prettier)
         run: npm run format:check
+      - name: Frontend build (vite → dist，M4-B0)
+        run: npm run build
       - name: Unit tests (jest，74 项)
         run: npm run test:unit
       - name: E2E mock tests (mock 上游 + 真实 ffmpeg 渲染)
