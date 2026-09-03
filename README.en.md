@@ -89,6 +89,7 @@ agnes-video-console/
 ├── services/            # Business layer: payloads (request validation) · task-queue (task enqueue) · prompts · subtitles (ASS/SRT pure fns) · voice-pool + pipeline (DI orchestration)
 ├── lib/                 # Local file/artifact support: artifacts (backup archive + works dir) · poster (social poster)
 ├── db.js                # SQLite layer (tasks / projects / texts / images / shots / tts / render_jobs + migration + transactions)
+├── instance-lock.js     # Single-instance worker lock (atomic CAS on settings key, cross-process mutex; split from db.js in M3)
 ├── workers/             # Background workers (all guarded by the single-instance lock): submitter (throttle + 429 backoff) · poller (poll & archive) · image-worker · render (final-cut renderer) · auto (auto-pipeline state machine) · manager (start/stop & kick facade)
 ├── routes/              # Domain-split API routes (meta / settings / tasks / llm / images / tts / music / projects / render)
 ├── public/              # Frontend SPA (index.html / common.js shared utils / app.js task center / workspace.js creation workspace)
