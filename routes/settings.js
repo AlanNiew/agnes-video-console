@@ -5,7 +5,7 @@
  */
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const agnes = require('../clients/agnes');
-const netmusic = require('../clients/netmusic');
+const { LEVELS } = require('../clients/netmusic');
 const manager = require('../workers/manager');
 const { log } = require('../core/logger');
 const { MODELS } = require('../core/constants');
@@ -133,7 +133,7 @@ module.exports = function registerSettingsRoutes(app) {
     }
     if (b.music_level !== undefined) {
       const lv = String(b.music_level).trim();
-      if (!netmusic.LEVELS.includes(lv)) throw new ApiError(400, `music_level 仅支持 ${netmusic.LEVELS.join('/')}`);
+      if (!LEVELS.includes(lv)) throw new ApiError(400, `music_level 仅支持 ${LEVELS.join('/')}`);
       settings.set('music_level', lv);
       changed.push('music_level');
     }

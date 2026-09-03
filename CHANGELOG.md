@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Refactored
+
+- **netmusic 客户端解耦数据层**：`clients/netmusic.js` 不再 require db —— 改为依赖注入工厂 `createNetmusicClient(settings)`，由装配方接线（routes/music、routes/settings 只取静态 `LEVELS`，workers/auto、workers/render 注入 settings 后使用）；消除客户端↔数据层耦合，行为不变（e2e BGM 搜索/试听/选用/渲染流全绿）。
+
 ## [2.2.2] - 2026-09-03
 
 ### Refactored

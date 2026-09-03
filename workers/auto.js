@@ -17,7 +17,8 @@ const { settings, DEFAULT_SETTINGS, projects, tasks, renders } = require('../db'
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
 const fishTts = require('../clients/fish-tts');
-const netmusic = require('../clients/netmusic');
+const { createNetmusicClient, LEVELS } = require('../clients/netmusic');
+const netmusic = createNetmusicClient(settings);
 const { log } = require('../core/logger');
 const { ARTIFACTS_DIR } = require('../lib/artifacts');
 const { probeDuration } = require('../core/config');
@@ -553,8 +554,7 @@ class AutoPipeline {
       }
       // 复刻 POST /api/projects/:id/bgm 核心逻辑：下载缓存 → 落库
       const level = String(
-        netmusic.LEVELS.find((l) => l === String(settings.get('music_level', DEFAULT_SETTINGS.music_level))) ||
-          'exhigh',
+        LEVELS.find((l) => l === String(settings.get('music_level', DEFAULT_SETTINGS.music_level))) || 'exhigh',
       );
       const dl = await netmusic.downloadBGM(song.id, level);
       projects.setBgm(projectId, {

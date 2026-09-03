@@ -4,11 +4,12 @@
  */
 const { Readable, pipeline: streamPipeline } = require('node:stream');
 const { settings, DEFAULT_SETTINGS, projects } = require('../db');
-const netmusic = require('../clients/netmusic');
+const { createNetmusicClient, LEVELS } = require('../clients/netmusic');
 const { log } = require('../core/logger');
 const { ApiError, ah } = require('../core/errors');
 
-const MUSIC_LEVELS = netmusic.LEVELS;
+const netmusic = createNetmusicClient(settings);
+const MUSIC_LEVELS = LEVELS;
 
 module.exports = function registerMusicRoutes(app) {
   // 搜索歌曲（代理音乐接口，规范化字段）
