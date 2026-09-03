@@ -23,6 +23,18 @@ const { normalizeStoryboardShots } = require('../services/prompts');
 /* 流水线服务层（镜头/项目视频提交编排，M2） */
 const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log });
 
+/** 项目任务行的展示标注：同镜头已有 completed 任务时，更早的 failed/submit_error 记为
+ * superseded（v1.3 起此规则原在 db.js 数据层；M3 上移到 API 聚合层——数据层只做纯查询） */
+function annotateSuperseded(rows) {
+  const okShots = new Set(rows.filter((t) => t.status === 'completed' && t.shot_id).map((t) => t.shot_id));
+  for (const t of rows) {
+    if (t.shot_id && okShots.has(t.shot_id) && (t.status === 'failed' || t.status === 'submit_error')) {
+      t.superseded = true;
+    }
+  }
+  return rows;
+}
+
 module.exports = function registerProjectRoutes(app) {
   /* ---------- P3：全自动成片（启动 / 状态 / 停止） ---------- */
   // 启动：从文案到成片全自动推进（失败自动重试，卡住停在人工介入点）
@@ -77,7 +89,7 @@ module.exports = function registerProjectRoutes(app) {
       texts: projects.texts(p.id),
       images: projects.images(p.id),
       shots: projects.shots(p.id),
-      tasks: projects.tasks(p.id),
+      tasks: annotateSuperseded(projects.tasks(p.id)),
       tts: projects.tts(p.id), // TTS 配音记录
     });
   });

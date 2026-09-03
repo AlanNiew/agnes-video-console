@@ -4,7 +4,8 @@
  * 语义：首次插入成功；同 pid 重入成功；其他 pid 心跳新鲜 → 抢不到；
  * 心跳过期 / 坏数据 → 可接管。跨进程原子性由并发脚本验证（见 CHANGELOG v1.9.2）。
  */
-const { db, acquireInstanceLock, settings } = require('../../db');
+const { db, settings } = require('../../db');
+const { acquireInstanceLock } = require('../../instance-lock');
 
 const LOCK_KEY = 'instance_lock';
 

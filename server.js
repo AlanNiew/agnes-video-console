@@ -22,7 +22,8 @@ process.on('warning', (w) => {
   console.error(w?.stack || w);
 });
 const express = require('express');
-const { settings, DB_PATH, acquireInstanceLock, refreshInstanceLock, DEFAULT_SETTINGS } = require('./db');
+const { settings, DB_PATH, DEFAULT_SETTINGS } = require('./db');
+const { acquireInstanceLock, refreshInstanceLock } = require('./instance-lock');
 const workerManager = require('./workers/manager');
 const { ARTIFACTS_DIR, WORKS_DIR } = require('./lib/artifacts');
 const { log } = require('./core/logger');

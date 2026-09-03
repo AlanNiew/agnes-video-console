@@ -200,6 +200,8 @@ const ttsCols = new Set(
     .map((r) => r.name),
 );
 if (!ttsCols.has('shot_id')) db.exec('ALTER TABLE project_tts ADD COLUMN shot_id INTEGER');
+// v2.3 逐镜旁白偏移（毫秒）：角色对白镜在画面人物开口时点响，缺省=渲染全局 offset（对白同步用）
+if (!ttsCols.has('offset_ms')) db.exec('ALTER TABLE project_tts ADD COLUMN offset_ms INTEGER');
 // v1.4：项目背景音乐选择（JSON：song_id/name/artist/album/level/local_path 等）
 const projCols = new Set(
   db
@@ -412,22 +414,6 @@ const stmts = {
   setProjectAutoState: db.prepare('UPDATE projects SET auto_state = ?, updated_at = ? WHERE id = ?'),
   deleteRenderJob: db.prepare('DELETE FROM render_jobs WHERE id = ?'),
   deleteRenderJobsByProject: db.prepare('DELETE FROM render_jobs WHERE project_id = ?'),
-  // v1.9.2 单实例锁原子 CAS（upsert 形式）：
-  // 首次插入必成功；行已存在时仅当「锁属本进程 / 心跳过期 / 坏数据」才覆盖——
-  // 单条语句的语句级写锁保证跨进程原子性（tx/BEGIN IMMEDIATE 在 node:sqlite
-  // 跨进程实测不产生互斥，两进程可同时通过检查各自写入，故弃用）。
-  // CASE 逐分支惰性求值：json_valid 守卫在前，坏 JSON 不会触达 json_extract 抛错。
-  casInstanceLock: db.prepare(`
-    INSERT INTO settings (key, value) VALUES (?, ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-    WHERE CASE
-      WHEN json_valid(settings.value) = 0 THEN 1
-      WHEN CAST(json_extract(settings.value, '$.pid') AS INTEGER) = ? THEN 1
-      WHEN json_extract(settings.value, '$.heartbeat') IS NULL THEN 1
-      WHEN CAST(json_extract(settings.value, '$.heartbeat') AS INTEGER) < ? THEN 1
-      ELSE 0
-    END = 1
-  `),
 };
 
 /** 安全解析 JSON 列 */
@@ -961,16 +947,9 @@ const projects = {
   },
 
   tasks(projectId) {
-    const rows = stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
-    // v1.3 superseded 计算（仅响应层，不改库）：同镜头已有 completed 任务时，
-    // 更早的 failed/submit_error 记录视为「已被新任务取代」，避免看板被废记录误导
-    const okShots = new Set(rows.filter((t) => t.status === 'completed' && t.shot_id).map((t) => t.shot_id));
-    for (const t of rows) {
-      if (t.shot_id && okShots.has(t.shot_id) && (t.status === 'failed' || t.status === 'submit_error')) {
-        t.superseded = true;
-      }
-    }
-    return rows;
+    // 纯查询：项目全部相关任务行。superseded 展示标注已上移（M3）——
+    // 由 API 聚合层（routes/projects.js annotateSuperseded）负责，数据层不再写视图逻辑。
+    return stmts.listProjectTasks.all(Number(projectId)).map(toTaskRow);
   },
 
   /* ---------------- M2：镜头（分镜工作副本） ---------------- */
@@ -1232,56 +1211,6 @@ const renders = {
   },
 };
 
-/* ---------------- v1.6.1：单实例工作锁 ----------------
- * 后台工作器（轮询/提交/渲染）全局只允许一个实例持有：
- * 多个控制台进程共用同一 SQLite 时，锁的持有者才运行工作器，
- * 其余实例仅提供 API——根治孤儿进程抢占任务队列的问题。
- * 心跳 10s，锁过期判定 15s（持有者进程消亡后可被接管）。 */
-
-const INSTANCE_LOCK_KEY = 'instance_lock';
-
-function getInstanceLock() {
-  try {
-    return JSON.parse(settings.get(INSTANCE_LOCK_KEY) || 'null');
-  } catch {
-    return null;
-  }
-}
-
-/** 锁是否被「其他存活进程」持有（心跳过期视为无主） */
-function instanceLockHeldByOther() {
-  const l = getInstanceLock();
-  if (!l || l.pid === process.pid) return false;
-  if (Date.now() - (l.heartbeat || 0) > 15_000) return false;
-  try {
-    process.kill(l.pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function acquireInstanceLock() {
-  // v1.9.2 原子化：检查 + 写入压成单条 upsert CAS（语句级写锁跨进程原子），
-  // 消除双进程同时启动时「都通过检查 → 都写入 → 都拿到锁」的 TOCTOU 窗口。
-  // 语义与旧版差异：心跳新鲜但持有进程实际已死时不再即时抢锁（旧版靠 kill(pid,0)），
-  // 而是等心跳过期（≤15s）后由接管循环获得——收敛稍慢但避免了 Windows pid 复用误判。
-  const r = stmts.casInstanceLock.run(
-    INSTANCE_LOCK_KEY,
-    JSON.stringify({ pid: process.pid, heartbeat: Date.now() }),
-    process.pid,
-    Date.now() - 15_000, // 锁过期阈值（与 instanceLockHeldByOther 一致）
-  );
-  return r.changes > 0;
-}
-
-/** 持有者心跳；锁无主时顺带接管 */
-function refreshInstanceLock() {
-  if (!instanceLockHeldByOther()) {
-    settings.set(INSTANCE_LOCK_KEY, JSON.stringify({ pid: process.pid, heartbeat: Date.now() }));
-  }
-}
-
 module.exports = {
   db,
   settings,
@@ -1292,7 +1221,4 @@ module.exports = {
   DEFAULT_SETTINGS,
   DB_PATH,
   DATA_DIR,
-  acquireInstanceLock,
-  instanceLockHeldByOther,
-  refreshInstanceLock,
 };

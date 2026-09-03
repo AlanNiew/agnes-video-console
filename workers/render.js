@@ -12,7 +12,8 @@ const { spawn, spawnSync } = require('node:child_process');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { projects, renders, instanceLockHeldByOther } = require('../db');
+const { projects, renders } = require('../db');
+const { instanceLockHeldByOther } = require('../instance-lock');
 const { ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
 const netmusic = require('../clients/netmusic');
 const { generatePoster } = require('../lib/poster');
@@ -193,6 +194,7 @@ function collectSegments(projectId) {
       narrationPath: narr ? narr.local_path : null,
       narrationDuration: narr ? narr.duration : null,
       narrationText: narr ? narr.text : null, // v1.6：字幕烧录用旁白原文
+      narrationOffsetMs: narr ? narr.offset_ms || null : null, // v2.3 逐镜偏移（角色对白）：null=用全局 offset
       nominalSeconds: Number(shot.seconds || p.seconds || 5) || 5,
     });
   }
@@ -359,7 +361,9 @@ class Renderer {
         let st = cards.some((c) => c.kind === 'head') ? seqs[0].duration : 0;
         for (const s of norm) {
           if (s.narrationText) {
-            const start = st + narrOffset;
+            // v2.3 逐镜偏移：对白镜 TTS 记录带 offset_ms → 用它；旁白镜 null → 全局 narrOffset
+            const offMs = s.narrationOffsetMs != null ? s.narrationOffsetMs : narrOffset;
+            const start = st + offMs;
             const end = Math.min(start + (Number(s.narrationDuration) || 4), st + s.duration - fade * 0.4);
             if (end > start + 0.2) subLines.push({ start, end, text: s.narrationText });
           }
@@ -424,7 +428,9 @@ class Renderer {
       let shotStart = cards.some((c) => c.kind === 'head') ? seqs[0].duration : 0;
       for (const s of norm) {
         if (s.narrationPath) {
-          const startMs = Math.round((shotStart + narrOffset) * 1000);
+          // v2.3 逐镜偏移：对白镜 TTS 记录带 offset_ms → 用它；旁白镜 null → 全局 narrOffset
+          const offMs = s.narrationOffsetMs != null ? s.narrationOffsetMs : narrOffset;
+          const startMs = Math.round((shotStart + offMs) * 1000);
           const label = `[n${ni}]`;
           fl.push(
             `[${narrIdxStart + ni}:a]highpass=f=90,` +

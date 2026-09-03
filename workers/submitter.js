@@ -7,7 +7,8 @@
  * - 429 / 网络错误 / 5xx 自动指数退避重试，重试耗尽才落 submit_error
  * - 其余 4xx（鉴权/参数等）不可恢复，直接 submit_error
  */
-const { settings, tasks, instanceLockHeldByOther } = require('../db');
+const { settings, tasks } = require('../db');
+const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');

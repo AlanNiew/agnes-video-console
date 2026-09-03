@@ -13,7 +13,8 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
-const { settings, DEFAULT_SETTINGS, projects, tasks, renders, instanceLockHeldByOther } = require('../db');
+const { settings, DEFAULT_SETTINGS, projects, tasks, renders } = require('../db');
+const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
 const fishTts = require('../clients/fish-tts');
 const netmusic = require('../clients/netmusic');
