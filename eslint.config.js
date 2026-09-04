@@ -47,6 +47,11 @@ module.exports = [
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
   },
   {
+    // M4-B1-1：common.js 已正式 ESM 模块化（export + window.__common 兼容注入）
+    files: ['public/common.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
+  },
+  {
     // M4-B0：vite 构建配置（ESM）
     files: ['vite.config.mjs'],
     languageOptions: { sourceType: 'module', globals: { ...globals.node } },
