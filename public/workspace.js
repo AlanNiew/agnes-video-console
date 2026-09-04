@@ -2822,7 +2822,4 @@ import { bus } from './state.js';
       }
     }
   }
-
-  // 暴露给 app.js 的视图切换 / 轮询循环使用
-  window.__ws = { refresh, refreshTasks };
 })();

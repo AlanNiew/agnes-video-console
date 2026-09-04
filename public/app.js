@@ -1395,8 +1395,7 @@ import { bus } from './state.js';
       else v.pause();
     });
 
-    // 初始加载
-    window.__app = { applyTemplate, loadTasks, getSettings: () => state.settings };
+    // 初始加载（M4-B1：视图互调已事件化，不再经 window.__app 暴露）
     await loadMeta();
     await loadSettings();
     await loadTasks();
