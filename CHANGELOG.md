@@ -13,6 +13,7 @@
 - **M4-B1-3：`state.js` 事件总线 + workspace→app 任务信号去互调**——新增 `public/state.js`（on/off/emit，监听器异常隔离）；workspace 原 4 处 `window.__app?.loadTasks?.()`（单镜提交/重拍/批量结束/切任务中心后刷新）改为 `bus.emit('tasks-changed')`，app 订阅该事件刷新任务中心（不切视图，语义等价）；剩余互调（app→ws refresh、读 app.getSettings）留待 B1-4。`lint` / `format:check` / `build` / 单测 / e2e 全绿。
 - **M4-B1-4：app↔workspace 互调清零**——app 轮询喂工作台进度 `window.__ws?.refreshTasks?.()` → `bus.emit('ws-task-progress')`；切创作工作台视图 `window.__ws?.refresh?.()` → `bus.emit('workspace-shown')`（10s 节流留在 app 轮询）；workspace 批量提交读提交间隔改为直接 `GET /api/settings`。`window.__app/__ws` 已无跨视图消费者（仅剩各自模块导出赋值，B4 统一删除）。`lint` / `format:check` / `build` / 单测 / e2e 全绿。
 - **M4-B1 收尾：移除 `window.__app`/`window.__ws` 导出**——视图互调已全部事件化/直接取数，两处模块导出已无消费者，予以删除（`applyTemplate`/`loadTasks`/`refresh`/`refreshTasks` 仍在各自作用域内部使用）。`window.*` 现仅剩共享组件 `window.__ui`（compare）与 `window.__audio`（B2 处理）。`lint` / `format:check` / `build` / 单测 / e2e 全绿。
+- **M4-B2-0：`window.__*` 代码清零**——compare 组件 ESM 化（`export { compare }`，app/workspace 显式 import）；common.js 删除 `window.__common` 兼容注入；workspace 删除恒 false 的 `window.__audio` 死分支。至此 `public/` 下无任何 `window.__*` 代码引用（仅注释说明），视图间通信全部经 `state.js` 总线。`lint` / `format:check` / `build` / 单测 / e2e 全绿。B2 视图拆分（app/workspace 内部结构）进行中。
 
 ## [2.2.2] - 2026-09-03
 

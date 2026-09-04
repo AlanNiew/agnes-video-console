@@ -67,9 +67,9 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 
 - 构建：`npm run build`（vite → `dist/`，已 gitignore）。服务端先服务 `dist/`、未构建时回退 `public/`
   （`public/main.js` 为原生 ESM 入口——顺序 import common→compare→app→workspace，现代浏览器可直接跑源码调试）。
-- 视图模块是经典 IIFE + 少量 `window.*`（B1 完成，B2 进行中）：`common.js` 已 ESM 化，compare/app/workspace
-  已显式 `import './common.js'`；app↔workspace 互调已全部事件化（`state.js` bus），`window.__app/__ws` 已删除；
-  剩余 `window.__ui`（compare 共享组件）/`window.__audio` 待 B2 处理。进度见 `docs/FRONTEND_REFACTOR_PLAN.md`。
+- 前端已全面 ESM（`common`/`compare`/`state` 为模块，`app`/`workspace` 内部仍为 IIFE 视图但
+  互相不再经 window 通信——**`window.__*` 代码引用已清零**，跨视图走 `state.js` bus）。
+  app/workspace 的按视图拆分与局部更新见 `docs/FRONTEND_REFACTOR_PLAN.md`（B2+）。
 - 插值进 innerHTML 的任何动态内容必须过 `esc()`。
 - 前端无自动化测试——改动后需人工冒烟或跑 e2e 验证后端契约未破坏。
 
