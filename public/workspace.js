@@ -1,9 +1,8 @@
-/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频） */
+/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B1-2：显式 import common */
+import { $, esc, fmtTime, toast, api } from './common.js';
+
 (() => {
   'use strict';
-
-  // 公共工具统一来自 common.js（须先于本文件加载）
-  const { $, esc, fmtTime, toast, api } = window.__common;
   const STATUS_LABEL = {
     queued: '队列中',
     in_progress: '生成中',

@@ -1,9 +1,8 @@
-/* compare.js —— 新旧内容对比弹窗（任务中心 / 创作工作台共用，无依赖） */
+/* compare.js —— 新旧内容对比弹窗（任务中心 / 创作工作台共用）—— M4-B1-2：显式 import common */
+import { esc } from './common.js';
+
 (() => {
   'use strict';
-
-  // 公共工具统一来自 common.js（须先于本文件加载）
-  const { esc } = window.__common;
 
   /**
    * 弹出「旧版 vs 新版」对比窗，由用户二选一

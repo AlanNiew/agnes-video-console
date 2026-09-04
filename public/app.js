@@ -1,9 +1,8 @@
-/* Agnes Video 任务控制台 —— 前端逻辑（原生 JS，无依赖） */
+/* Agnes Video 任务控制台 —— 前端逻辑（原生 JS）—— M4-B1-2：显式 import common */
+import { $, $$, esc, fmtTime, toast, api } from './common.js';
+
 (() => {
   'use strict';
-
-  // 公共工具统一来自 common.js（须先于本文件加载）
-  const { $, $$, esc, fmtTime, toast, api } = window.__common;
 
   const STATUS_LABEL = {
     queued: '队列中',

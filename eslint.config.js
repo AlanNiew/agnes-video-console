@@ -52,6 +52,11 @@ module.exports = [
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
   },
   {
+    // M4-B1-2：compare/app/workspace 已改为显式 import common（内部仍是 IIFE）
+    files: ['public/compare.js', 'public/app.js', 'public/workspace.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
+  },
+  {
     // M4-B0：vite 构建配置（ESM）
     files: ['vite.config.mjs'],
     languageOptions: { sourceType: 'module', globals: { ...globals.node } },
