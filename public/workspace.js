@@ -1,5 +1,6 @@
 /* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B1-2：显式 import common */
 import { $, esc, fmtTime, toast, api } from './common.js';
+import { bus } from './state.js';
 
 (() => {
   'use strict';
@@ -1057,7 +1058,7 @@ import { $, esc, fmtTime, toast, api } from './common.js';
         try {
           const r = await api(`/api/projects/${p.id}/shots/${shotId}/retakes`, { method: 'POST', body: { count: 1 } });
           toast(`重拍任务 #${r.retakes[0].id} 已入队（完成后在下方候选区选定）`, 'ok');
-          window.__app?.loadTasks?.();
+          bus.emit('tasks-changed');
           if (currentProjectId === p.id) await renderProject(p.id);
         } catch (e) {
           toast('重拍失败：' + e.message, 'err');
@@ -1841,7 +1842,7 @@ import { $, esc, fmtTime, toast, api } from './common.js';
     try {
       const r = await api(`/api/projects/${projectId}/shots/${shotId}/videos`, { method: 'POST', body: {} });
       toast(`镜头任务 #${r.id} 已入队（后台提交器将按间隔自动提交）`, 'ok');
-      window.__app?.loadTasks?.();
+      bus.emit('tasks-changed');
       if (currentProjectId === projectId) await renderProject(projectId);
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
@@ -1909,7 +1910,7 @@ import { $, esc, fmtTime, toast, api } from './common.js';
     batchBusy = false;
     batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${batchStop ? '（已手动停止）' : ''}`;
     toast(batchHint, fail ? 'warn' : 'ok');
-    window.__app?.loadTasks?.();
+    bus.emit('tasks-changed');
     if (currentProjectId === projectId) await renderProject(projectId);
   }
 
@@ -2796,7 +2797,7 @@ import { $, esc, fmtTime, toast, api } from './common.js';
       });
       toast(`视频任务 #${r.id} 已提交，可在任务中心跟踪`, 'ok');
       $('#navTasks')?.click();
-      setTimeout(() => window.__app?.loadTasks?.(), 300);
+      setTimeout(() => bus.emit('tasks-changed'), 300);
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
       if (btn.isConnected) {

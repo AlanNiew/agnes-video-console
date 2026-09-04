@@ -47,9 +47,9 @@ module.exports = [
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
   },
   {
-    // M4-B1-1：common.js 已正式 ESM 模块化（export + window.__common 兼容注入）
-    files: ['public/common.js'],
-    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
+    // ESM 公共模块：common.js（B1-1 已模块化）、state.js（B1-3 事件总线）
+    files: ['public/common.js', 'public/state.js'],
+    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser, console: 'readonly' } },
   },
   {
     // M4-B1-2：compare/app/workspace 已改为显式 import common（内部仍是 IIFE）

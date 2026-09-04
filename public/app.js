@@ -1,8 +1,14 @@
 /* Agnes Video 任务控制台 —— 前端逻辑（原生 JS）—— M4-B1-2：显式 import common */
 import { $, $$, esc, fmtTime, toast, api } from './common.js';
+import { bus } from './state.js';
 
 (() => {
   'use strict';
+
+  // M4-B1-3：任务数据变更信号（workspace 提交/重拍/批量后 emit）→ 刷新任务中心（不切视图）
+  bus.on('tasks-changed', () => {
+    loadTasks();
+  });
 
   const STATUS_LABEL = {
     queued: '队列中',
