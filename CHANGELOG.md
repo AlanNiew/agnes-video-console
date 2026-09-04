@@ -10,6 +10,7 @@
 - **M4-B0：前端构建管线（vite）**——引入 `vite`（devDep）与 `vite.config.mjs`（root=public → `dist/`，已 gitignore）；`public/index.html` 改为 ESM 入口 `main.js`（顺序 import common/compare/app/workspace，行为等价阶段）；`server.js` 静态服务 dist 优先、public 回退（未构建时原生 ESM 源码可直接调试）；eslint/prettier 适配 `.mjs`/`dist` ignore，CI 增加 `npm run build`。`lint` / `format:check` / 单测 / e2e（含静态首页）全绿。后续 B1–B4 见 `docs/FRONTEND_REFACTOR_PLAN.md`。
 - **M4-B1-1：`public/common.js` 正式 ESM 模块化**——由「IIFE + 挂 `window.__common`」改为标准 ES module（顶层 `export { $, $$, esc, fmtTime, toast, api, theme }`），保留 `window.__common` 兼容注入供仍为 IIFE 的 compare/app/workspace 在 evaluate 阶段解构（main.js 顺序 import 保证注入先于其求值）；eslint 增加 common.js module 专项块。行为不变，`lint` / `format:check` / `build` / 单测 / e2e 全绿。B1 后续见蓝图。
 - **M4-B1-2：compare/app/workspace 显式 import common**——三文件改为 `import { … } from './common.js'`（转 ES module，内部仍为 IIFE），删除各自 `window.__common` 解构；`window.__common` 兼容注入暂留待删。行为不变，`lint` / `format:check` / `build` / 单测 / e2e 全绿。
+- **M4-B1-3：`state.js` 事件总线 + workspace→app 任务信号去互调**——新增 `public/state.js`（on/off/emit，监听器异常隔离）；workspace 原 4 处 `window.__app?.loadTasks?.()`（单镜提交/重拍/批量结束/切任务中心后刷新）改为 `bus.emit('tasks-changed')`，app 订阅该事件刷新任务中心（不切视图，语义等价）；剩余互调（app→ws refresh、读 app.getSettings）留待 B1-4。`lint` / `format:check` / `build` / 单测 / e2e 全绿。
 
 ## [2.2.2] - 2026-09-03
 
