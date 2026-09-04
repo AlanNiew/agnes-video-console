@@ -316,6 +316,12 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   await new Promise((r) => mockServer.listen(MOCK_PORT, r));
   console.log(`[mock] Agnes API 模拟服务器已启动于 :${MOCK_PORT}`);
 
+  // CI/干净环境修复：data/ 被 gitignore，首次运行（如 GitHub Actions）尚不存在。
+  // 必须先建目录，否则下方 ffmpeg fixture 生成会因写盘失败退回伪字节，
+  // 使真实渲染用例报「Invalid data」——本机因常驻 data/ 从未暴露。
+  fs.mkdirSync(DATA_DIR_ROOT, { recursive: true });
+  fs.mkdirSync(TEST_ARTIFACTS, { recursive: true });
+
   // v1.3：有 ffmpeg 时生成可解码的测试视频（成片渲染 e2e 用；无 ffmpeg 则归档测试用伪字节）
   try {
     const { spawnSync } = require('node:child_process');
