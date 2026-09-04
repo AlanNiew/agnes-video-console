@@ -1,7 +1,5 @@
-/* common.js —— 前端公共工具（M4-B1-1：正式 ESM 模块化）
- * 依赖：无。作为 ES module 先于 compare.js / app.js / workspace.js 求值（见 main.js 顺序 import）。
- * 说明：本模块同时 export 纯函数并注入 window.__common 兼容层——compare/app/workspace
- * 目前仍是经典 IIFE（在 evaluate 阶段解构 window.__common），待 B2/B3 逐个改为 import 后删除注入。
+/* common.js —— 前端公共工具（M4-B1/B2：正式 ESM 模块化）
+ * 依赖：无。作为 ES module 先于视图模块求值（见 main.js 顺序 import），已被 compare/app/workspace 显式 import。
  */
 /** DOM 查询快捷方式 */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -113,8 +111,5 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
 })();
 
 const theme = { getTheme, setTheme, cycleTheme, applyTheme };
-
-// M4-B1-1 兼容注入：旧 IIFE（compare/app/workspace）在 evaluate 阶段仍从 window.__common 解构
-window.__common = { $, $$, esc, fmtTime, toast, api, theme };
 
 export { $, $$, esc, fmtTime, toast, api, theme };

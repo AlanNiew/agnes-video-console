@@ -1,6 +1,7 @@
 /* Agnes Video 任务控制台 —— 前端逻辑（原生 JS）—— M4-B1-2：显式 import common */
 import { $, $$, esc, fmtTime, toast, api } from './common.js';
 import { bus } from './state.js';
+import { compare } from './compare.js';
 
 (() => {
   'use strict';
@@ -1099,9 +1100,9 @@ import { bus } from './state.js';
         promptEl.value = r.content;
         toast('已采用优化后的描述', 'ok');
       };
-      if (window.__ui?.compare) {
+      if (compare) {
         // 优化结果先对比，由用户决定采用；是否用 AI 优化始终由用户发起
-        window.__ui.compare({
+        compare({
           title: opts.title || '提示词优化对比',
           oldLabel: '我的原始描述',
           newLabel: 'AI 优化后',

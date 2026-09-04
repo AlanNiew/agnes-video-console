@@ -1,6 +1,7 @@
 /* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B1-2：显式 import common */
 import { $, esc, fmtTime, toast, api } from './common.js';
 import { bus } from './state.js';
+import { compare } from './compare.js';
 
 (() => {
   'use strict';
@@ -1491,7 +1492,7 @@ import { bus } from './state.js';
         if (playBtn) {
           ev.stopPropagation();
           const url = playBtn.dataset.ttsPlay;
-          if (window.__audio?.preview) return window.__audio.preview(url, playBtn);
+          // 预留：未来可注入独立音频预览服务；当前一律走本地 Audio
           const au = playBtn._au || (playBtn._au = new Audio(url));
           if (au.paused && !au.ended) au.play();
           else {
@@ -1749,8 +1750,8 @@ import { bus } from './state.js';
         ta.value = r.content;
         toast('已采用优化描述（需点「生成角色图」才会生效，或手动保存到文案）', 'ok');
       };
-      if (window.__ui?.compare) {
-        window.__ui.compare({
+      if (compare) {
+        compare({
           title: '角色描述优化对比',
           oldLabel: '当前描述',
           newLabel: 'AI 优化后',
@@ -2370,7 +2371,7 @@ import { bus } from './state.js';
               `<div class="cmp-field"><b>镜头 ${esc(String(s.seq ?? i + 1))}${s.title ? ` · ${esc(s.title)}` : ''}</b><p>${esc(s.video_prompt || '')}</p></div>`,
           )
           .join('');
-      window.__ui.compare({
+      compare({
         title: '新生成分镜与当前分镜对比',
         oldLabel: `当前分镜（${oldShots.length} 镜）`,
         newLabel: `新生成（${r.shots?.length ?? 0} 镜）`,
@@ -2731,7 +2732,7 @@ import { bus } from './state.js';
         SCRIPT_FIELDS.map(
           ([k, label]) => `<div class="cmp-field"><b>${esc(label)}</b><p>${esc(map[k] || '（无）')}</p></div>`,
         ).join('');
-      window.__ui.compare({
+      compare({
         title: '新生成文案与当前文案对比',
         oldLabel: '当前使用中',
         newLabel: '新生成',
