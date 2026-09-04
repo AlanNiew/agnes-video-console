@@ -21,6 +21,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Install ffmpeg (e2e 真实渲染依赖：渲染/封面/全自动成片闭环)
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
       - name: Lint (eslint，no-undef/no-use-before-define 等静态错误防线)
         run: npm run lint
       - name: Format check (prettier)
