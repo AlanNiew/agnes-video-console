@@ -1205,7 +1205,7 @@ import { bus } from './state.js';
         // 工作台第④步任务进度低频自动更新（10s，独立于整页重绘，不打断编辑）
         if (!$('#workspaceView').hidden && Date.now() - lastWsTasksRefresh > 10000) {
           lastWsTasksRefresh = Date.now();
-          window.__ws?.refreshTasks?.();
+          bus.emit('ws-task-progress'); // M4-B1-4：经事件让工作台自刷新镜头任务进度
         }
       } catch {
         /* ignore */
@@ -1380,7 +1380,7 @@ import { bus } from './state.js';
       // 任务中心内部视图（列表/看板）恢复用户所选模式，避免两个容器同时显示
       $('#taskListView').hidden = taskHidden || state.viewMode !== 'list';
       $('#board').hidden = taskHidden || state.viewMode !== 'board';
-      if (ws) window.__ws?.refresh?.();
+      if (ws) bus.emit('workspace-shown'); // M4-B1-4：进入工作台视图时经事件让工作台自刷新
       if (wk) loadWorks();
     }
     $('#navWorkspace').addEventListener('click', () => switchView('workspace'));

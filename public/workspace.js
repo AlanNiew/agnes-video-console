@@ -4,6 +4,15 @@ import { bus } from './state.js';
 
 (() => {
   'use strict';
+
+  // M4-B1-4：接收 app 的轮询/切视图信号，工作台自刷新（不再经 window.__ws 被反向调用）
+  bus.on('ws-task-progress', () => {
+    refreshTasks();
+  });
+  bus.on('workspace-shown', () => {
+    refresh();
+  });
+
   const STATUS_LABEL = {
     queued: '队列中',
     in_progress: '生成中',
@@ -1872,7 +1881,14 @@ import { bus } from './state.js';
       toast('所有镜头都已有进行中或已完成的任务', 'ok');
       return;
     }
-    const interval = Math.max(0, Number(window.__app?.getSettings?.()?.submit_interval_ms ?? 60000) || 0);
+    // M4-B1-4：直接取后端设置（不再读 app 的 getSettings 缓存）
+    let interval = 60000;
+    try {
+      const s = await api('/api/settings');
+      interval = Math.max(0, Number(s?.submit_interval_ms ?? 60000) || 0);
+    } catch {
+      /* 取不到设置时按默认 60s */
+    }
     if (!confirm(`将按间隔 ${Math.round(interval / 1000)} 秒依次提交 ${targets.length} 个镜头的视频任务，继续？`))
       return;
     batchBusy = true;
