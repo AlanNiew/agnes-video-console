@@ -1,6 +1,6 @@
 'use strict';
 /**
- * eslint.config.js —— flat config（ESLint 10）
+ * eslint.config.js — flat config（ESLint 10）
  * 语法与可靠性检查为主，格式交给 prettier（经 eslint-config-prettier 关闭冲突规则）。
  */
 const js = require('@eslint/js');
@@ -18,7 +18,6 @@ module.exports = [
       globals: { ...globals.node },
     },
     rules: {
-      // 本项目浏览器脚本挂在 window.__common 等命名空间上，属有意设计
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       // 既有代码中的防御性赋值/空 catch 容错模式：先降为警告，不在重构提交中混入行为变更
       'no-useless-assignment': 'warn',
@@ -26,34 +25,8 @@ module.exports = [
     },
   },
   {
-    // 前端浏览器脚本（无构建步骤，经典 script 标签加载）
+    // 前端（public/ 全部为 ES module：入口/基础模块/视图装配；vite 无编译期类型检查，规则以可读性为主）
     files: ['public/**/*.js'],
-    languageOptions: {
-      ecmaVersion: 2022,
-      sourceType: 'script',
-      globals: {
-        ...globals.browser,
-        __common: 'readonly',
-        __ui: 'readonly',
-        __app: 'readonly',
-        __ws: 'readonly',
-        __audio: 'readonly',
-      },
-    },
-  },
-  {
-    // M4-B0：前端 ESM 入口（public/main.js 顺序 import 视图模块）
-    files: ['public/main.js'],
-    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
-  },
-  {
-    // ESM 公共模块：common.js（B1-1 已模块化）、state.js（B1-3 事件总线）
-    files: ['public/common.js', 'public/state.js'],
-    languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser, console: 'readonly' } },
-  },
-  {
-    // M4-B1-2：compare/app/workspace 已改为显式 import common（内部仍是 IIFE）
-    files: ['public/compare.js', 'public/app.js', 'public/workspace.js'],
     languageOptions: { ecmaVersion: 2022, sourceType: 'module', globals: { ...globals.browser } },
   },
   {
