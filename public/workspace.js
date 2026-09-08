@@ -1,6 +1,6 @@
-/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-3：
+/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-4：
  * 渲染纯函数在 ws-render.js；配音/声音广场在 ws-tts.js；会话状态在 ws-state.js（st）；
- * 本文件负责装配（renderProject/renderList）与其余步骤绑定/动作。 */
+ * 通用工具在 ws-util.js；第④步视频提交动作在 ws-video.js；本文件负责装配/其余步骤绑定。 */
 import { $, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
@@ -16,7 +16,6 @@ import {
   cardHTML,
   videoModelTag,
   renderShotSubmitBlock,
-  shotLatestTask,
   narrMeterHTML,
   renderPrecheckHTML,
   renderStoryboardArea,
@@ -31,6 +30,8 @@ import {
 } from './ws-render.js';
 import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSpeed } from './ws-tts.js';
 import { st } from './ws-state.js';
+import { stageHints, STAGES_SCRIPT, STAGES_STORY, STAGES_IMG } from './ws-util.js';
+import { submitShot, runBatchSubmit, submitVideo } from './ws-video.js';
 
 (() => {
   'use strict';
@@ -132,37 +133,6 @@ import { st } from './ws-state.js';
       /* 隐私模式下 localStorage 不可用，忽略 */
     }
   };
-
-  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-  /** 分阶段等待提示：每秒检查耗时，把 .ws-loading-text 换成对应阶段文案；返回停止函数 */
-  function stageHints(selectors, stages) {
-    const start = Date.now();
-    const timer = setInterval(() => {
-      const el = selectors.map((s) => document.querySelector(s)).find(Boolean);
-      if (!el) return;
-      const sec = (Date.now() - start) / 1000;
-      let text = stages[0][1];
-      for (const [from, msg] of stages) if (sec >= from) text = msg;
-      el.textContent = text;
-    }, 1000);
-    return () => clearInterval(timer);
-  }
-  const STAGES_SCRIPT = [
-    [0, '正在分析创意，梳理故事结构…'],
-    [8, '正在撰写梗概与角色设定…'],
-    [18, '即将完成，正在润色提示词…'],
-  ];
-  const STAGES_STORY = [
-    [0, '正在拆解叙事节奏…'],
-    [8, '正在设计镜头与运镜…'],
-    [18, '即将完成，正在对齐镜头衔接…'],
-  ];
-  const STAGES_IMG = [
-    [0, '正在生成候选图（约 10–90 秒），完成后在下方挑选…'],
-    [30, '模型仍在绘制，请稍候…'],
-    [60, '复杂画风耗时较长，马上好…'],
-  ];
 
   /** 滚动时步骤条高亮跟随（只绑定一次；点击跳转后短暂抑制，避免覆盖用户选择） */
   let wsScrollBound = false;
@@ -1130,95 +1100,6 @@ import { st } from './ws-state.js';
     }
   }
 
-  /* ---------------- M2：第④步镜头提交与批量 ---------------- */
-
-  async function submitShot(projectId, shotId) {
-    const btn = document.querySelector(`[data-shot-submit="${shotId}"]`);
-    if (!btn || btn.disabled) return; // 防连点重复提交
-    btn.disabled = true;
-    btn.textContent = '提交中…';
-    try {
-      const r = await api(`/api/projects/${projectId}/shots/${shotId}/videos`, { method: 'POST', body: {} });
-      toast(`镜头任务 #${r.id} 已入队（后台提交器将按间隔自动提交）`, 'ok');
-      bus.emit('tasks-changed');
-      if (st.currentProjectId === projectId) await renderProject(projectId);
-    } catch (e) {
-      toast('提交失败：' + e.message, 'err');
-      if (btn.isConnected) {
-        btn.disabled = false;
-        btn.textContent = '🚀 提交';
-      }
-    }
-  }
-
-  /** 批量提交「未完成」镜头（无任务或最新任务失败），按 submit_interval_ms 节流 */
-  async function runBatchSubmit(projectId) {
-    if (st.batchBusy) return;
-    let targets;
-    try {
-      const d = await api(`/api/projects/${projectId}`);
-      const shots = d.shots || [];
-      targets = shots.filter((s) => {
-        const t = shotLatestTask(d.tasks || [], s.id);
-        return !t || t.status === 'failed' || t.status === 'submit_error';
-      });
-    } catch (e) {
-      toast(e.message, 'err');
-      return;
-    }
-    if (!targets.length) {
-      toast('所有镜头都已有进行中或已完成的任务', 'ok');
-      return;
-    }
-    // M4-B1-4：直接取后端设置（不再读 app 的 getSettings 缓存）
-    let interval = 60000;
-    try {
-      const s = await api('/api/settings');
-      interval = Math.max(0, Number(s?.submit_interval_ms ?? 60000) || 0);
-    } catch {
-      /* 取不到设置时按默认 60s */
-    }
-    if (!confirm(`将按间隔 ${Math.round(interval / 1000)} 秒依次提交 ${targets.length} 个镜头的视频任务，继续？`))
-      return;
-    st.batchBusy = true;
-    st.batchStop = false;
-    st.batchHint = '准备提交…';
-    await renderProject(projectId); // 切换为「批量提交中…」与停止按钮
-    let done = 0;
-    let fail = 0;
-    for (let i = 0; i < targets.length; i++) {
-      const s = targets[i];
-      if (st.batchStop) break;
-      const hintEl = () => {
-        const el = $('#wsBatchHint');
-        if (el) el.textContent = st.batchHint;
-      };
-      st.batchHint = `正在提交镜头 ${s.seq}（${i + 1}/${targets.length}）…`;
-      hintEl();
-      try {
-        await api(`/api/projects/${projectId}/shots/${s.id}/videos`, { method: 'POST', body: {} });
-        done += 1;
-      } catch (e) {
-        fail += 1;
-        toast(`镜头 ${s.seq} 提交失败：${e.message}`, 'err');
-      }
-      // 倒计时等待（每秒检查停止标记）
-      const last = i === targets.length - 1;
-      if (interval > 0 && !last) {
-        for (let w = Math.round(interval / 1000); w > 0 && !st.batchStop; w--) {
-          st.batchHint = `镜头 ${s.seq} 已提交，${w}s 后提交下一个（${i + 1}/${targets.length}）…`;
-          hintEl();
-          await sleep(1000);
-        }
-      }
-    }
-    st.batchBusy = false;
-    st.batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${st.batchStop ? '（已手动停止）' : ''}`;
-    toast(st.batchHint, fail ? 'warn' : 'ok');
-    bus.emit('tasks-changed');
-    if (st.currentProjectId === projectId) await renderProject(projectId);
-  }
-
   /* ---------------- M2：分镜区（生成 / 编辑 / 排序 / 历史版本） ---------------- */
 
   /** 旁白计量实时刷新：旁白输入 / 时长下拉联动（渲染后由 bindStoryboardEvents 统一绑定） */
@@ -1745,28 +1626,6 @@ import { st } from './ws-state.js';
       st.imgGenBusy = false;
       stopHints?.();
       if (st.currentProjectId === projectId) await renderProject(projectId);
-    }
-  }
-
-  async function submitVideo(projectId) {
-    const btn = $('#wsSubmitVideo');
-    if (!btn || btn.disabled) return; // 防连点重复提交（每次提交都真实占用生成额度）
-    btn.disabled = true;
-    btn.textContent = '提交中…';
-    try {
-      const r = await api(`/api/projects/${projectId}/videos`, {
-        method: 'POST',
-        body: { seconds: $('#wsVSeconds').value, aspect_ratio: $('#wsVAspect').value },
-      });
-      toast(`视频任务 #${r.id} 已提交，可在任务中心跟踪`, 'ok');
-      $('#navTasks')?.click();
-      setTimeout(() => bus.emit('tasks-changed'), 300);
-    } catch (e) {
-      toast('提交失败：' + e.message, 'err');
-      if (btn.isConnected) {
-        btn.disabled = false;
-        btn.textContent = '🚀 提交视频任务';
-      }
     }
   }
 })();
