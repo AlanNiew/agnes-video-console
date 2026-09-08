@@ -418,6 +418,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     music_api_base: `http://127.0.0.1:${MOCK_PORT}`,
     music_api_token: 'tok-music-test-0000',
     music_level: 'exhigh',
+    video_auto_download: true, // v2.3：本 e2e 的归档/本地产物断言依赖「完成即下载」
   });
   if (set.status !== 200) err('保存设置失败');
   ok('保存设置（base_url→mock）');
@@ -428,6 +429,17 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (JSON.stringify(st.data).includes('sk-test-key-1234')) err('API Key 泄露到设置响应');
   if (JSON.stringify(st.data).includes('tok-music-test-0000')) err('音乐 Token 泄露到设置响应');
   ok('API Key / 音乐 Token 仅以掩码或布尔返回，未泄露');
+
+  // 3.0.5 v2.3：视频自动下载开关读写（默认关闭，PUT false/true 生效）
+  const setAdFalse = await api('PUT', '/api/settings', { video_auto_download: false });
+  if (setAdFalse.status !== 200) err('关闭 video_auto_download 失败');
+  const stAdFalse = await api('GET', '/api/settings');
+  if (stAdFalse.data.video_auto_download !== false) err('video_auto_download 置 false 未生效');
+  const setAdTrue = await api('PUT', '/api/settings', { video_auto_download: true });
+  if (setAdTrue.status !== 200) err('开启 video_auto_download 失败');
+  const stAdTrue = await api('GET', '/api/settings');
+  if (stAdTrue.data.video_auto_download !== true) err('video_auto_download 置 true 未生效');
+  ok('开关：video_auto_download 读写与回显正常（归档用例将按开启执行）');
 
   // 3.1 设置校验：非法模型 / 轮询间隔越界 → 400
   const setBad1 = await api('PUT', '/api/settings', { model: 'agnes-video-9.9' });

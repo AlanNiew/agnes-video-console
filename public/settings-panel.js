@@ -72,6 +72,8 @@ async function loadSettings() {
       ? '（已保存，留空则不修改）'
       : '（未配置）';
     $('#setMusicLevel').value = settingsState.settings.music_level || 'exhigh';
+    // v2.3：视频完成后自动下载本地开关
+    $('#setAutoDownload').checked = settingsState.settings.video_auto_download === true;
   } catch (e) {
     toast('加载设置失败：' + e.message, 'err');
   }
@@ -109,6 +111,8 @@ async function saveSettings() {
     if (musicToken) body.music_api_token = musicToken;
     const musicLevel = $('#setMusicLevel').value;
     if (musicLevel) body.music_level = musicLevel;
+    // v2.3：视频完成后自动下载本地开关（PUT 按布尔处理）
+    body.video_auto_download = $('#setAutoDownload').checked;
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;

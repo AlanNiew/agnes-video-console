@@ -38,6 +38,8 @@ module.exports = function registerSettingsRoutes(app) {
       // v1.9 声音广场
       fish_web_token_set: Boolean(settings.get('fish_web_token', '')),
       voice_pool_count: getVoicePool().length,
+      // v2.3 视频完成后自动下载本地开关（默认关：省磁盘，仅保留平台链接）
+      video_auto_download: settings.get('video_auto_download', DEFAULT_SETTINGS.video_auto_download) === '1',
     });
   });
 
@@ -151,6 +153,11 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.clear_fish_web_token === true) {
       settings.set('fish_web_token', '');
       changed.push('fish_web_token');
+    }
+    // v2.3 视频自动下载开关（立即生效，无需重启）
+    if (b.video_auto_download !== undefined) {
+      settings.set('video_auto_download', b.video_auto_download ? '1' : '0');
+      changed.push('video_auto_download');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

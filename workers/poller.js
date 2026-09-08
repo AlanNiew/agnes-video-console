@@ -13,6 +13,8 @@ const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
+// v2.3 视频归档下载失败后的自动重试节奏（30s / 2min / 10min，共 3 次）
+const ARCHIVE_RETRY_MS = [30_000, 120_000, 600_000];
 
 class Poller {
   constructor() {
@@ -20,6 +22,8 @@ class Poller {
     this.running = false;
     this.pollingIds = new Set(); // 正在轮询的任务 id（防止定时 tick 与手动 pollNow 并发轮询同一任务）
     this.retryUntil = new Map(); // taskId -> 允许再次轮询的时间戳
+    this.pendingArchive = new Map(); // taskId -> {attempt, at}：视频归档失败待重试
+    this.archiveBusy = false;
   }
 
   start() {
@@ -58,10 +62,70 @@ class Poller {
     } finally {
       this.running = false;
     }
+    await this.tickArchives(); // v2.3：顺带处理归档失败的自动重试
   }
 
-  /** v1.3 归档补扫：为历史 completed 任务补齐本地视频（顺序 + 500ms 限速，失败不阻塞） */
+  /** v2.3 视频自动下载是否开启（设置项，动态生效） */
+  autoArchive() {
+    return settings.get('video_auto_download', '0') === '1';
+  }
+
+  /** 下载归档单个视频到本地；成功写 video_local_path 并返回 true */
+  async downloadAndArchive(t, url) {
+    const target = String(url || t?.metadata_url || '').trim();
+    if (!target || t.video_local_path) return true;
+    const art = await downloadArtifact(target, { fallbackExt: '.mp4' });
+    if (art) {
+      tasks.update(t.id, { video_local_path: art.local_path });
+      log('info', `任务 #${t.id} 视频已本地归档: ${art.local_path}`);
+      return true;
+    }
+    return false;
+  }
+
+  /** 归档失败自动重试队列：每次 tick 至多处理一个到期项，避免并发下载 */
+  async tickArchives() {
+    if (this.archiveBusy || !this.pendingArchive.size) return;
+    const now = Date.now();
+    for (const [id, e] of this.pendingArchive) {
+      if (e.at > now) continue;
+      const t = tasks.get(id);
+      if (!t || t.video_local_path) {
+        this.pendingArchive.delete(id);
+        continue;
+      }
+      this.archiveBusy = true;
+      try {
+        const ok = await this.downloadAndArchive(t);
+        if (ok) this.pendingArchive.delete(id);
+        else this.scheduleArchiveRetry(id);
+      } finally {
+        this.archiveBusy = false;
+      }
+      return;
+    }
+  }
+
+  scheduleArchiveRetry(taskId) {
+    const cur = this.pendingArchive.get(taskId);
+    const attempt = (cur ? cur.attempt : 0) + 1;
+    if (attempt > ARCHIVE_RETRY_MS.length) {
+      this.pendingArchive.delete(taskId);
+      log('warn', `任务 #${taskId} 视频归档多次重试仍失败，暂留缺失（可稍后重启触发补扫）`);
+      return;
+    }
+    const waitMs = ARCHIVE_RETRY_MS[attempt - 1];
+    this.pendingArchive.set(taskId, { attempt, at: Date.now() + waitMs });
+    log('warn', `任务 #${taskId} 视频归档失败，${Math.round(waitMs / 1000)}s 后自动重试（${attempt}/${ARCHIVE_RETRY_MS.length}）`);
+  }
+
+  /** v1.3 归档补扫：为历史 completed 任务补齐本地视频（顺序 + 500ms 限速，失败不阻塞）。
+   * v2.3 受 video_auto_download 开关控制：默认关闭时跳过，避免自动把海量历史下载下来占盘 */
   async sweepArchives() {
+    if (!this.autoArchive()) {
+      log('info', '归档补扫跳过：视频自动下载未开启（在「设置」开启后重启本服务即可补扫历史任务）');
+      return;
+    }
     const pending = tasks.completedWithoutLocal();
     if (!pending.length) return;
     log('info', `归档补扫：发现 ${pending.length} 个已完成任务未本地归档，开始下载`);
@@ -93,7 +157,15 @@ class Poller {
     // 以最新状态为准，终态直接跳过（防止超时分支把 completed 改判 failed、或重复归档下载）
     const fresh = tasks.get(t.id);
     if (!fresh) return;
-    if (['completed', 'failed', 'submit_error'].includes(fresh.status)) return;
+    if (fresh.status === 'completed') {
+      // v2.3：对已完成的视频，手动「立即查询」也可在开关开启时补齐本地归档（此前终态直接跳过，补下无门）
+      if (this.autoArchive() && !fresh.video_local_path && fresh.metadata_url) {
+        const ok = await this.downloadAndArchive(fresh);
+        if (!ok) this.scheduleArchiveRetry(fresh.id);
+      }
+      return;
+    }
+    if (['failed', 'submit_error'].includes(fresh.status)) return;
     t = fresh;
     const apiKey = settings.get('api_key', '');
     const baseUrl = settings.get('base_url', DEFAULT_BASE_URL);
@@ -207,14 +279,14 @@ class Poller {
 
     if (status === 'completed') {
       log('info', `任务 #${t.id} 完成，视频地址: ${metadataUrl}`);
-      // v1.3 归档：完成即下载到本地（平台远端链接会过期；失败可由补扫/手动轮询兜底）
+      // v1.3 归档：完成即下载到本地（平台远端链接会过期）。v2.3 起受 video_auto_download 开关控制，
+      // 默认关闭（省磁盘，仅保留平台链接）；失败进入自动重试队列，超限后留待重启补扫兜底。
       if (metadataUrl && !t.video_local_path) {
-        const art = await downloadArtifact(metadataUrl, { fallbackExt: '.mp4' });
-        if (art) {
-          tasks.update(t.id, { video_local_path: art.local_path });
-          log('info', `任务 #${t.id} 视频已本地归档: ${art.local_path}`);
+        if (this.autoArchive()) {
+          const ok = await this.downloadAndArchive(t, metadataUrl);
+          if (!ok) this.scheduleArchiveRetry(t.id);
         } else {
-          log('warn', `任务 #${t.id} 视频归档失败（远端不可达），稍后可手动「立即查询」或重启补扫`);
+          log('info', `任务 #${t.id} 完成（自动下载已关闭，仅保留平台链接；需要本地备份请在「设置」开启）`);
         }
       }
     } else if (status === 'failed') {

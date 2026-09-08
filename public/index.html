@@ -69,7 +69,6 @@
           <button class="vt-btn active" data-view="list">☰ 列表</button>
           <button class="vt-btn" data-view="board">▦ 看板</button>
         </div>
-        <button class="btn ghost sm" id="btnClearDone" title="删除全部已完成任务">清空已完成</button>
         <button class="btn ghost sm" id="btnClearFailed" title="删除全部失败任务">清空失败</button>
       </div>
     </div>
@@ -354,6 +353,16 @@
             轮询间隔建议 1000–2000ms（官方建议 1–2
             秒查询一次）。超过超时仍未完成的任务将被标记为失败。批量提交间隔用于分镜批量出片（0 = 连续提交）。
           </p>
+          <!-- v2.3：视频本地归档开关（默认关闭省磁盘） -->
+          <div class="field" style="display:flex;align-items:flex-start;gap:8px">
+            <input type="checkbox" id="setAutoDownload" style="width:auto;margin-top:2px" />
+            <label for="setAutoDownload" style="margin:0;cursor:pointer">
+              视频任务完成后自动下载到本地
+              <span class="hint"
+                >默认关闭：仅保留平台链接（链接可能过期）。开启后在任务完成/历史补扫时把视频下载到本地，会持续占用磁盘。</span
+              >
+            </label>
+          </div>
           <hr style="border: none; border-top: 1px dashed var(--line, #ddd); margin: 16px 0" />
           <div class="field">
             <label

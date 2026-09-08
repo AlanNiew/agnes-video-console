@@ -31,5 +31,6 @@ const DEFAULT_SETTINGS = {
   music_level: 'exhigh', // v1.4 BGM：默认音质 standard/exhigh/lossless/hires
   fish_web_token: '', // v1.9 声音广场：fish.audio 网页端 Token（浏览社区音色；仅服务端使用）
   tts_voice_pool: '[]', // v1.9 音色备选池（JSON 数组：从声音广场收录的真实音色）
+  video_auto_download: '0', // v2.3 视频完成后自动下载到本地（'1'开/'0'关；默认关——本地产物很占磁盘，关时仅保留平台链接）
 };
 module.exports = { settings, DEFAULT_SETTINGS };
