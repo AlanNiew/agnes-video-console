@@ -29,10 +29,12 @@ const MODELS = {
     family: 'v2',
     sizes: [],
     free: true,
-    short: 'V2.0（旧）',
+    short: 'V2.0',
+    // deprecated 仅表示「不在主界面可选」（前端下拉/默认模型据此过滤）——官方并未下架本模型，
+    // 仍在售且当前免费；API 兼容层保留，可经 /api/tasks 直接提交使用（文生/图生/keyframes）。
     deprecated: true,
-    hint: '旧模型 · 已从界面下架（后端兼容保留）',
-    label: 'Agnes Video V2.0（旧模型 · 下架）',
+    hint: '官方在售免费档 · 界面默认不展示（主推 2.5 Flash 能力更全）；API 仍可经 /api/tasks 直接调用',
+    label: 'Agnes Video V2.0（官方在售 · 兼容保留）',
     rate_limit: null,
   },
 };

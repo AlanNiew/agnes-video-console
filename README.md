@@ -14,7 +14,7 @@
 | ----------------------- | ---------------------------------------- | -------------------------------------------------------------------------- | -------- | ------------------------------------------- |
 | `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio`                                        | 限时免费 | ✅ 默认                                     |
 | `agnes-video-2.5`       | 文生 / 首尾帧 / 多模态参考               | `seconds` + `size` + `aspect_ratio`                                        | 付费     | ✅ 高级分组                                 |
-| `agnes-video-v2.0`      | 文生 / 图生 / 关键帧动画                 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | ⛔ 已下架（后端兼容保留，历史任务正常显示） |
+| `agnes-video-v2.0`      | 文生 / 图生 / 关键帧动画                 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | 🗂 兼容保留（UI 默认不展示，可经 API 调用，历史任务正常显示） |
 
 > 价格与能力以 [Agnes AI 官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准，当前 Flash 与 V2.0 模型限时 `$0 / 秒`。
 
@@ -84,7 +84,7 @@ npm start
 
 **BGM 配乐（v1.4）**：在「设置 → 音乐接口」填写自托管音乐接口地址与 Token（网易云源；Token 仅存本地 SQLite、只做服务端调用）→ 第⑥步「🎵 背景音乐」搜索歌曲 → ▶ 试听（服务端流代理，现取现播）→ 选用（立即下载到 `data/artifacts` 缓存，播放地址有时效性因此落本地）→ 渲染成片时自动循环铺底、首尾淡入淡出；有旁白时默认开启「旁白闪避」，BGM 音量可调（有旁白建议 30–40%）。接口：`GET /api/music/search`、`GET /api/music/stream`、`POST/DELETE /api/projects/:id/bgm`。
 
-**V2.0 提示**（仅历史任务/后端 API，界面已下架）：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
+**V2.0 提示**（官方在售免费档；界面默认不展示，主推 2.5 Flash 能力更全，需要时可直接经 `/api/tasks` 提交 `model: "agnes-video-v2.0"` 调用）：时长 = `num_frames ÷ frame_rate`（如 121÷24 ≈ 5s）；`num_frames` 需 ≤441 且满足 8n+1（81/121/241/441）。
 
 **提示词建议**：主体与场景 → 动作变化 → 镜头语言 → 视觉风格 → 声音节奏 → 一致性要求。`reference` 模式用 `<Picture 1>` / `<Audio 1>` / `<Video 1>` 指代素材。
 

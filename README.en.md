@@ -16,7 +16,7 @@ Supports three models (async task API — `POST /v1/videos` to create, `GET /agn
 | ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------- | ------------------- | --------------------------------------------------- |
 | `agnes-video-2.5-flash` | text / keyframe / reference (image·audio·video) | `seconds` + `size` + `aspect_ratio`                                          | free (limited time) | ✅ default                                          |
 | `agnes-video-2.5`       | text / keyframe / reference                     | `seconds` + `size` + `aspect_ratio`                                          | paid                | ✅ advanced                                         |
-| `agnes-video-v2.0`      | text / image-to-video / keyframes animation     | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | free (limited time) | ⛔ retired from UI (backend kept for compatibility) |
+| `agnes-video-v2.0`      | text / image-to-video / keyframes animation     | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | free (limited time) | 🗂 kept (hidden from default UI, callable via API, historical tasks display normally) |
 
 > Pricing and capabilities follow the [official Agnes AI docs](https://www.agnes-ai.com/en/docs/agnes-video-25-flash); both Flash and V2.0 are currently `$0 / second`.
 
@@ -77,7 +77,7 @@ Open **http://127.0.0.1:8273**, click ⚙ settings and enter your Agnes API Key.
 3. **Track in the list**: the timeline list shows every task newest-first (status filter + search + pagination); tasks flow through queued → in-progress → completed/failed. Switch back to the kanban view from the top-right toggle.
 4. **On failure**: view the error in the detail panel, or retry with the same parameters (video & image alike).
 
-**V2.0 tip** (backend API / historical tasks only; retired from the UI): duration = `num_frames / frame_rate` (e.g. 121/24 ≈ 5s); `num_frames` must be ≤ 441 and follow 8n+1 (81/121/241/441).
+**V2.0 tip** (an official in-market free tier; hidden from the default UI since 2.5 Flash is more capable — call it directly via `POST /api/tasks` with `model: "agnes-video-v2.0"`): duration = `num_frames / frame_rate` (e.g. 121/24 ≈ 5s); `num_frames` must be ≤ 441 and follow 8n+1 (81/121/241/441).
 
 ## 🏗️ Project Layout
 
