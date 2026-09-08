@@ -6,6 +6,8 @@
 
 ### Refactored
 
+- **M4-B3-7：renderProject 内联绑定清空——第⑥步 BGM 面板拆出 `public/ws-bgm.js`、第⑦步成片渲染面板拆出 `public/ws-render-panel.js`（workspace.js → 约 880 行，仅剩装配与步骤导航）**——渲染按钮提交 / 成片风格预设套用 / 高级配置实时配方说明 / 渲染任务轮询迁入 ws-render-panel（startRenderPoll 随迁，renderJobItem 常量复用 ws-render）；BGM 在线搜索/试听/选用/清除迁入 ws-bgm（bgmCurrentHtml/fmtSecs/precheckHtmlFromDetail 复用 ws-render）。**交互改「局部更新」**：渲染提交成功只在 `#wsRenderJobs` 顶部插入新任务行并续轮询、轮询只增改该子树且全部落定即停（不再整页重绘 → 保留面板已调配置与其作步骤未保存输入）；BGM 选用/清除后只刷 `#wsBgmCurrent` 与步骤⑥圆点与 `#wsPrecheck`（ws-render 新增纯函数 `precheckHtmlFromDetail`，refreshTasks 一并复用，统计口径不变）。行为等价，`lint`（0 errors）/ `format:check` / `build` / 84 单测全绿。M4-B3 六步模块拆分至此全部交付，剩 CSS 拆分/收尾（B4）。
+
 - **netmusic 客户端解耦数据层**：`clients/netmusic.js` 不再 require db —— 改为依赖注入工厂 `createNetmusicClient(settings)`，由装配方接线（routes/music、routes/settings 只取静态 `LEVELS`，workers/auto、workers/render 注入 settings 后使用）；消除客户端↔数据层耦合，行为不变（e2e BGM 搜索/试听/选用/渲染流全绿）。
 - **M4-B0：前端构建管线（vite）**——引入 `vite`（devDep）与 `vite.config.mjs`（root=public → `dist/`，已 gitignore）；`public/index.html` 改为 ESM 入口 `main.js`（顺序 import common/compare/app/workspace，行为等价阶段）；`server.js` 静态服务 dist 优先、public 回退（未构建时原生 ESM 源码可直接调试）；eslint/prettier 适配 `.mjs`/`dist` ignore，CI 增加 `npm run build`。`lint` / `format:check` / 单测 / e2e（含静态首页）全绿。后续 B1–B4 见 `docs/FRONTEND_REFACTOR_PLAN.md`。
 - **M4-B1-1：`public/common.js` 正式 ESM 模块化**——由「IIFE + 挂 `window.__common`」改为标准 ES module（顶层 `export { $, $$, esc, fmtTime, toast, api, theme }`），保留 `window.__common` 兼容注入供仍为 IIFE 的 compare/app/workspace 在 evaluate 阶段解构（main.js 顺序 import 保证注入先于其求值）；eslint 增加 common.js module 专项块。行为不变，`lint` / `format:check` / `build` / 单测 / e2e 全绿。B1 后续见蓝图。
