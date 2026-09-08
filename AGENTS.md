@@ -60,7 +60,7 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 
 - ~~`db.js` 的 `projects` 对象混装 6 个实体、superseded 业务规则写死在数据层~~ ✅ M3 已还：数据层目录化（`db/`），superseded 标注上移至 API 聚合层，单实例锁独立为根模块。残余：`db/repos/projects.js` 按表族合并了 project/texts/images/shots/tts 四子域（A 档决策），如需可再细拆。
 - ~~`netmusic.js` 直读 db settings（客户端耦合数据层）~~ ✅ M4 已治理：改为依赖注入工厂 `createNetmusicClient(settings)`，装配方（routes/music、routes/settings、workers/auto、workers/render）接线，客户端不再 require db。
-- `workspace.js`（约 2800 行）单文件巨型 IIFE + 全量 innerHTML 重渲染——**M4 专项已推进：B0（vite 构建管线）/ B1（互调清零）/ B2（任务中心域按文件拆，app.js 瘦身为装配层）已交付**；创作工作台拆分（B3）与 CSS 拆分/收尾（B4）按 `docs/FRONTEND_REFACTOR_PLAN.md` 待专项执行。
+- `workspace.js`（约 2100 行）巨型 IIFE + 全量 innerHTML 重渲染——**M4 专项已推进：B0（vite）/ B1（互调清零）/ B2（任务中心按文件拆）/ B3-1（渲染纯函数拆至 `ws-render.js`）已交付**；剩余按步骤的动作/事件拆分（B3-2…）与 CSS 拆分/收尾（B4）按 `docs/FRONTEND_REFACTOR_PLAN.md` 待专项执行。
 - 单实例锁的**误接管窗口**（已知不修，收益<成本）：持有者进程存在 >15s 的事件循环同步阻塞（渲染 spawnSync/大文件写盘）会饿死 10s 心跳，锁过期被接管后原持有者在途 tick/renderJob 不复查锁 → 双 worker 并行数分钟（重复轮询/限流失效，产物文件带时间戳不冲突）。锁**获取**已是原子 CAS（v1.9.2，跨进程并发验证通过）；渲染中崩溃遗留任务由 start() 自愈复位。
 
 ## 前端约定
@@ -69,8 +69,9 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
   （`public/main.js` 为原生 ESM 入口——顺序 import common→compare→app→workspace，现代浏览器可直接跑源码调试）。
 - 前端已全面 ESM：`common`/`compare`/`state`/`task-meta` 为基础模块，`app.js` 为装配层（按序拉入
   `settings-panel`/`new-task`/`works-panel`/`task-center` 并编排主视图切换/轮询/初始化），
-  `workspace.js` 内部仍为 IIFE 视图——互相不再经 window 通信（**`window.__*` 代码引用已清零**，跨视图走 `state.js` bus）。
-  任务中心域的按文件拆分与局部更新见 `docs/FRONTEND_REFACTOR_PLAN.md`（B2 已交付；workspace 拆分待 B3）。
+  `workspace.js` 内部仍为 IIFE 视图（渲染纯函数已拆至 `ws-render.js`）——互相不再经 window 通信
+  （**`window.__*` 代码引用已清零**，跨视图走 `state.js` bus）。
+  任务中心域的按文件拆分与局部更新见 `docs/FRONTEND_REFACTOR_PLAN.md`（B2 已交付；workspace 按步骤拆分进行中，B3-1 已交付）。
 - 插值进 innerHTML 的任何动态内容必须过 `esc()`。
 - 前端无自动化测试——改动后需人工冒烟或跑 e2e 验证后端契约未破坏。
 
