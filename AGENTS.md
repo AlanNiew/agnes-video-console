@@ -79,6 +79,7 @@ routes/       9 个领域文件，注册顺序必须与 server.js 装配顺序�
 ## 约定
 
 - 全仓中文注释与中文提交信息；提交前缀 `feat:/fix:/refactor:/style:/test:/docs:`。
+- **一个功能或阶段完成且验证通过（lint + 相关单测/e2e）后默认即可提交**，无需等用户逐次催提交；除非用户明确说先不提交。提交信息按前缀规则写清楚改动范围。
 - 行长 ≤120（prettier 已强制）；文件统一 LF（Windows 上 git 的 CRLF 警告属正常）。
 - 版本发布：`package.json` 版本号与 `CHANGELOG.md`（Keep a Changelog 格式）同次提交。
 - `data/`（真实库 + 产物归档）已 gitignore，永不提交；e2e 会写 `data/e2e-test.db` 与 `data/e2e-artifacts`，同样不提交。
