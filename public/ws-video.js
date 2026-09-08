@@ -90,8 +90,9 @@ async function runBatchSubmit(projectId) {
     }
   }
   st.batchBusy = false;
-  st.batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${st.batchStop ? '（已手动停止）' : ''}`;
-  toast(st.batchHint, fail ? 'warn' : 'ok');
+  const stopped = st.batchStop;
+  st.batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${stopped ? '（已手动停止）' : ''}`;
+  toast(st.batchHint, fail || stopped ? 'warn' : 'ok'); // 手动停止不是「成功」，用警示色
   bus.emit('tasks-changed');
   bus.emit('ws-project-changed', projectId);
 }

@@ -20,6 +20,7 @@ function compare(o) {
     o.renderText ||
     ((t) =>
       String(t ?? '')
+        .trim()
         .split(/\n+/)
         .map((p) => `<p>${esc(p)}</p>`)
         .join(''));

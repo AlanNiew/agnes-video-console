@@ -78,28 +78,37 @@ async function loadSettings() {
 }
 
 async function saveSettings() {
-  const body = {
-    base_url: $('#setBaseUrl').value.trim(),
-    model: $('#setModel').value,
-    poll_interval_ms: Number($('#setPollMs').value),
-    max_active_minutes: Number($('#setMaxMin').value),
-    submit_interval_ms: Number($('#setSubmitMs').value),
-  };
-  const key = $('#setApiKey').value.trim();
-  if (key) body.api_key = key;
-  const fishKey = $('#setFishKey').value.trim();
-  if (fishKey) body.fish_api_key = fishKey;
-  const fishVoice = $('#setFishVoice').value;
-  if (fishVoice) body.fish_voice = fishVoice;
-  const fishSpeed = Number($('#setFishSpeed').value);
-  if (Number.isFinite(fishSpeed) && fishSpeed >= 0.5 && fishSpeed <= 2) body.fish_speed = fishSpeed;
-  // v1.4 BGM（音乐接口）
-  body.music_api_base = $('#setMusicBase').value.trim();
-  const musicToken = $('#setMusicToken').value.trim();
-  if (musicToken) body.music_api_token = musicToken;
-  const musicLevel = $('#setMusicLevel').value;
-  if (musicLevel) body.music_level = musicLevel;
+  const btn = $('#btnSaveSettings');
+  btn.disabled = true;
   try {
+    const body = {
+      base_url: $('#setBaseUrl').value.trim(),
+      model: $('#setModel').value,
+      poll_interval_ms: Number($('#setPollMs').value),
+      max_active_minutes: Number($('#setMaxMin').value),
+      submit_interval_ms: Number($('#setSubmitMs').value),
+    };
+    const key = $('#setApiKey').value.trim();
+    if (key) body.api_key = key;
+    const fishKey = $('#setFishKey').value.trim();
+    if (fishKey) body.fish_api_key = fishKey;
+    const fishVoice = $('#setFishVoice').value;
+    if (fishVoice) body.fish_voice = fishVoice;
+    const fishSpeedRaw = $('#setFishSpeed').value.trim();
+    if (fishSpeedRaw !== '') {
+      const fishSpeed = Number(fishSpeedRaw);
+      if (!Number.isFinite(fishSpeed) || fishSpeed < 0.5 || fishSpeed > 2) {
+        toast('语速需在 0.5–2.0 之间，请调整后再保存', 'warn');
+        return;
+      }
+      body.fish_speed = fishSpeed;
+    }
+    // v1.4 BGM（音乐接口）
+    body.music_api_base = $('#setMusicBase').value.trim();
+    const musicToken = $('#setMusicToken').value.trim();
+    if (musicToken) body.music_api_token = musicToken;
+    const musicLevel = $('#setMusicLevel').value;
+    if (musicLevel) body.music_level = musicLevel;
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;
@@ -109,6 +118,8 @@ async function saveSettings() {
     await loadSettings();
   } catch (e) {
     toast('保存失败：' + e.message, 'err');
+  } finally {
+    btn.disabled = false;
   }
 }
 

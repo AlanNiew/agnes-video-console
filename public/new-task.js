@@ -5,14 +5,16 @@
 import { $, $$, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
-import { onModelChange } from './task-meta.js';
+import { onModelChange, DEFAULT_MODEL } from './task-meta.js';
 
 const refState = { images: [], audios: [], videos: [] };
 let taskType = 'video'; // P1：新建任务类型（video | image）
 
 function openNewTask(initial) {
-  $('#newTaskModal').hidden = false;
+  // 打开即统一重置：取消关闭后的残留草稿、类型/模式页签、规格都不会带进下次
+  resetNewTaskModal();
   if (initial) applyTemplate(initial);
+  $('#newTaskModal').hidden = false;
 }
 
 /** P1：新建任务类型切换（视频 ⇄ 图片），两套表单互斥 */
@@ -36,6 +38,9 @@ function collectImageBody() {
 function resetImageForm() {
   $('#fiPrompt').value = '';
   $('#fiTemplate').value = '';
+  $('#fiCount').value = '1';
+  $('#fiSize').selectedIndex = 0;
+  $('#fiRatio').selectedIndex = 0;
 }
 
 function switchMode(mode) {
@@ -97,12 +102,17 @@ async function submitTask() {
       toast(`图片任务 #${t.id} 已入队，生成完成后在列表中查看`, 'ok');
     } else {
       const body = collectBody();
+      // 客户端本地校验（对齐 services/payloads.js 的服务端规则，避免提交后才报错）
+      if (!body.prompt) throw new Error('请填写视频提示词 prompt');
+      if (body.mode === 'keyframe' && !body.first_frame && !body.last_frame)
+        throw new Error('首尾帧模式需要至少提供一个首帧或尾帧 URL');
+      if (body.mode === 'reference' && !body.images.length && !body.audios.length && !body.videos.length)
+        throw new Error('参考模式需要至少提供一类参考素材（图片/音频/视频）');
       t = await api('/api/tasks', { method: 'POST', body });
       toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
     }
+    // 表单内容由下次 openNewTask 统一重置（与「取消关闭即清空」保持一致）
     $('#newTaskModal').hidden = true;
-    if (taskType === 'image') resetImageForm();
-    else resetNewTaskForm();
     bus.emit('tasks-changed');
   } catch (e) {
     toast('提交失败：' + e.message, 'err');
@@ -132,23 +142,38 @@ function collectBody() {
   if (mode === 'reference') {
     body.images = refState.images.filter(Boolean);
     body.audios = refState.audios.filter(Boolean);
-    body.videos = refState.videos.filter(Boolean);
+    // 视频行是对象 {url,…}，需按 url 过滤空行（filter(Boolean) 对对象恒真拦不住空 URL）
+    body.videos = refState.videos.filter((v) => (typeof v === 'string' ? v : v && v.url));
   }
   return body;
 }
 
-function resetNewTaskForm() {
+function resetNewTaskModal() {
+  // 视频表单内容回默认（时长/画幅/参考素材/种子）
   $('#fPrompt').value = '';
   $('#fSeed').value = '';
   $('#fFirstFrame').value = '';
   $('#fLastFrame').value = '';
   $('#fTemplate').value = '';
+  $('#fSeconds').value = '5';
+  $('#fAspect').value = '16:9';
   refState.images = [];
   refState.audios = [];
   refState.videos = [];
   renderRefList('images');
   renderRefList('audios');
   renderRefList('videos');
+  resetImageForm();
+  // 模型回默认免费项
+  const dm = DEFAULT_MODEL();
+  if ($('#fModel').value !== dm) {
+    $('#fModel').value = dm;
+    onModelChange();
+  }
+  // 任务类型与生成模式页签回默认（视频 + text）
+  switchTaskType('video');
+  $$('#modeTabs .tab').forEach((t) => t.classList.toggle('active', t.dataset.mode === 'text'));
+  switchMode('text');
 }
 
 /* ---------------- 模板 ---------------- */
@@ -237,7 +262,7 @@ async function runAiOptimize(opts = {}) {
       },
     });
     const adopt = () => {
-      promptEl.value = r.content;
+      promptEl.value = r.content.trim();
       toast('已采用优化后的描述', 'ok');
     };
     if (compare) {

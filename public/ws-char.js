@@ -32,7 +32,7 @@ async function optimizeCharDesc() {
       body: { system: CHAR_OPTIMIZE_PROMPT, messages: [{ role: 'user', content: cur }], temperature: 0.7 },
     });
     const adopt = () => {
-      ta.value = r.content;
+      ta.value = r.content.trim();
       toast('已采用优化描述（需点「生成角色图」才会生效，或手动保存到文案）', 'ok');
     };
     if (compare) {

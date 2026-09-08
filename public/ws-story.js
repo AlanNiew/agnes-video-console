@@ -69,6 +69,8 @@ function bindStoryboardEvents(projectId) {
     // v2.1：单镜头配音（用该镜旁白文案合成并自动绑定）
     const ttsBtn = card.querySelector('[data-shot-tts]');
     if (ttsBtn) {
+      // 记下渲染时的原始文案（配本镜旁白 / 重配本镜），失败恢复时原样还原
+      ttsBtn.dataset.label = ttsBtn.textContent;
       ttsBtn.onclick = async () => {
         ttsBtn.disabled = true;
         ttsBtn.textContent = '配音中…';
@@ -76,7 +78,7 @@ function bindStoryboardEvents(projectId) {
         bus.emit('ws-project-changed', projectId);
         if (!done && ttsBtn.isConnected) {
           ttsBtn.disabled = false;
-          ttsBtn.textContent = '🎙️ 配本镜旁白';
+          ttsBtn.textContent = ttsBtn.dataset.label;
         }
       };
     }

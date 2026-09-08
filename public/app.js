@@ -32,6 +32,18 @@ function bindModals() {
       if (e.target.closest('[data-close]')) ov.hidden = true;
     });
   });
+  // v2.2.2：全站弹窗支持 Esc 关闭——复用每个弹窗自己的关闭控件语义
+  // （静态 modal 经 data-close 收起；compare/新建项目等动态 overlay 的 modal-close/data-close
+  //  由其自带监听处理「保留/取消」等后续逻辑，因此这里只派发 click 而不是直接置 hidden）
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const stack = [...document.querySelectorAll('.modal-overlay')].filter((ov) => !ov.hidden);
+    const top = stack[stack.length - 1]; // 栈顶 = 最后打开的（后 append 的遮罩层级最高）
+    if (!top) return;
+    const closer = top.querySelector('[data-close], .modal-close');
+    if (closer) closer.click();
+    else top.hidden = true;
+  });
 }
 
 /* ---------------- 刷新循环 ---------------- */
