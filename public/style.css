@@ -176,6 +176,11 @@ body {
   font-size: 16px;
   padding: 8px 12px;
 }
+/* 禁用态：整体降级并屏蔽一切交互/hover（放在各变体之后兜底） */
+.btn:disabled {
+  opacity: 0.45;
+  pointer-events: none;
+}
 
 /* ---------- 工具栏 ---------- */
 .toolbar {
@@ -582,6 +587,26 @@ body {
 }
 .col.col-hidden {
   display: none;
+}
+/* v2.2.3：看板列内迷你分页（每列 5 条翻页） */
+.col-foot {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+}
+.col-foot .pg-btn {
+  padding: 3px 9px;
+  font-size: 12px;
+  border-radius: 6px;
+}
+.col-foot .pg-info {
+  font-size: 12px;
+  color: var(--text-dim);
+  white-space: nowrap;
 }
 @media (max-width: 1200px) {
   .board {

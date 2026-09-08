@@ -1,6 +1,6 @@
 /* task-center.js —— 任务中心视图与任务详情弹窗（M4-B2：自 app.js 拆出）
  * 时间线列表 / 看板两形态 + 顶栏统计 + 分页 + 视频懒加载 + 任务操作（查询/重试/删除）。
- * 渲染沿用「集合签名」局部更新（lastColSig/lastListSig/lastPageSig/detailSig），避免打断视频播放。
+ * 渲染沿用「集合签名」局部更新（lastColSig/lastListSig/detailSig；看板各列页码在列内），避免打断视频播放。
  * 依赖：common.js、state.js（响应 tasks-changed 自刷新）、task-meta.js、settings-panel.js（连接状态渲染）。
  */
 import { $, $$, esc, fmtTime, toast, api } from './common.js';
@@ -43,6 +43,14 @@ function taskSourceLabel(t) {
   return parts.join(' · ');
 }
 
+// v2.2.3：看板每列独立分页——默认每列展示 5 张卡片，超出部分在列内翻页
+const BOARD_COLS = ['queued', 'in_progress', 'completed', 'failed'];
+const BOARD_PAGE_SIZE = 5;
+// 看板一次拉取的任务上限（列内分页基于该缓存切片；本地单机个人数据量足够）
+const BOARD_FETCH_LIMIT = 500;
+// 列 → UI 前缀映射：cntQueued/pgQueued 等（in_progress 用 Active、completed 用 Done）
+const COL_UI_SUFFIX = { queued: 'Queued', in_progress: 'Active', completed: 'Done', failed: 'Failed' };
+
 const state = {
   tasks: [],
   search: '',
@@ -51,9 +59,10 @@ const state = {
   pageSize: 20, // P0：每页条数
   total: 0, // P0：满足当前筛选的总条数（后端返回）
   viewMode: 'list', // P0：任务中心视图（list=时间线列表 / board=看板）
+  boardCache: { queued: [], in_progress: [], completed: [], failed: [] }, // 看板列缓存（board 模式 loadTasks 时重建）
+  boardPages: { queued: 1, in_progress: 1, completed: 1, failed: 1 }, // 看板各列当前页码（1 起）
   lastColSig: {}, // 列签名，避免无谓重建（防止视频播放被打断）
   lastListSig: null, // P0：列表行集合签名（同上）
-  lastPageSig: null, // P0：分页条签名
   detailSig: null,
   detailId: null,
 };
@@ -244,9 +253,27 @@ function rowHTML(t) {
       </article>`;
 }
 
+/** 按状态分桶（失败/提交失败并作「失败」列，未知状态兜底失败列） */
+function colBuckets(tasks) {
+  const b = { queued: [], in_progress: [], completed: [], failed: [] };
+  for (const t of tasks || []) {
+    if (t.status === 'failed' || t.status === 'submit_error') b.failed.push(t);
+    else if (b[t.status]) b[t.status].push(t);
+    else b.failed.push(t); // 未知状态兜底
+  }
+  return b;
+}
+
 function updateEmptyTip() {
   const emptyEl = $('#emptyTip');
-  emptyEl.hidden = state.tasks.length > 0;
+  // 看板是否为空：当前筛选可见列里有没有卡片；列表直接看当前页行数
+  const hasAny =
+    state.viewMode === 'board'
+      ? BOARD_COLS.some(
+          (c) => (!state.statusFilter || state.statusFilter === c) && (state.boardCache[c] || []).length > 0,
+        )
+      : state.tasks.length > 0;
+  emptyEl.hidden = hasAny;
   if (!emptyEl.hidden) {
     emptyEl.querySelector('h3').textContent = state.search
       ? `没有匹配「${state.search}」的任务`
@@ -268,13 +295,15 @@ function renderTaskList() {
   updateEmptyTip();
 }
 
-/** 分页条（含每页条数选择）；仅签名的页码信息变化时重建，按钮状态实时更新 */
-function renderPagination() {
-  const el = $('#pagination');
+/** 列表分页条（含每页条数选择）；仅签名变化时重建，按钮状态实时更新 */
+function renderPagination(sel = '#pagination') {
+  const el = $(sel);
+  if (!el) return;
+  el.hidden = false;
   const totalPages = Math.max(1, Math.ceil(state.total / state.pageSize));
   const sig = JSON.stringify([state.page, state.total, state.pageSize]);
-  if (state.lastPageSig !== sig) {
-    state.lastPageSig = sig;
+  if (el.dataset.pgSig !== sig) {
+    el.dataset.pgSig = sig;
     el.innerHTML = `
         <button class="pg-btn" data-pg="prev">← 上一页</button>
         <span class="pg-info">第 <b>${state.page}</b> / ${totalPages} 页 · 共 ${state.total} 条</span>
@@ -304,7 +333,7 @@ function changePage(p) {
   if (np === state.page) return;
   state.page = np;
   loadTasks();
-  // 翻页后回到列表顶部
+  // 翻页后回到列表顶部（列表页唯一使用）
   $('#taskListView').scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -314,41 +343,68 @@ function switchTaskView(mode) {
   $('#taskListView').hidden = state.viewMode !== 'list';
   $('#board').hidden = state.viewMode !== 'board';
   $$('#viewToggle .vt-btn').forEach((b) => b.classList.toggle('active', b.dataset.view === state.viewMode));
-  // 看板需要重渲染（可能刚从列表切回且数据已变化）
-  if (state.viewMode === 'board') renderBoard();
-  else renderTaskList();
+  // 两种模式取数口径不同（列表=服务端按页 20 条；看板=前列缓存供每列翻页），切换统一重载
+  loadTasks();
 }
 
-function renderBoard() {
-  const byCol = { queued: [], in_progress: [], completed: [], failed: [] };
-  for (const t of state.tasks) {
-    if (t.status === 'failed' || t.status === 'submit_error') byCol.failed.push(t);
-    else if (byCol[t.status]) byCol[t.status].push(t);
-    else byCol.failed.push(t); // 未知状态兜底
+/** 渲染看板某列的底部迷你分页（仅当该列条数 > 每列 5 条时显示） */
+function renderColPager(col, page, totalPages, total) {
+  const el = $('#pg' + COL_UI_SUFFIX[col]);
+  if (!el) return;
+  if (totalPages <= 1) {
+    el.innerHTML = '';
+    delete el.dataset.sig;
+    return;
   }
+  const sig = `${page}/${totalPages}`;
+  if (el.dataset.sig !== sig) {
+    el.dataset.sig = sig;
+    el.innerHTML = `
+        <button class="pg-btn" data-cp="prev" ${page <= 1 ? 'disabled' : ''}>←</button>
+        <span class="pg-info">第 ${page}/${totalPages} 页 · 共 ${total} 条</span>
+        <button class="pg-btn" data-cp="next" ${page >= totalPages ? 'disabled' : ''}>→</button>`;
+    el.querySelector('[data-cp=prev]').onclick = () => {
+      if (state.boardPages[col] > 1) {
+        state.boardPages[col] -= 1;
+        renderBoard();
+      }
+    };
+    el.querySelector('[data-cp=next]').onclick = () => {
+      if (state.boardPages[col] < totalPages) {
+        state.boardPages[col] += 1;
+        renderBoard();
+      }
+    };
+  }
+}
+
+/** 渲染看板：四列各自按「每列 5 条」切片 + 列内分页（数据来自 state.boardCache） */
+function renderBoard() {
   // 状态筛选：选中某状态时只显示该列（单列聚焦视图），「全部」显示四列
   const filter = state.statusFilter;
-  const map = {
-    queued: '#colQueued',
-    in_progress: '#colActive',
-    completed: '#colDone',
-    failed: '#colFailed',
-  };
-  let hasAny = false;
-  for (const col of Object.keys(byCol)) {
-    const colEl = document.querySelector(`.col[data-col="${col}"]`);
-    const isShown = !filter || col === filter;
-    if (colEl) colEl.classList.toggle('col-hidden', !isShown);
-    if (byCol[col].length) hasAny = true;
-    const sig = columnSig(col, byCol[col]);
-    if (state.lastColSig[col] === sig) continue;
-    state.lastColSig[col] = sig;
-    const el = $(map[col]);
-    el.innerHTML = byCol[col].length
-      ? byCol[col].map(cardHTML).join('')
-      : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
-  }
   $('#board').classList.toggle('focus', Boolean(filter));
+  for (const col of BOARD_COLS) {
+    const colEl = document.querySelector(`.col[data-col="${col}"]`);
+    if (colEl) colEl.classList.toggle('col-hidden', Boolean(filter) && col !== filter);
+    const arr = state.boardCache[col] || [];
+    const totalPages = Math.max(1, Math.ceil(arr.length / BOARD_PAGE_SIZE));
+    if (state.boardPages[col] > totalPages) state.boardPages[col] = totalPages; // 数据缩水后页码回退
+    const page = state.boardPages[col];
+    const slice = arr.slice((page - 1) * BOARD_PAGE_SIZE, page * BOARD_PAGE_SIZE);
+    // 列头计数 = 该列当前筛选下的总条数
+    const cntEl = $('#' + 'cnt' + COL_UI_SUFFIX[col]);
+    if (cntEl) cntEl.textContent = arr.length;
+    // 列体仅在集合/页码变化时重建（签名局部更新，避免打断列内视频播放）
+    const sig = columnSig(col, slice);
+    if (state.lastColSig[col] !== sig) {
+      state.lastColSig[col] = sig;
+      const el = $('#col' + COL_UI_SUFFIX[col]);
+      el.innerHTML = slice.length
+        ? slice.map(cardHTML).join('')
+        : '<div class="muted" style="text-align:center;padding:18px 0;font-size:12px">暂无任务</div>';
+    }
+    renderColPager(col, page, totalPages, arr.length);
+  }
   updateEmptyTip();
   observeVideos();
 }
@@ -401,23 +457,26 @@ let loadFailCount = 0;
 
 async function loadTasks() {
   try {
-    // P0 分页：limit=每页条数，offset=(页码-1)*每页条数；轮询时保持页码与筛选不变
+    // 列表：limit/offset 服务端分页（每页 pageSize）；看板：一次拉取较大窗口，前端按列缓存做每列 5 条内部分页
+    const isBoard = state.viewMode === 'board';
     const params = new URLSearchParams({
-      limit: String(state.pageSize),
-      offset: String((state.page - 1) * state.pageSize),
+      limit: String(isBoard ? BOARD_FETCH_LIMIT : state.pageSize),
+      offset: String(isBoard ? 0 : (state.page - 1) * state.pageSize),
     });
     if (state.statusFilter) params.set('status', state.statusFilter);
     if (state.search) params.set('q', state.search);
     const data = await api(`/api/tasks?${params}`);
     state.tasks = data.items;
     state.total = Number(data.total) || 0;
-    // 页码越界回退：筛选清理/批量删除导致当前页超出范围时，回到最后一页（只回退一次，防循环）
-    if (!state.tasks.length && state.total > 0 && state.page > 1) {
+    if (isBoard) {
+      state.boardCache = colBuckets(state.tasks);
+    } else if (!state.tasks.length && state.total > 0 && state.page > 1) {
+      // 页码越界回退：筛选清理/批量删除导致当前页超出范围时，回到最后一页（只回退一次，防循环）
       state.page = Math.ceil(state.total / state.pageSize);
       return loadTasks();
     }
     renderStats(data.stats);
-    if (state.viewMode === 'board') renderBoard();
+    if (isBoard) renderBoard();
     else {
       renderTaskList();
       renderPagination();
@@ -436,6 +495,14 @@ async function loadTasks() {
 }
 
 /* ---------------- 任务操作 ---------------- */
+/** 轮询结果按任务状态分流提示（避免失败也弹绿勾「成功」） */
+function pollResultToast(status) {
+  const label = STATUS_LABEL[status] || status;
+  if (status === 'completed') toast('查询完成：任务已完成', 'ok');
+  else if (status === 'failed' || status === 'submit_error') toast(`查询完成：任务已${label}`, 'err');
+  else toast(`查询完成：任务${label}`, '');
+}
+
 async function act(id, name, fn) {
   try {
     const r = await fn();
@@ -464,8 +531,17 @@ function bindTaskEvents(container) {
     const id = Number(card.dataset.id);
     const actName = btn.dataset.act;
     if (actName === 'detail') return openDetail(id);
-    if (actName === 'poll')
-      return act(id, '查询', async () => (await api(`/api/tasks/${id}/poll`, { method: 'POST' })).status);
+    if (actName === 'poll') {
+      // 行内「立即查询」：按轮询结果状态分流提示（正在做/完成/失败），避免失败误弹绿勾
+      try {
+        const s = await api(`/api/tasks/${id}/poll`, { method: 'POST' });
+        pollResultToast(s.status);
+        await loadTasks();
+      } catch (e) {
+        toast(`查询失败：${e.message}`, 'err');
+      }
+      return;
+    }
     if (actName === 'retry') {
       if (confirm(`重新提交任务 #${id}？该任务将重新排队（队列中 → 生成中 → 完成/失败），任务编号不变。`)) {
         await act(id, '重试', async () => {
@@ -490,6 +566,7 @@ function bindTaskEvents(container) {
 function openDetail(id) {
   state.detailId = id;
   state.detailSig = null;
+  $('#detailBody').innerHTML = '<div class="muted" style="padding:20px;text-align:center">加载中…</div>';
   $('#detailActions').dataset.sig = ''; // 强制重建操作栏，保证按钮闭包绑定当前任务
   $('#detailModal').hidden = false;
   refreshDetail();
@@ -626,7 +703,7 @@ async function refreshDetail() {
     bind('dPoll', async () => {
       try {
         const r = await api(`/api/tasks/${id}/poll`, { method: 'POST' });
-        toast(`查询完成：${STATUS_LABEL[r.status] || r.status}`, 'ok');
+        pollResultToast(r.status);
         await refreshDetail();
         await loadTasks();
       } catch (e) {

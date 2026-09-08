@@ -80,25 +80,29 @@
       <div class="pagination" id="pagination"></div>
     </main>
 
-    <!-- 看板（可切换的次要视图） -->
+    <!-- 看板（可切换的次要视图）：每列独立分页，默认每列展示 5 条 -->
     <main class="board" id="board" hidden>
       <section class="col" data-col="queued">
         <header class="col-head amber">
           <span class="dot"></span>队列中 <span class="cnt" id="cntQueued">0</span>
         </header>
         <div class="col-body" id="colQueued"></div>
+        <div class="col-foot" id="pgQueued"></div>
       </section>
       <section class="col" data-col="in_progress">
         <header class="col-head blue"><span class="dot"></span>生成中 <span class="cnt" id="cntActive">0</span></header>
         <div class="col-body" id="colActive"></div>
+        <div class="col-foot" id="pgActive"></div>
       </section>
       <section class="col" data-col="completed">
         <header class="col-head green"><span class="dot"></span>已完成 <span class="cnt" id="cntDone">0</span></header>
         <div class="col-body" id="colDone"></div>
+        <div class="col-foot" id="pgDone"></div>
       </section>
       <section class="col" data-col="failed">
         <header class="col-head red"><span class="dot"></span>失败 <span class="cnt" id="cntFailed">0</span></header>
         <div class="col-body" id="colFailed"></div>
+        <div class="col-foot" id="pgFailed"></div>
       </section>
     </main>
 
