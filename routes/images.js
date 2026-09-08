@@ -7,7 +7,7 @@ const agnes = require('../clients/agnes');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { IMAGE_MODEL } = require('../core/constants');
-const { ApiError, ah } = require('../core/errors');
+const { ApiError, ah, upstreamError } = require('../core/errors');
 const { buildImagePayload, safeUrl } = require('../services/payloads');
 
 module.exports = function registerImageRoutes(app) {
@@ -74,12 +74,13 @@ module.exports = function registerImageRoutes(app) {
         if (u) remoteUrls.push(u);
       }
       if (!remoteUrls.length) {
-        const detail =
-          settled.find((s) => s.status === 'rejected')?.reason?.message ||
-          (settled[0].status === 'fulfilled'
-            ? settled[0].value.data?.error?.message || settled[0].value.raw || `HTTP ${settled[0].value.status}`
-            : '未知错误');
-        throw new ApiError(502, `图片生成失败：${String(detail).slice(0, 300)}`);
+        const bad = settled.find((s) => s.status === 'rejected') || settled[0];
+        if (bad.status === 'rejected') {
+          log('error', `图片生成网络异常: ${bad.reason?.message}`);
+          throw new ApiError(502, '图片生成网络异常：请检查网络连接与「设置」中的上游地址');
+        }
+        const v = bad.value;
+        throw upstreamError(v.status, v.data?.error?.message, '图片生成');
       }
       // 逐张落库（含本地备份下载），第一张成功图自动定稿
       const results = [];

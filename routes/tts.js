@@ -11,8 +11,20 @@ const { ARTIFACTS_DIR } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { TTS_VOICES, TTS_MODELS, TTS_MAX_TEXT, MARKET_SORTS } = require('../core/constants');
 const { probeDuration } = require('../core/config');
-const { ApiError, ah } = require('../core/errors');
+const { ApiError, ah, upstreamError } = require('../core/errors');
 const { getVoicePool, setVoicePool } = require('../services/voice-pool');
+
+/** 从 Fish 上游 JSON 错误体取用户可读消息（不透传整段 raw JSON） */
+function fishErrMsg(raw) {
+  if (!raw) return '';
+  try {
+    const j = JSON.parse(raw);
+    const m = String(j?.message || j?.error || '').trim();
+    return m ? m.slice(0, 200) : '';
+  } catch {
+    return String(raw).slice(0, 160);
+  }
+}
 
 module.exports = function registerTtsRoutes(app) {
   // 音色清单（v1.9：默认预设 + 声音广场备选池合并）
@@ -83,10 +95,7 @@ module.exports = function registerTtsRoutes(app) {
         pageSize: Math.min(Math.max(Number(req.query.page_size) || 12, 1), 30),
       });
       if (!r.ok)
-        throw new ApiError(
-          r.status >= 400 && r.status < 500 ? 400 : 502,
-          `声音广场请求失败（${r.status}）：${r.error}`,
-        );
+        throw upstreamError(r.status, String(r.error || ''), '声音广场（鱼音网页 Token 可能无效或过期）');
       const items = r.items
         .filter((m) => m.type === 'tts' && m.state === 'trained')
         .map((m) => ({
@@ -119,26 +128,47 @@ module.exports = function registerTtsRoutes(app) {
       if (projectId !== null && !projects.get(projectId)) throw new ApiError(404, '项目不存在');
       // v1.3：旁白可绑定到具体镜头（渲染成片时按镜头对齐时间轴）
       const shotId = b.shot_id === undefined || b.shot_id === null ? null : Number(b.shot_id);
+      let shot;
       if (shotId !== null) {
         if (projectId === null) throw new ApiError(400, 'shot_id 需与 project_id 同时提供');
-        if (!projects.shots(projectId).some((s) => s.id === shotId))
-          throw new ApiError(404, '镜头不存在（或不属于该项目）');
+        shot = projects.shots(projectId).find((s) => s.id === shotId);
+        if (!shot) throw new ApiError(404, '镜头不存在（或不属于该项目）');
+        // v2.2.2：绑定镜头的配音必须 ≤ 秒数×4（渲染会被镜头时长截断，说一半不如提前拦截）
+        const cap = Math.max(8, Math.floor((Number(shot.seconds) || 5) * 4));
+        if (text.length > cap) {
+          throw new ApiError(
+            400,
+            `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多 ${cap} 字（含标点），请删减后再合成`,
+          );
+        }
       }
       const effKind = b.kind === undefined && shotId !== null ? 'shot' : kind;
-      const voice =
-        TTS_VOICES.some((v) => v.id === String(b.voice || '')) ||
-        getVoicePool().some((v) => v.id === String(b.voice || ''))
-          ? String(b.voice)
-          : settings.get('fish_voice', 'default');
+      // v2.2.2：请求显式传了不存在的音色/模型 → 直接 400，不再静默回退默认音（成片音色不符难排查）
+      const rawVoice = b.voice === undefined || b.voice === null || b.voice === '' ? '' : String(b.voice);
+      const voiceKnown =
+        TTS_VOICES.some((v) => v.id === rawVoice) || getVoicePool().some((v) => v.id === rawVoice);
+      if (rawVoice && !voiceKnown) {
+        throw new ApiError(400, `音色 id「${rawVoice.slice(0, 60)}」无效：请选择列表内音色，或先加入声音广场备选池`);
+      }
+      const rawModel = b.model === undefined || b.model === null || b.model === '' ? '' : String(b.model);
+      if (rawModel && !TTS_MODELS.includes(rawModel)) {
+        throw new ApiError(400, `TTS 模型仅支持 ${TTS_MODELS.join('/')}，收到：${rawModel.slice(0, 60)}`);
+      }
+      let voice = rawVoice || String(settings.get('fish_voice', 'default') || 'default');
+      if (!TTS_VOICES.some((v) => v.id === voice) && !getVoicePool().some((v) => v.id === voice)) voice = 'default';
       const speed = b.speed !== undefined ? Number(b.speed) : Number(settings.get('fish_speed', '1'));
       if (!Number.isFinite(speed) || speed < 0.5 || speed > 2) throw new ApiError(400, 'speed 需在 0.5–2.0 之间');
-      const model = TTS_MODELS.includes(String(b.model)) ? String(b.model) : 's2.1-pro-free';
+      const model = rawModel || 's2.1-pro-free';
       const referenceId = voice === 'default' ? null : voice;
       const voiceTitle = TTS_VOICES.find((v) => v.id === voice)?.title || (referenceId ? voice : '平台默认音色');
 
       const r = await fishTts.synthesize({ apiKey, text, referenceId, model, speed, format: 'mp3' });
       if (!r.ok) {
-        const detail = r.raw || `HTTP ${r.status}`;
+        // 失败统一翻译并落库 error_message（网络异常 status=0 单列；429/401 走 upstreamError）
+        const ue =
+          r.status === 0
+            ? new ApiError(502, '配音生成网络异常：请检查网络连接与 Fish 代理（FISH_PROXY）配置')
+            : upstreamError(r.status, fishErrMsg(r.raw), '配音生成');
         if (projectId !== null) {
           projects.addTts({
             project_id: projectId,
@@ -148,13 +178,10 @@ module.exports = function registerTtsRoutes(app) {
             model,
             reference_id: referenceId,
             voice_title: voiceTitle,
-            error_message: String(detail).slice(0, 300),
+            error_message: ue.message,
           });
         }
-        throw new ApiError(
-          r.status >= 400 && r.status < 500 ? 400 : 502,
-          `配音生成失败（${r.status}）：${String(detail).slice(0, 300)}`,
-        );
+        throw ue;
       }
       // 保存本地 artifacts
       let localPath = null;

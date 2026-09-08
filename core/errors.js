@@ -33,4 +33,24 @@ function ah(handler) {
   };
 }
 
-module.exports = { ApiError, ah };
+/**
+ * 上游（agnes / fish / netmusic 等第三方）返回码 → 用户可读 ApiError 的统一翻译。
+ * 历史缺陷：把上游 429/401/403 一律映射成 400「输入错误」，并把 raw 原文直贴用户界面，
+ * 用户会误以为是自己参数问题；本函数按语义分类，detail 只取上游 error.message，不再透传 raw。
+ * @param {number} status 上游 HTTP 状态码
+ * @param {string} [detail] 上游错误摘要（仅取 error.message 级别的用户可读内容）
+ * @param {string} [label] 动作描述前缀，如「文本生成」「配音生成」，缺省用「上游请求」
+ */
+function upstreamError(status, detail, label = '上游请求') {
+  const msg = String(detail || '').slice(0, 300);
+  if (status === 429) return new ApiError(429, `${label}：上游限流，请稍后再试`);
+  if (status === 401 || status === 403) {
+    return new ApiError(502, `${label}：上游鉴权失败（${status}），请检查 API Key 是否有效`);
+  }
+  if (status >= 400 && status < 500) {
+    return new ApiError(400, `${label}：${msg || `上游返回 HTTP ${status}`}`);
+  }
+  return new ApiError(502, `${label}：${msg || `上游返回 HTTP ${status}`}`);
+}
+
+module.exports = { ApiError, ah, upstreamError };

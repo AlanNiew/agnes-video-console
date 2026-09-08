@@ -75,6 +75,10 @@ app.use((err, req, res, next) => {
     return res.status(err.status).json({ error: err.message });
   }
   if (err.type === 'entity.parse.failed') return res.status(400).json({ error: '请求体不是合法 JSON' });
+  // H3：请求体超限（默认 2MB，图生图贴多张大图 base64 常见）应返回可操作的 413，而非 500
+  if (err.type === 'entity.too.large') {
+    return res.status(413).json({ error: '请求内容过大（超过 2MB）：图片请压缩后再试，或精简参考素材' });
+  }
   log('error', `未处理异常: ${err.message}\n${err.stack || ''}`);
   res.status(500).json({ error: '服务器内部错误（详情见「日志」面板）' });
 });

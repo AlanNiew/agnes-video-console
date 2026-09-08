@@ -90,15 +90,37 @@ module.exports = function registerRenderRoutes(app) {
       if (!p) throw new ApiError(404, '项目不存在');
       if (!renderer.hasFfmpeg()) throw new ApiError(400, '未检测到 ffmpeg（需安装并加入 PATH）才能渲染成片');
       const b = req.body || {};
-      const clampInt = (v, lo, hi, dft) => {
+      // v2.2.2：参数越界不再静默钳制——直接 400 提示合法范围（用户能立刻知道填错了什么）
+      const parseIntRange = (v, lo, hi, dft, label) => {
+        if (v === undefined || v === null || v === '') return dft;
         const n = Number(v);
-        return Number.isFinite(n) ? Math.min(Math.max(Math.round(n), lo), hi) : dft;
+        if (!Number.isFinite(n)) throw new ApiError(400, `${label} 需为数字（收到：${v}）`);
+        const r = Math.round(n);
+        if (r < lo || r > hi) throw new ApiError(400, `${label} 需在 ${lo}–${hi} 之间（收到：${r}）`);
+        return r;
       };
-      const bgmVol = Number(b.bgm_volume);
-      const narrVol = Number(b.narration_volume);
+      const parseNumRange = (v, lo, hi, dft, label) => {
+        if (v === undefined || v === null || v === '') return dft;
+        const n = Number(v);
+        if (!Number.isFinite(n)) throw new ApiError(400, `${label} 需为数字（收到：${v}）`);
+        if (n < lo || n > hi) throw new ApiError(400, `${label} 需在 ${lo}–${hi} 之间（收到：${n}）`);
+        return n;
+      };
       const params = {
-        transition_ms: clampInt(b.transition_ms, 200, 2000, RENDER_PARAMS_DEFAULTS.transition_ms),
-        narration_offset_ms: clampInt(b.narration_offset_ms, 0, 3000, RENDER_PARAMS_DEFAULTS.narration_offset_ms),
+        transition_ms: parseIntRange(
+          b.transition_ms,
+          200,
+          2000,
+          RENDER_PARAMS_DEFAULTS.transition_ms,
+          '转场时长 transition_ms',
+        ),
+        narration_offset_ms: parseIntRange(
+          b.narration_offset_ms,
+          0,
+          3000,
+          RENDER_PARAMS_DEFAULTS.narration_offset_ms,
+          '旁白偏移 narration_offset_ms',
+        ),
         title_card: b.title_card === undefined ? RENDER_PARAMS_DEFAULTS.title_card : Boolean(b.title_card),
         end_card: b.end_card === undefined ? RENDER_PARAMS_DEFAULTS.end_card : Boolean(b.end_card),
         // v2.0 转场类型（xfade 白名单）
@@ -113,13 +135,13 @@ module.exports = function registerRenderRoutes(app) {
           ? String(b.subtitle_position)
           : RENDER_PARAMS_DEFAULTS.subtitle_position,
         // v1.4 BGM
-        bgm_volume: Number.isFinite(bgmVol) ? Math.min(Math.max(bgmVol, 0), 1) : 0.35,
+        bgm_volume: parseNumRange(b.bgm_volume, 0, 1, 0.35, 'BGM 音量 bgm_volume'),
         bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
         // v1.5 旁白增益
-        narration_volume: Number.isFinite(narrVol) ? Math.min(Math.max(narrVol, 0.5), 3) : 1.4,
+        narration_volume: parseNumRange(b.narration_volume, 0.5, 3, 1.4, '旁白音量 narration_volume'),
         // v1.6 字幕烧录
         burn_subtitles: b.burn_subtitles === undefined ? true : Boolean(b.burn_subtitles),
-        subtitle_fontsize: clampInt(b.subtitle_fontsize, 24, 72, 42),
+        subtitle_fontsize: parseIntRange(b.subtitle_fontsize, 24, 72, 42, '字幕字号 subtitle_fontsize'),
         // v1.8 成片方向：显式参数 > 项目画幅 > 默认横屏
         aspect: ['16:9', '9:16'].includes(String(b.aspect))
           ? String(b.aspect)

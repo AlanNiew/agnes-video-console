@@ -15,7 +15,7 @@ const {
   SCRIPT_KINDS,
   SHOT_COUNTS,
 } = require('../core/constants');
-const { ApiError, ah } = require('../core/errors');
+const { ApiError, ah, upstreamError } = require('../core/errors');
 const {
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
@@ -76,16 +76,13 @@ module.exports = function registerLlmRoutes(app) {
           max_tokens: maxTokens,
         });
       } catch (e) {
-        throw new ApiError(502, `文本生成网络异常：${e.message}`);
+        log('error', `llm/chat 网络异常: ${e.message}`);
+        throw new ApiError(502, '文本生成网络异常：请检查网络连接与「设置」中的上游地址');
       }
-      if (!r.ok) {
-        const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-        throw new ApiError(
-          r.status >= 400 && r.status < 500 ? 400 : 502,
-          `文本生成失败（${r.status}）：${String(detail).slice(0, 400)}`,
-        );
-      }
-      const content = r.data?.choices?.[0]?.message?.content || '';
+      // 上游失败统一翻译（429 限流 / 401·403 鉴权 / 其余按状态码），只透出 error.message，不透 raw
+      if (!r.ok) throw upstreamError(r.status, r.data?.error?.message, '文本生成');
+      // 模型常在正文前补空行（\n\n / \r\n\r\n），统一去掉首尾空白再返回，避免前端回填 textarea 时顶部空行
+      const content = String(r.data?.choices?.[0]?.message?.content || '').trim();
       if (!content) throw new ApiError(502, '文本模型未返回内容');
       res.json({ content, model: r.data?.model || LLM_MODEL });
     }),
@@ -124,15 +121,10 @@ module.exports = function registerLlmRoutes(app) {
           max_tokens: 2000,
         });
       } catch (e) {
-        throw new ApiError(502, `文案生成网络异常：${e.message}`);
+        log('error', `文案生成网络异常: ${e.message}`);
+        throw new ApiError(502, '文案生成网络异常：请检查网络连接与「设置」中的上游地址');
       }
-      if (!r.ok) {
-        const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-        throw new ApiError(
-          r.status >= 400 && r.status < 500 ? 400 : 502,
-          `文案生成失败（${r.status}）：${String(detail).slice(0, 400)}`,
-        );
-      }
+      if (!r.ok) throw upstreamError(r.status, r.data?.error?.message, '文案生成');
       const raw = r.data?.choices?.[0]?.message?.content || '';
       const parsed = parseLLMJson(raw);
       if (!parsed || typeof parsed !== 'object') {
@@ -214,15 +206,10 @@ module.exports = function registerLlmRoutes(app) {
           max_tokens: 4000,
         });
       } catch (e) {
-        throw new ApiError(502, `分镜生成网络异常：${e.message}`);
+        log('error', `分镜生成网络异常: ${e.message}`);
+        throw new ApiError(502, '分镜生成网络异常：请检查网络连接与「设置」中的上游地址');
       }
-      if (!r.ok) {
-        const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-        throw new ApiError(
-          r.status >= 400 && r.status < 500 ? 400 : 502,
-          `分镜生成失败（${r.status}）：${String(detail).slice(0, 400)}`,
-        );
-      }
+      if (!r.ok) throw upstreamError(r.status, r.data?.error?.message, '分镜生成');
       const raw = r.data?.choices?.[0]?.message?.content || '';
       const parsed = parseLLMJson(raw);
       const rawShots = parsed && typeof parsed === 'object' && Array.isArray(parsed.shots) ? parsed.shots : null;
@@ -307,12 +294,10 @@ module.exports = function registerLlmRoutes(app) {
           max_tokens: 3000,
         });
       } catch (e) {
-        throw new ApiError(502, `分镜审查网络异常：${e.message}`);
+        log('error', `分镜审查网络异常: ${e.message}`);
+        throw new ApiError(502, '分镜审查网络异常：请检查网络连接与「设置」中的上游地址');
       }
-      if (!r.ok) {
-        const detail = r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-        throw new ApiError(502, `分镜审查失败（${r.status}）：${String(detail).slice(0, 400)}`);
-      }
+      if (!r.ok) throw upstreamError(r.status, r.data?.error?.message, '分镜审查');
       const raw = r.data?.choices?.[0]?.message?.content || '';
       const reviewed = normalizeReviewResult(parseLLMJson(raw));
       if (!reviewed) return res.json({ parsed: false, content: raw, issues: null });

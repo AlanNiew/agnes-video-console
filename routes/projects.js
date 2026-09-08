@@ -35,6 +35,11 @@ function annotateSuperseded(rows) {
   return rows;
 }
 
+/** v2.2.2：旁白字数上限 = 镜头秒数 × 4（与 services/prompts.js clampNarration 同一规则，供接口层 400 拦截） */
+function narrationCap(seconds) {
+  return Math.max(8, Math.floor((Number(seconds) || 5) * 4));
+}
+
 module.exports = function registerProjectRoutes(app) {
   /* ---------- P3：全自动成片（启动 / 状态 / 停止） ---------- */
   // 启动：从文案到成片全自动推进（失败自动重试，卡住停在人工介入点）
@@ -199,6 +204,18 @@ module.exports = function registerProjectRoutes(app) {
       throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
     }
     const mode = SHOT_MODES.includes(b.mode) ? b.mode : 'reference';
+    // v2.2.2：手动录入旁白同样受「秒数×4」限长约束（否则渲染时被镜头时长截断，说一半）
+    let narration;
+    if (b.narration !== undefined && b.narration !== null) {
+      narration = String(b.narration).trim() || null;
+      if (narration) {
+        const effSec = b.seconds !== undefined && b.seconds !== null ? String(b.seconds) : '5';
+        const cap = narrationCap(effSec);
+        if (narration.length > cap) {
+          throw new ApiError(400, `旁白过长：该镜头 ${effSec} 秒最多 ${cap} 字（含标点），请删减后保存`);
+        }
+      }
+    }
     const maxSeq = existing.reduce((m, s) => Math.max(m, s.seq), 0);
     const id = projects.addShot({
       project_id: p.id,
@@ -210,7 +227,7 @@ module.exports = function registerProjectRoutes(app) {
       video_prompt: vp,
       seconds: b.seconds || null,
       mode,
-      narration: b.narration !== undefined && b.narration !== null ? String(b.narration) : undefined,
+      narration,
       use_character_ref: b.use_character_ref,
     });
     res.status(201).json(projects.shots(p.id).find((s) => s.id === id));
@@ -236,9 +253,22 @@ module.exports = function registerProjectRoutes(app) {
         throw new ApiError(400, 'seconds 仅支持 "4"–"12"');
       patch.seconds = b.seconds;
     }
-    // v1.3：旁白文案与角色引用开关
+    // v1.3：旁白文案与角色引用开关（v2.2.2 按镜头秒数×4 校验，避免成片配音被截断）
     if (b.narration !== undefined) {
-      patch.narration = b.narration === null ? null : String(b.narration).trim().slice(0, 200) || null;
+      if (b.narration === null) {
+        patch.narration = null;
+      } else {
+        const nar = String(b.narration).trim() || null;
+        if (nar) {
+          const effSec =
+            b.seconds !== undefined && b.seconds !== null ? String(b.seconds) : (shot.seconds || '5');
+          const cap = narrationCap(effSec);
+          if (nar.length > cap) {
+            throw new ApiError(400, `旁白过长：该镜头 ${effSec} 秒最多 ${cap} 字（含标点），请删减后保存`);
+          }
+        }
+        patch.narration = nar;
+      }
     }
     if (b.use_character_ref !== undefined) {
       patch.use_character_ref = b.use_character_ref ? 1 : 0;
@@ -307,7 +337,12 @@ module.exports = function registerProjectRoutes(app) {
       const shot = projects.shots(p.id).find((s) => s.id === Number(req.params.shotId));
       if (!shot) throw new ApiError(404, '镜头不存在');
       const b = req.body || {};
-      const count = Math.min(Math.max(Math.round(Number(b.count) || 1), 1), 3);
+      // v2.2.2：越界数量直接 400 提示范围，不再静默砍到 3（用户以为提交了 5 条实际只有 3 条）
+      const rawCount = b.count === undefined || b.count === null || b.count === '' ? 1 : Number(b.count);
+      if (!Number.isInteger(rawCount) || rawCount < 1 || rawCount > 3) {
+        throw new ApiError(400, '重拍数量 count 需为 1–3 之间的整数');
+      }
+      const count = rawCount;
       const created = [];
       for (let i = 0; i < count; i++) {
         const task = await pipeline.submitVideoTask({
