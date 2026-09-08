@@ -137,7 +137,7 @@ class ImageWorker {
           continue;
         }
         if (!unretryableErr && !this.isRetryableError(s.value.status, null)) {
-          unretryableErr = s.value.data?.error?.message || s.value.raw || `HTTP ${s.value.status}`;
+          unretryableErr = s.value.data?.error?.message || `上游返回 HTTP ${s.value.status}`;
         }
         continue;
       }
@@ -149,7 +149,7 @@ class ImageWorker {
         unretryableErr ||
         settled.find((s) => s.status === 'rejected')?.reason?.message ||
         (settled[0].status === 'fulfilled'
-          ? settled[0].value.data?.error?.message || settled[0].value.raw || `HTTP ${settled[0].value.status}`
+          ? settled[0].value.data?.error?.message || `上游返回 HTTP ${settled[0].value.status}`
           : '未知错误');
       // 全部失败且含可重试错误 → 退避；否则直接 failed
       const hasRetryable =

@@ -119,8 +119,7 @@ class Submitter {
 
     if (r.status === 429) {
       if (attempts >= MAX_ATTEMPTS) {
-        const detail = String(r.data?.detail || r.data?.error?.message || r.raw || '').slice(0, 300);
-        this.fail(t.id, `提交限流（429），自动重试 ${attempts - 1} 次仍失败：${detail}`, r.data);
+        this.fail(t.id, `提交限流（429），自动重试 ${attempts - 1} 次后仍失败：请降低提交频率，稍后再试`, r.data);
         return;
       }
       const delay = computeBackoffMs(attempts, 'rate-limit');
@@ -133,8 +132,8 @@ class Submitter {
     }
 
     if (!r.ok) {
-      const detail = r.data?.detail || r.data?.error?.message || r.raw || `HTTP ${r.status}`;
-      this.fail(t.id, `提交失败（${r.status}）：${String(detail).slice(0, 500)}`, r.data);
+      const detail = r.data?.detail || r.data?.error?.message || '';
+      this.fail(t.id, `提交失败（${r.status}）：${String(detail).slice(0, 300)}`, r.data);
       return;
     }
 

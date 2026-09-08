@@ -229,16 +229,25 @@ class Renderer {
   }
 
   async tick() {
-    if (this.busy || !hasFfmpeg()) return;
+    if (this.busy) return;
     if (instanceLockHeldByOther()) return; // v1.6.1 工作锁
+    if (!hasFfmpeg()) {
+      // v2.2.2：ffmpeg 中途不可用时不再静默空转——把排队任务标失败，用户能看到原因而不是永远 queued
+      const stuck = renders.queued();
+      if (stuck.length) {
+        for (const j of stuck) this.fail(j.id, '未检测到 ffmpeg（需安装并加入 PATH），渲染任务无法执行');
+        log('warn', `ffmpeg 不可用，已将 ${stuck.length} 个排队渲染任务标记为失败`);
+      }
+      return;
+    }
     const job = renders.queued()[0];
     if (!job) return;
     this.busy = true;
     try {
       await this.renderJob(job);
     } catch (e) {
-      renders.update(job.id, { status: 'failed', error_message: `渲染异常：${e.message}` });
-      log('error', `渲染任务 #${job.id} 异常：${e.message}`);
+      log('error', `渲染任务 #${job.id} 异常: ${e.message}`);
+      renders.update(job.id, { status: 'failed', error_message: '渲染异常：请查看「日志」面板获取详细信息后重试' });
     } finally {
       this.busy = false;
     }
@@ -317,7 +326,14 @@ class Renderer {
           '18',
           dest,
         ]);
-        if (!r.ok) return this.fail(job.id, `镜头 ${seg.shot.seq} 归一化失败：${r.err.slice(0, 300)}`);
+        if (!r.ok) {
+          // 详情页不给用户贴 ffmpeg 原文（看不懂也修不了），原文进日志供排查
+          log('error', `渲染任务 #${job.id} 镜头 ${seg.shot.seq} 归一化失败（stderr）：${r.err.slice(0, 1200)}`);
+          return this.fail(
+            job.id,
+            `镜头 ${seg.shot.seq} 的视频素材无法处理（可能已损坏或编码不被支持），请重拍该镜头后再渲染`,
+          );
+        }
         const dur = probeDuration(dest) || seg.nominalSeconds;
         norm.push({
           file: dest,
@@ -507,7 +523,13 @@ class Renderer {
           onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
         },
       );
-      if (!r.ok) return this.fail(job.id, `终混失败：${r.err.slice(0, 400)}`);
+      if (!r.ok) {
+        log('error', `渲染任务 #${job.id} 终混失败（stderr）：${r.err.slice(0, 1200)}`);
+        return this.fail(
+          job.id,
+          '成片合成失败（多为个别素材编码/时长异常），请尝试重拍个别镜头后重试，详情见「日志」面板',
+        );
+      }
 
       const outDur = probeDuration(outPath) || total;
 

@@ -42,6 +42,7 @@ const {
 const { buildPayload } = require('../services/payloads');
 const { submitTask } = require('../services/task-queue');
 const { createPipelineService } = require('../services/pipeline');
+const renderer = require('./render'); // 仅用 hasFfmpeg 做渲染前置预检（渲染动作仍由 render worker 单实例执行）
 
 const TICK_MS = 3000;
 const MAX_STAGE_ATTEMPTS = 2; // 每阶段自动重试上限（含首次共 3 次机会）
@@ -92,6 +93,10 @@ class AutoPipeline {
     const cur = p.auto_state;
     if (cur?.running) return { ok: false, code: 400, message: '该项目全自动成片已在进行中' };
     if (!p.idea) return { ok: false, code: 400, message: '项目缺少创意（idea），无法自动成片' };
+    // v2.2.2：起步即预检 API Key，避免流水线假启动后在文案阶段反复重试（看起来像生成失败）
+    if (!settings.get('api_key', '')) {
+      return { ok: false, code: 400, message: '尚未配置 API Key，请先在「设置」中填写后再开始全自动成片' };
+    }
     const state = {
       running: true,
       stage: 'script',
@@ -582,6 +587,10 @@ class AutoPipeline {
 
   /** ⑧ 渲染：发起（默认参数）；随后轮询 */
   async doRender(projectId, _p, st) {
+    // v2.2.2：预检 ffmpeg——缺失时立即 stageFail，避免永远停在「等待渲染完成」无提示
+    if (!renderer.hasFfmpeg()) {
+      throw new Error('未检测到 ffmpeg（需安装并加入 PATH）才能渲染成片，全自动流程无法继续');
+    }
     const jobId = renders.insert({ project_id: projectId, params: {} });
     st.render_job_id = jobId;
     this.saveState(projectId, st);

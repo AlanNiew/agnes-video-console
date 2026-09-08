@@ -135,7 +135,7 @@ class Poller {
           tasks.setPollResult(t.id, {
             status: 'failed',
             last_poll_response: r.data,
-            error_message: `video_id 不存在（404）：${r.raw}`,
+            error_message: 'video_id 不存在（404）：该视频可能已被上游删除或从未创建成功',
           });
           log('error', `任务 #${t.id} video_id 不存在 → failed`);
           break;
@@ -157,10 +157,11 @@ class Poller {
             this.backoff(t.id, 3000);
             log('warn', `任务 #${t.id} 服务端错误 ${r.status}，稍后重试`);
           } else {
+            const msg = r.data?.error?.message || `上游返回 HTTP ${r.status}`;
             tasks.setPollResult(t.id, {
               status: 'failed',
               last_poll_response: r.data,
-              error_message: `查询失败（${r.status}）：${r.raw}`,
+              error_message: `查询失败（${r.status}）：${String(msg).slice(0, 300)}`,
             });
             log('error', `任务 #${t.id} 查询失败（${r.status}）→ failed`);
           }
