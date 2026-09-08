@@ -54,7 +54,9 @@ const MAX_SHOTS = 20; // 每项目镜头数上限
 
 /* 流水线模型（最新免费三件套，M1 固定值） */
 const LLM_MODEL = 'agnes-2.5-flash'; // 文本：提示词优化/文案
-const IMAGE_MODEL = 'agnes-image-2.1-flash'; // 图片：角色/场景
+// 图片：角色/场景（v2.2.3 由 agnes-image-2.1-flash 升到最新一代 2.5-flash——请求/响应参数、
+// size 档位、ratio 白名单、图生图 extra_body.image 与 extra_body.response_format 均与 2.1 一致）
+const IMAGE_MODEL = 'agnes-image-2.5-flash';
 const IMAGE_SIZES = ['1K', '2K', '3K', '4K'];
 const IMAGE_RATIOS = ['1:1', '3:4', '4:3', '16:9', '9:16', '2:3', '3:2', '21:9'];
 

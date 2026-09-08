@@ -233,7 +233,7 @@ describe('buildImagePayload', () => {
 
   test('默认 1K / 1:1 文生图', () => {
     const { payload, size, ratio, inputImages } = buildImagePayload(base);
-    expect(payload).toMatchObject({ model: 'agnes-image-2.1-flash', prompt: base.prompt, size: '1K' });
+    expect(payload).toMatchObject({ model: 'agnes-image-2.5-flash', prompt: base.prompt, size: '1K' });
     expect(payload.extra_body.response_format).toBe('url');
     expect(payload.ratio).toBeUndefined(); // ratio 未显式传时不下发
     expect(size).toBe('1K');

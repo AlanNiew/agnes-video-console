@@ -8,7 +8,7 @@
 | 步骤            | 模型                    | 端点                                | 调用方式                    | 价格 |
 | --------------- | ----------------------- | ----------------------------------- | --------------------------- | ---- |
 | 提示词优化/文案 | `agnes-2.5-flash`       | `POST /v1/chat/completions`         | 同步（秒级）                | 免费 |
-| 角色/场景图     | `agnes-image-2.1-flash` | `POST /v1/images/generations`       | 同步（数秒~几十秒）         | 免费 |
+| 角色/场景图     | `agnes-image-2.5-flash` | `POST /v1/images/generations`       | 同步（数秒~几十秒）         | 免费 |
 | 视频生成        | `agnes-video-2.5-flash` | `POST /v1/videos` + `GET /agnesapi` | 异步轮询（复用现有 poller） | 免费 |
 
 ⚠️ 版本判定：`agnes-video-v2.0` 是**旧模型**，本版默认不提供（界面收敛，标记为旧模型），统一使用
