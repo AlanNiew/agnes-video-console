@@ -3,7 +3,7 @@
  * 工具在 ws-util.js；第④步视频提交在 ws-video.js；第③步角色图在 ws-char.js；
  * 第②步文案/分镜在 ws-story.js；第⑥步 BGM 面板在 ws-bgm.js；第⑦步成片渲染面板在 ws-render-panel.js；
  * 本文件只负责装配（renderProject/renderList）与步骤导航等整体视图绑定。 */
-import { $, esc, toast, api } from './common.js';
+import { $, $$, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import {
   STYLE_PRESETS,
@@ -50,6 +50,87 @@ import { bindRenderPanel } from './ws-render-panel.js';
   bus.on('ws-project-changed', (pid) => {
     if (st.currentProjectId === pid) renderProject(pid);
   });
+
+  /* ---------------- v2.2.2 草稿保护：整页重绘不丢弃用户未保存输入 ----------------
+   * renderProject 每次用服务端数据重建全部 textarea/select，轮询、提交、自动成片等任一
+   * 重绘都会把正在编辑却未保存的内容还原。策略：表单编辑标 dirty → 重绘前快照 → 重绘后回填。 */
+  const wsView = $('#workspaceView');
+  if (wsView) {
+    wsView.addEventListener('input', (e) => {
+      const el = e.target;
+      if (!el || el.dataset.restoring) return;
+      if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.tagName === 'SELECT') el.dataset.dirty = '1';
+    });
+    wsView.addEventListener('change', (e) => {
+      const el = e.target;
+      if (!el || el.dataset.restoring) return;
+      if (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio') el.dataset.dirty = '1';
+    });
+  }
+  /** 可编辑元素的稳定身份 key（重绘前后能对上号）；返回 null 表示不值得保护 */
+  function editableKeyOf(el) {
+    if (!el || (el.tagName !== 'TEXTAREA' && el.tagName !== 'INPUT' && el.tagName !== 'SELECT')) return null;
+    if (['button', 'submit', 'hidden', 'file'].includes(el.type)) return null;
+    const card = el.closest('[data-shot-id]');
+    if (card) {
+      const role =
+        (el.hasAttribute('data-shot-title') && 'title') ||
+        (el.hasAttribute('data-shot-prompt') && 'prompt') ||
+        (el.hasAttribute('data-shot-narration') && 'narration') ||
+        (el.hasAttribute('data-shot-seconds') && 'seconds') ||
+        (el.hasAttribute('data-shot-ref') && 'ref');
+      if (role) return `shot:${card.dataset.shotId}:${role}`;
+    }
+    if (el.dataset.textId) return `text:${el.dataset.textId}`;
+    if (el.id) return `id:${el.id}`;
+    return null;
+  }
+  function captureDirtyInputs(root) {
+    if (!root) return [];
+    const out = [];
+    for (const el of root.querySelectorAll('textarea, input, select')) {
+      if (el.dataset.dirty !== '1') continue;
+      const key = editableKeyOf(el);
+      if (!key) continue;
+      out.push({ key, type: el.type || '', tag: el.tagName, val: el.type === 'checkbox' ? el.checked : el.value });
+    }
+    return out;
+  }
+  function findEditableByKey(key) {
+    const ws = $('#workspaceView');
+    if (!ws) return null;
+    if (key.startsWith('shot:')) {
+      const parts = key.split(':');
+      if (parts.length !== 3) return null;
+      const card = $$('#workspaceView [data-shot-id]').find((c) => c.dataset.shotId === parts[1]);
+      return card ? card.querySelector(`[data-shot-${parts[2]}]`) : null;
+    }
+    if (key.startsWith('text:')) return $(`[data-text-id="${key.slice(5)}"]`, ws);
+    if (key.startsWith('id:')) return $('#' + key.slice(3), ws);
+    return null;
+  }
+  function restoreDirtyInputs(pending) {
+    if (!pending || !pending.length) return;
+    for (const it of pending) {
+      const el = findEditableByKey(it.key);
+      if (!el) continue; // 结构已变（如镜头被整体重建）→ 放弃恢复，避免错位覆盖
+      const same = it.type === 'checkbox' ? el.checked === it.val : el.value === it.val;
+      if (!same) {
+        if (it.type === 'checkbox') el.checked = it.val;
+        else el.value = it.val;
+        el.dataset.restoring = '1';
+        try {
+          el.dispatchEvent(
+            new Event(it.type === 'checkbox' || it.tag === 'SELECT' ? 'change' : 'input', { bubbles: true }),
+          );
+        } catch {
+          /* ignore */
+        }
+        delete el.dataset.restoring;
+      }
+      delete el.dataset.dirty; // 恢复后的值即新基线，避免下次重绘反复还原
+    }
+  }
 
   /* ---------------- P0：新手引导 + 步骤导航 ---------------- */
   /** 各步骤的新手说明（标题一句话 + 展开正文）；①创意由顶部引导条覆盖 */
@@ -287,7 +368,11 @@ import { bindRenderPanel } from './ws-render-panel.js';
           .querySelectorAll('.style-preset')
           .forEach((x) => x.classList.toggle('active', x.dataset.style === styleInput.value));
       });
-    const close = () => overlay.remove();
+    let cancelled = false; // v2.2.2：请求在途时关闭弹窗 = 取消本次创建
+    const close = () => {
+      cancelled = true;
+      overlay.remove();
+    };
     overlay.addEventListener('click', (e) => {
       if (
         e.target === overlay ||
@@ -306,7 +391,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
       }
       const btn = $('#npCreate', overlay);
       btn.disabled = true;
-      btn.textContent = '创建中…';
+      btn.textContent = '正在创建…（可随时关闭弹窗取消）';
       try {
         const p = await api('/api/projects', {
           method: 'POST',
@@ -318,6 +403,12 @@ import { bindRenderPanel } from './ws-render-panel.js';
             seconds: $('#npSeconds', overlay).value,
           },
         });
+        // 用户在创建请求在途时取消了弹窗：删除刚建的空项目并刷新列表，不再被强制带入新项目
+        if (cancelled || !overlay.isConnected) {
+          await api(`/api/projects/${p.id}`, { method: 'DELETE' }).catch(() => {});
+          refresh();
+          return;
+        }
         const autoStoryboard = $('#npAutoStoryboard', overlay)?.checked !== false;
         const autoAll = $('#npAutoAll', overlay)?.checked === true;
         close();
@@ -351,6 +442,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
           }
         });
       } catch (e) {
+        if (cancelled || !overlay.isConnected) return; // 已取消创建，错误不再打扰
         toast('创建失败：' + e.message, 'err');
         btn.disabled = false;
         btn.textContent = '创建并逐步制作';
@@ -359,7 +451,19 @@ import { bindRenderPanel } from './ws-render-panel.js';
   }
 
   /* ---------------- 项目详情 ---------------- */
+  /** v2.2.2：整页重绘前快照未保存输入、完成后回填，防止轮询/提交/自动成片打断用户编辑 */
   async function renderProject(id) {
+    const pending = captureDirtyInputs(wsView);
+    try {
+      const out = await renderProjectInner(id);
+      restoreDirtyInputs(pending);
+      return out;
+    } catch (e) {
+      restoreDirtyInputs(pending); // 渲染失败也尽量回填，别让草稿丢在一次异常上
+      throw e;
+    }
+  }
+  async function renderProjectInner(id) {
     const [d, meta] = await Promise.all([api(`/api/projects/${id}`), getMeta()]);
     const p = d.project;
     const texts = d.texts || [];
