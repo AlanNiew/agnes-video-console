@@ -1,7 +1,8 @@
-/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-6：
+/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-7：
  * 渲染纯函数在 ws-render.js；配音/声音广场在 ws-tts.js；会话状态在 ws-state.js（st）；
  * 工具在 ws-util.js；第④步视频提交在 ws-video.js；第③步角色图在 ws-char.js；
- * 第②步文案/分镜在 ws-story.js；本文件负责装配（renderProject/renderList）与 BGM/渲染面板绑定。 */
+ * 第②步文案/分镜在 ws-story.js；第⑥步 BGM 面板在 ws-bgm.js；第⑦步成片渲染面板在 ws-render-panel.js；
+ * 本文件只负责装配（renderProject/renderList）与步骤导航等整体视图绑定。 */
 import { $, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import {
@@ -17,13 +18,13 @@ import {
   videoModelTag,
   renderShotSubmitBlock,
   renderPrecheckHTML,
+  precheckHtmlFromDetail,
   renderStoryboardArea,
   renderTextSections,
   imgCell,
   renderTaskList,
   bgmCurrentHtml,
   renderVoicePool,
-  fmtSecs,
   renderJobItem,
   renderTtsWall,
 } from './ws-render.js';
@@ -32,6 +33,8 @@ import { st } from './ws-state.js';
 import { submitShot, runBatchSubmit, submitVideo } from './ws-video.js';
 import { optimizeCharDesc, genCharacterImage, bindWallEvents } from './ws-char.js';
 import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, SCRIPT_FIELDS } from './ws-story.js';
+import { bindBgmEvents } from './ws-bgm.js';
+import { bindRenderPanel } from './ws-render-panel.js';
 
 (() => {
   'use strict';
@@ -841,181 +844,10 @@ import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, 
     bindGotoTaskLinks();
     // TTS 配音事件
     bindTtsEvents(p.id);
-    // v1.3 成片渲染（v2.0：新增转场类型 / 字幕样式 / 字幕位置）
-    const rbtn = $('#wsRenderBtn');
-    if (rbtn) {
-      rbtn.onclick = async () => {
-        rbtn.disabled = true;
-        try {
-          await api(`/api/projects/${p.id}/render`, {
-            method: 'POST',
-            body: {
-              transition_ms: Number($('#wsRTransition')?.value || 600),
-              transition_type: $('#wsRTransitionType')?.value || 'fade',
-              narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
-              title_card: $('#wsRTitle')?.checked !== false,
-              end_card: $('#wsREnd')?.checked !== false,
-              bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
-              bgm_duck: $('#wsRDuck')?.checked !== false,
-              narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
-              burn_subtitles: $('#wsRSubs')?.checked !== false,
-              subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
-              subtitle_style: $('#wsRSubStyle')?.value || 'white-outline',
-              subtitle_position: $('#wsRSubPos')?.value || 'bottom',
-              aspect: $('#wsRAspect')?.value || '16:9',
-            },
-          });
-          toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
-          await renderProject(p.id);
-        } catch (e) {
-          toast('渲染失败：' + e.message, 'err');
-          rbtn.disabled = false;
-        }
-      };
-    }
-    // P2：风格预设交互 —— 点击卡片套用整套配方；手动改高级配置即切换为“自定义配方”
-    const filmRecipeEl = $('#wsFilmRecipe');
-    const renderRecipe = () => {
-      if (!filmRecipeEl) return;
-      if (st.wsFilmPresetId) {
-        const preset = FILM_PRESETS.find((x) => x.id === st.wsFilmPresetId);
-        if (preset) {
-          filmRecipeEl.innerHTML = `🎬 当前配方：<b>${preset.emoji} ${esc(preset.label)}</b> —— ${esc(preset.desc)}`;
-          return;
-        }
-      }
-      filmRecipeEl.innerHTML = `🎬 当前配方：<b>自定义</b> —— ${esc(TRANSITION_LABELS[$('#wsRTransitionType')?.value] || '淡入淡出')}转场 ${((Number($('#wsRTransition')?.value) || 600) / 1000).toFixed(1)}s · ${esc(SUBSTYLE_LABELS[$('#wsRSubStyle')?.value] || '白字描边')}字幕 · BGM ${$('#wsRBgmVol')?.value || 35}%`;
-    };
-    document.querySelectorAll('#wsFilmPresets .film-preset').forEach((b) => {
-      b.addEventListener('click', () => {
-        st.wsFilmPresetId = b.dataset.preset;
-        document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.toggle('active', x === b));
-        const preset = FILM_PRESETS.find((x) => x.id === st.wsFilmPresetId);
-        const pa = preset?.params || {};
-        const setVal = (sel, v) => {
-          const el = $(sel);
-          if (el && v !== undefined) el.value = v;
-        };
-        setVal('#wsRTransition', pa.transition_ms);
-        setVal('#wsRTransitionType', pa.transition_type);
-        setVal('#wsRSubStyle', pa.subtitle_style);
-        setVal('#wsRSubPos', pa.subtitle_position);
-        setVal('#wsRSubSize', pa.subtitle_fontsize);
-        setVal('#wsRBgmVol', Math.round((pa.bgm_volume ?? 0.35) * 100));
-        setVal('#wsRNarrVol', Math.round((pa.narration_volume ?? 1.4) * 100));
-        setVal('#wsRNarrOffset', pa.narration_offset_ms);
-        if (pa.bgm_duck !== undefined && $('#wsRDuck')) $('#wsRDuck').checked = pa.bgm_duck;
-        updateRenderRangeLabels();
-        renderRecipe();
-      });
-    });
-    const advConfig = $('#wsAdvConfig');
-    if (advConfig) {
-      advConfig.addEventListener('change', () => {
-        // 手动调整任何参数 → 脱离预设（配方说明切为自定义）
-        st.wsFilmPresetId = '';
-        document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.remove('active'));
-        renderRecipe();
-      });
-      advConfig.addEventListener('input', updateRenderRangeLabels);
-    }
-    function updateRenderRangeLabels() {
-      const pairs = [
-        ['#wsRTransition', '#wsRTransitionV', (v) => (Number(v) / 1000).toFixed(1) + 's'],
-        ['#wsRSubSize', '#wsRSubSizeV', (v) => String(v)],
-        ['#wsRBgmVol', '#wsRBgmVolV', (v) => v + '%'],
-        ['#wsRNarrVol', '#wsRNarrVolV', (v) => v + '%'],
-        ['#wsRNarrOffset', '#wsRNarrOffsetV', (v) => (Number(v) / 1000).toFixed(1) + 's'],
-      ];
-      for (const [sel, labelSel, fmt] of pairs) {
-        const el = $(sel);
-        const lbl = $(labelSel);
-        if (el && lbl) lbl.textContent = fmt(el.value);
-      }
-    }
-    renderRecipe();
-    if (renderJobs.some((j) => j.status === 'queued' || j.status === 'rendering')) startRenderPoll(p.id);
-    // v1.4 BGM：搜索 / 试听 / 选用 / 清除
-    let bgmAudio = null;
-    let bgmAudioUrl = '';
-    const bgmSearchBtn = $('#wsBgmSearch');
-    if (bgmSearchBtn) {
-      bgmSearchBtn.onclick = async () => {
-        const q = $('#wsBgmQuery').value.trim();
-        if (!q) return toast('请输入搜索关键词', 'warn');
-        bgmSearchBtn.disabled = true;
-        try {
-          const r = await api(`/api/music/search?limit=8&keyword=${encodeURIComponent(q)}`);
-          const box = $('#wsBgmResults');
-          const items = r.items || [];
-          box.innerHTML = items.length
-            ? items
-                .map(
-                  (s) => `
-            <div class="ver-item" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-              <span><b>${esc(s.name)}</b> ${esc(s.artist)}${s.album ? ` · <span class="muted">${esc(s.album)}</span>` : ''}</span>
-              <span class="meta-tag">${fmtSecs(s.duration_s)}</span>
-              <span class="spacer" style="flex:1"></span>
-              <button class="btn ghost sm" data-bgm-play="${s.id}" data-level="${esc(s.levels?.[1] || 'exhigh')}">▶ 试听</button>
-              <button class="btn ghost sm" data-bgm-pick="${s.id}" data-name="${esc(s.name)}" data-artist="${esc(s.artist)}" data-album="${esc(s.album)}">选用</button>
-            </div>`,
-                )
-                .join('')
-            : '<span class="hint">没有找到结果</span>';
-          box.querySelectorAll('[data-bgm-play]').forEach((b) => {
-            b.onclick = () => {
-              if (!bgmAudio) bgmAudio = new Audio();
-              const url = `/api/music/stream?id=${b.dataset.bgmPlay}&level=${b.dataset.level}`;
-              if (bgmAudioUrl === url) {
-                if (bgmAudio.paused) bgmAudio.play().catch(() => toast('试听加载失败', 'err'));
-                else bgmAudio.pause();
-                return;
-              }
-              bgmAudioUrl = url;
-              bgmAudio.src = url;
-              bgmAudio.play().catch(() => toast('试听加载失败（检查设置中的音乐接口配置）', 'err'));
-            };
-          });
-          box.querySelectorAll('[data-bgm-pick]').forEach((b) => {
-            b.onclick = async () => {
-              b.disabled = true;
-              try {
-                await api(`/api/projects/${p.id}/bgm`, {
-                  method: 'POST',
-                  body: {
-                    song_id: b.dataset.bgmPick,
-                    name: b.dataset.name,
-                    artist: b.dataset.artist,
-                    album: b.dataset.album,
-                  },
-                });
-                toast('BGM 已选用（已下载到本地缓存）', 'ok');
-                await renderProject(p.id);
-              } catch (e) {
-                toast('选用失败：' + e.message, 'err');
-                b.disabled = false;
-              }
-            };
-          });
-        } catch (e) {
-          toast('搜索失败：' + e.message, 'err');
-        } finally {
-          bgmSearchBtn.disabled = false;
-        }
-      };
-    }
-    const bgmClear = $('#wsBgmClear');
-    if (bgmClear) {
-      bgmClear.onclick = async () => {
-        try {
-          await api(`/api/projects/${p.id}/bgm`, { method: 'DELETE' });
-          toast('已清除 BGM 选择', 'ok');
-          await renderProject(p.id);
-        } catch (e) {
-          toast(e.message, 'err');
-        }
-      };
-    }
+    // v1.3+ B3-7：成片渲染面板（渲染按钮 / 风格预设 / 高级配置 / 渲染任务轮询）与第⑥步 BGM 面板
+    // 事件绑定与局部更新已拆至独立模块——渲染提交/轮询、BGM 选用/清除只改对应子树，不再整页重绘
+    bindRenderPanel(p.id, renderJobs);
+    bindBgmEvents(p.id);
     // v1.9 声音广场：备选池展示 + 浏览/试听/入池
     bindVoiceMarket(p.id);
     // P3：全自动成片运行中 → 时间线事件 + 状态轮询
@@ -1037,48 +869,10 @@ import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, 
       bindGotoTaskLinks();
       // v2.1：渲染预检随项目聚合同步刷新（视频后台完成时预检自动转绿）
       const pc = $('#wsPrecheck');
-      if (pc) {
-        const tasks = d.tasks || [];
-        const shots = d.shots || [];
-        const completedShots = tasks.filter((t) => t.status === 'completed' && t.shot_id).length;
-        const narratedShots = shots.filter((s) =>
-          (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message),
-        ).length;
-        pc.innerHTML = renderPrecheckHTML(d, completedShots, narratedShots, shots);
-      }
+      if (pc) pc.innerHTML = precheckHtmlFromDetail(d);
     } catch {
       /* 静默：下次轮询自愈 */
     }
-  }
-
-  /* 角色描述 AI 优化（用户自主选择是否采用，优化后先对比） */
-  /* ---------------- M2：分镜区（生成 / 编辑 / 排序 / 历史版本） ---------------- */
-
-  /** 旁白计量实时刷新：旁白输入 / 时长下拉联动（渲染后由 bindStoryboardEvents 统一绑定） */
-  let renderPollTimer = null;
-  /** 渲染任务进行中：轮询刷新进度条；全部落定后整页刷新一次（启用下载/更新步骤状态） */
-  function startRenderPoll(projectId) {
-    clearInterval(renderPollTimer);
-    renderPollTimer = setInterval(async () => {
-      if (st.currentProjectId !== projectId) {
-        clearInterval(renderPollTimer);
-        renderPollTimer = null;
-        return;
-      }
-      let jobs = [];
-      try {
-        jobs = (await api(`/api/projects/${projectId}/render/jobs`)).data.items || [];
-      } catch {
-        return;
-      }
-      const box = $('#wsRenderJobs');
-      if (box) box.innerHTML = jobs.map(renderJobItem).join('');
-      if (!jobs.some((j) => j.status === 'queued' || j.status === 'rendering')) {
-        clearInterval(renderPollTimer);
-        renderPollTimer = null;
-        await renderProject(projectId);
-      }
-    }, 2000);
   }
 
   function bindGotoTaskLinks() {

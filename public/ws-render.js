@@ -448,6 +448,18 @@ function renderPrecheckHTML(d, completedShots, narratedShots, shots) {
   return chips.join('');
 }
 
+/** 从项目聚合数据（/api/projects/:id）直接生成渲染前预检——供动作后的「局部刷新」复用；
+ * 计数口径与 refreshTasks 周期刷新一致（completed 且有镜头归属），避免整行闪烁。 */
+function precheckHtmlFromDetail(d) {
+  const tasks = d.tasks || [];
+  const shots = d.shots || [];
+  const completedShots = tasks.filter((t) => t.status === 'completed' && t.shot_id).length;
+  const narratedShots = shots.filter((s) =>
+    (d.tts || []).some((t) => t.kind === 'shot' && t.shot_id === s.id && t.local_path && !t.error_message),
+  ).length;
+  return renderPrecheckHTML(d, completedShots, narratedShots, shots);
+}
+
 function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
   const sbVersions = texts.filter((t) => t.kind === 'storyboard');
   const secondsOpts = (sel) =>
@@ -761,6 +773,7 @@ export {
   shotLatestTask,
   narrMeterHTML,
   renderPrecheckHTML,
+  precheckHtmlFromDetail,
   renderStoryboardArea,
   renderTextSections,
   imgCell,
