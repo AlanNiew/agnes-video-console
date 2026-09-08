@@ -1,5 +1,6 @@
-/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-2：
- * 渲染纯函数在 ws-render.js；配音/声音广场（第⑤步）在 ws-tts.js；本文件负责状态/装配/其余步骤。 */
+/* 创作工作台 —— 流水线 UI（创意 → 文案 → 角色设定 → 视频）—— M4-B3-3：
+ * 渲染纯函数在 ws-render.js；配音/声音广场在 ws-tts.js；会话状态在 ws-state.js（st）；
+ * 本文件负责装配（renderProject/renderList）与其余步骤绑定/动作。 */
 import { $, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
@@ -29,6 +30,7 @@ import {
   renderTtsWall,
 } from './ws-render.js';
 import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSpeed } from './ws-tts.js';
+import { st } from './ws-state.js';
 
 (() => {
   'use strict';
@@ -42,25 +44,13 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
   });
   // M4-B3-2：子模块动作（配音/声音广场等）完成后广播重绘信号，装配侧判断当前项目后整页刷新
   bus.on('ws-project-changed', (pid) => {
-    if (currentProjectId === pid) renderProject(pid);
+    if (st.currentProjectId === pid) renderProject(pid);
   });
-
-  let currentProjectId = null;
-  let imgGenBusy = false;
-  let scriptBusy = false;
-  let storyBusy = false; // M2：分镜生成中
-  let currentShotCount = 0; // M2：当前项目镜头数（供重生成确认判断）
-  let projectsShotsCache = null; // P3：当前项目 shots 缓存（审查报告采纳时按 seq 找镜头 id）
-  let batchBusy = false; // M2：批量提交进行中
-  let batchStop = false; // M2：批量提交停止标记
-  let batchHint = ''; // M2：批量提交进度提示
-  let currentStep = 1; // 当前视区所在步骤（步骤条高亮跟随）
 
   /* ---------------- P0：新手引导 + 步骤导航 ---------------- */
   /** 各步骤的新手说明（标题一句话 + 展开正文）；①创意由顶部引导条覆盖 */
 
   /* ---------------- P2：成片风格预设（一键套用整套渲染配方） ---------------- */
-  let wsFilmPresetId = ''; // 当前选中预设（手动改参数后清空 = 自定义配方）
 
   /** 自动成片状态轮询：局部更新时间线，落定后整页刷新一次展示产物 */
   let autoPollTimer = null;
@@ -69,7 +59,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     clearInterval(autoPollTimer);
     autoPollSig = '';
     autoPollTimer = setInterval(async () => {
-      if (currentProjectId !== projectId || $('#workspaceView')?.hidden) {
+      if (st.currentProjectId !== projectId || $('#workspaceView')?.hidden) {
         clearInterval(autoPollTimer);
         autoPollTimer = null;
         return;
@@ -101,7 +91,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       if (!st.running) {
         clearInterval(autoPollTimer);
         autoPollTimer = null;
-        if (currentProjectId === projectId) await renderProject(projectId); // 落定：整页刷新展示产物
+        if (st.currentProjectId === projectId) await renderProject(projectId); // 落定：整页刷新展示产物
       }
     }, 4000);
   }
@@ -187,7 +177,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
         if (timer) return;
         timer = setTimeout(() => {
           timer = null;
-          if (!currentProjectId || $('#workspaceView')?.hidden) return;
+          if (!st.currentProjectId || $('#workspaceView')?.hidden) return;
           if (Date.now() < stepFollowUntil) return;
           const marks = [
             ['#wsRenderSection', 7],
@@ -211,7 +201,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
               }
             }
           }
-          currentStep = cur;
+          st.currentStep = cur;
           document
             .querySelectorAll('.steps .step')
             .forEach((s) => s.classList.toggle('active', s.dataset.step === String(cur)));
@@ -230,7 +220,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
   async function refresh() {
     if ($('#workspaceView').hidden) return;
     try {
-      if (currentProjectId) await renderProject(currentProjectId);
+      if (st.currentProjectId) await renderProject(st.currentProjectId);
       else await renderList();
     } catch (e) {
       $('#workspaceView').innerHTML =
@@ -258,8 +248,8 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     $('#wsNewProject').onclick = () => openNewProject().catch((e) => toast('打开新建项目失败：' + e.message, 'err'));
     ws.querySelectorAll('.ws-card').forEach((c) =>
       c.addEventListener('click', () => {
-        currentProjectId = Number(c.dataset.id);
-        renderProject(currentProjectId);
+        st.currentProjectId = Number(c.dataset.id);
+        renderProject(st.currentProjectId);
       }),
     );
   }
@@ -358,7 +348,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
         const autoStoryboard = $('#npAutoStoryboard', overlay)?.checked !== false;
         const autoAll = $('#npAutoAll', overlay)?.checked === true;
         close();
-        currentProjectId = p.id;
+        st.currentProjectId = p.id;
         if (autoAll) {
           // P3 全自动成片：先启动状态机，再渲染页面——保证首屏就带 auto_state 时间线容器，
           // 轮询即可局部刷新（v2.1 修复：先渲染后启动会导致容器缺失、页面看起来毫无反应）
@@ -403,8 +393,8 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     const images = d.images || [];
     const tasks = d.tasks || [];
     const shots = d.shots || [];
-    currentShotCount = shots.length;
-    projectsShotsCache = shots;
+    st.currentShotCount = shots.length;
+    st.projectsShotsCache = shots;
     const selVideo = (t) =>
       t.find((x) => x.kind === 'video_prompt' && x.selected) || t.find((x) => x.kind === 'video_prompt');
     const selChar =
@@ -456,13 +446,13 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           <button class="btn ghost danger" id="wsDel" title="删除项目（关联的视频任务保留）">删除</button>
         </div>
         <div class="steps" id="wsSteps">
-          <div class="step ${stepState(1)} ${currentStep === 1 ? 'active' : ''}" data-step="1"><span class="n">①</span>创意</div>
-          <div class="step ${stepState(2)} ${currentStep === 2 ? 'active' : ''}" data-step="2"><span class="n">②</span>文案与提示词</div>
-          <div class="step ${stepState(3)} ${currentStep === 3 ? 'active' : ''}" data-step="3"><span class="n">③</span>角色设定图</div>
-          <div class="step ${stepState(4)} ${currentStep === 4 ? 'active' : ''}" data-step="4"><span class="n">④</span>视频生成</div>
-          <div class="step ${stepState(5)} ${currentStep === 5 ? 'active' : ''}" data-step="5"><span class="n">⑤</span>配音</div>
-          <div class="step ${stepState(6)} ${currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>背景音乐</div>
-          <div class="step ${stepState(7)} ${currentStep === 7 ? 'active' : ''}" data-step="7"><span class="n">⑦</span>成片</div>
+          <div class="step ${stepState(1)} ${st.currentStep === 1 ? 'active' : ''}" data-step="1"><span class="n">①</span>创意</div>
+          <div class="step ${stepState(2)} ${st.currentStep === 2 ? 'active' : ''}" data-step="2"><span class="n">②</span>文案与提示词</div>
+          <div class="step ${stepState(3)} ${st.currentStep === 3 ? 'active' : ''}" data-step="3"><span class="n">③</span>角色设定图</div>
+          <div class="step ${stepState(4)} ${st.currentStep === 4 ? 'active' : ''}" data-step="4"><span class="n">④</span>视频生成</div>
+          <div class="step ${stepState(5)} ${st.currentStep === 5 ? 'active' : ''}" data-step="5"><span class="n">⑤</span>配音</div>
+          <div class="step ${stepState(6)} ${st.currentStep === 6 ? 'active' : ''}" data-step="6"><span class="n">⑥</span>背景音乐</div>
+          <div class="step ${stepState(7)} ${st.currentStep === 7 ? 'active' : ''}" data-step="7"><span class="n">⑦</span>成片</div>
         </div>
         ${p.auto_state ? `<div id="wsAutoHolder" class="mt">${autoTimelineHTML(p.auto_state)}</div>` : '<div id="wsAutoHolder" class="mt" hidden></div>'}
         ${guideInfo ? `<div class="ws-guide"><span>👉 下一步：<b>${esc(guideInfo.label)}</b>（已完成 ${doneCount}/6 步）</span><span class="spacer"></span>${guideInfo.target ? `<button class="btn ghost sm" data-guide-goto="${guideInfo.target}">前往</button>` : ''}</div>` : ''}
@@ -472,14 +462,14 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           <h4>📝 文案与提示词 <span class="badge-selected" hidden id="wsCopyDone">已生成</span></h4>
           ${stepGuideHTML(2, !guideOff())}
           ${
-            scriptBusy
+            st.scriptBusy
               ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在分析创意，梳理故事结构…</span></div>'
               : `
           <button class="btn primary sm" id="wsGenScript">✨ 生成 / 重新生成文案</button>
           <div class="hint mt">梗概、角色描述、场景描述一次生成；分镜在下方独立生成与编辑。</div>`
           }
           <div id="wsCopySections" class="mt">
-            ${storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta, d.tts || [])}
+            ${st.storyBusy ? '<div class="ws-loading"><span class="spinner"></span> <span class="ws-loading-text">正在拆解叙事节奏…</span></div>' : renderStoryboardArea(texts, shots, p, meta, d.tts || [])}
             ${renderTextSections(texts, ['script', 'character_desc', 'scene_desc'])}
           </div>
           ${stepNavHTML(2)}
@@ -504,7 +494,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
                 <select id="wsImgSize">${meta.image.sizes.map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
               </div>
               ${
-                imgGenBusy
+                st.imgGenBusy
                   ? '<div class="ws-loading mt"><span class="spinner"></span> <span class="ws-loading-text">正在生成候选图（约 10–90 秒），完成后在下方挑选…</span></div>'
                   : `<div class="row mt" style="display:flex;gap:8px;align-items:center">
                     <select id="wsImgCount" class="meta-tag" style="background:var(--bg)" title="一次生成的候选图数量">
@@ -540,7 +530,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
             </div>
             ${
               shots.length
-                ? renderShotSubmitBlock(shots, tasks, selChar, batchBusy, batchHint)
+                ? renderShotSubmitBlock(shots, tasks, selChar, st.batchBusy, st.batchHint)
                 : `
             <div class="row mt" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
               <select id="wsVSeconds" class="meta-tag" title="视频时长" style="background:var(--bg)">
@@ -736,7 +726,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       </div>`;
 
     $('#wsBack').onclick = () => {
-      currentProjectId = null;
+      st.currentProjectId = null;
       renderList();
     };
     // 步骤条点击跳转 + 下一步引导
@@ -751,10 +741,10 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     };
     ws.querySelectorAll('.step[data-step]').forEach((el) => {
       el.onclick = () => {
-        currentStep = Number(el.dataset.step);
+        st.currentStep = Number(el.dataset.step);
         stepFollowUntil = Date.now() + 1500; // 滚动途中不让跟随逻辑覆盖点击选择
         document.querySelectorAll('.steps .step').forEach((s) => s.classList.toggle('active', s === el));
-        document.querySelector(stepTargets[currentStep])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        document.querySelector(stepTargets[st.currentStep])?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       };
     });
     const guideBtn = ws.querySelector('[data-guide-goto]');
@@ -773,7 +763,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     }
     // P0：步骤间导航（下一步带前置校验：拦截「下一步根本无法操作」的情况，可选步骤提示后放行）
     const gotoStep = (n) => {
-      currentStep = n;
+      st.currentStep = n;
       stepFollowUntil = Date.now() + 1500; // 滚动途中不让跟随逻辑覆盖点击选择
       document
         .querySelectorAll('.steps .step')
@@ -802,7 +792,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       try {
         await api(`/api/projects/${p.id}`, { method: 'DELETE' });
         toast('项目已删除', 'ok');
-        currentProjectId = null;
+        st.currentProjectId = null;
         await renderList();
       } catch (e) {
         toast('删除失败：' + e.message, 'err');
@@ -810,7 +800,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     };
     // M2：有分镜时旧的单任务提交控件不渲染，全部做存在性守卫绑定
     const genScriptBtn = $('#wsGenScript');
-    if (genScriptBtn && !scriptBusy) genScriptBtn.onclick = () => genScript(p.id);
+    if (genScriptBtn && !st.scriptBusy) genScriptBtn.onclick = () => genScript(p.id);
     const genCharBtn = $('#wsGenChar');
     if (genCharBtn) genCharBtn.onclick = () => genCharacterImage(p.id);
     const optCharBtn = $('#wsOptimizeChar');
@@ -833,7 +823,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           const r = await api(`/api/projects/${p.id}/shots/${shotId}/retakes`, { method: 'POST', body: { count: 1 } });
           toast(`重拍任务 #${r.retakes[0].id} 已入队（完成后在下方候选区选定）`, 'ok');
           bus.emit('tasks-changed');
-          if (currentProjectId === p.id) await renderProject(p.id);
+          if (st.currentProjectId === p.id) await renderProject(p.id);
         } catch (e) {
           toast('重拍失败：' + e.message, 'err');
           b.disabled = false;
@@ -873,7 +863,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     const stopBtn = $('#wsBatchStop');
     if (stopBtn) {
       stopBtn.onclick = () => {
-        batchStop = true;
+        st.batchStop = true;
         toast('将在当前镜头提交完成后停止批量', 'warn');
       };
     }
@@ -917,8 +907,8 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     const filmRecipeEl = $('#wsFilmRecipe');
     const renderRecipe = () => {
       if (!filmRecipeEl) return;
-      if (wsFilmPresetId) {
-        const preset = FILM_PRESETS.find((x) => x.id === wsFilmPresetId);
+      if (st.wsFilmPresetId) {
+        const preset = FILM_PRESETS.find((x) => x.id === st.wsFilmPresetId);
         if (preset) {
           filmRecipeEl.innerHTML = `🎬 当前配方：<b>${preset.emoji} ${esc(preset.label)}</b> —— ${esc(preset.desc)}`;
           return;
@@ -928,9 +918,9 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     };
     document.querySelectorAll('#wsFilmPresets .film-preset').forEach((b) => {
       b.addEventListener('click', () => {
-        wsFilmPresetId = b.dataset.preset;
+        st.wsFilmPresetId = b.dataset.preset;
         document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.toggle('active', x === b));
-        const preset = FILM_PRESETS.find((x) => x.id === wsFilmPresetId);
+        const preset = FILM_PRESETS.find((x) => x.id === st.wsFilmPresetId);
         const pa = preset?.params || {};
         const setVal = (sel, v) => {
           const el = $(sel);
@@ -953,7 +943,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     if (advConfig) {
       advConfig.addEventListener('change', () => {
         // 手动调整任何参数 → 脱离预设（配方说明切为自定义）
-        wsFilmPresetId = '';
+        st.wsFilmPresetId = '';
         document.querySelectorAll('#wsFilmPresets .film-preset').forEach((x) => x.classList.remove('active'));
         renderRecipe();
       });
@@ -1062,7 +1052,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     if (p.auto_state?.running) {
       bindAutoTimelineEvents(p.id);
       startAutoPoll(p.id);
-    } else if (autoPollTimer && currentProjectId !== p.id) {
+    } else if (autoPollTimer && st.currentProjectId !== p.id) {
       clearInterval(autoPollTimer);
       autoPollTimer = null;
     }
@@ -1070,9 +1060,9 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
 
   async function refreshTasks() {
     const box = $('#wsTaskList');
-    if (!box || !currentProjectId) return;
+    if (!box || !st.currentProjectId) return;
     try {
-      const d = await api(`/api/projects/${currentProjectId}`);
+      const d = await api(`/api/projects/${st.currentProjectId}`);
       box.innerHTML = renderTaskList(d.tasks || [], d.shots || []);
       bindGotoTaskLinks();
       // v2.1：渲染预检随项目聚合同步刷新（视频后台完成时预检自动转绿）
@@ -1151,7 +1141,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       const r = await api(`/api/projects/${projectId}/shots/${shotId}/videos`, { method: 'POST', body: {} });
       toast(`镜头任务 #${r.id} 已入队（后台提交器将按间隔自动提交）`, 'ok');
       bus.emit('tasks-changed');
-      if (currentProjectId === projectId) await renderProject(projectId);
+      if (st.currentProjectId === projectId) await renderProject(projectId);
     } catch (e) {
       toast('提交失败：' + e.message, 'err');
       if (btn.isConnected) {
@@ -1163,7 +1153,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
 
   /** 批量提交「未完成」镜头（无任务或最新任务失败），按 submit_interval_ms 节流 */
   async function runBatchSubmit(projectId) {
-    if (batchBusy) return;
+    if (st.batchBusy) return;
     let targets;
     try {
       const d = await api(`/api/projects/${projectId}`);
@@ -1190,20 +1180,20 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     }
     if (!confirm(`将按间隔 ${Math.round(interval / 1000)} 秒依次提交 ${targets.length} 个镜头的视频任务，继续？`))
       return;
-    batchBusy = true;
-    batchStop = false;
-    batchHint = '准备提交…';
+    st.batchBusy = true;
+    st.batchStop = false;
+    st.batchHint = '准备提交…';
     await renderProject(projectId); // 切换为「批量提交中…」与停止按钮
     let done = 0;
     let fail = 0;
     for (let i = 0; i < targets.length; i++) {
       const s = targets[i];
-      if (batchStop) break;
+      if (st.batchStop) break;
       const hintEl = () => {
         const el = $('#wsBatchHint');
-        if (el) el.textContent = batchHint;
+        if (el) el.textContent = st.batchHint;
       };
-      batchHint = `正在提交镜头 ${s.seq}（${i + 1}/${targets.length}）…`;
+      st.batchHint = `正在提交镜头 ${s.seq}（${i + 1}/${targets.length}）…`;
       hintEl();
       try {
         await api(`/api/projects/${projectId}/shots/${s.id}/videos`, { method: 'POST', body: {} });
@@ -1215,18 +1205,18 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       // 倒计时等待（每秒检查停止标记）
       const last = i === targets.length - 1;
       if (interval > 0 && !last) {
-        for (let w = Math.round(interval / 1000); w > 0 && !batchStop; w--) {
-          batchHint = `镜头 ${s.seq} 已提交，${w}s 后提交下一个（${i + 1}/${targets.length}）…`;
+        for (let w = Math.round(interval / 1000); w > 0 && !st.batchStop; w--) {
+          st.batchHint = `镜头 ${s.seq} 已提交，${w}s 后提交下一个（${i + 1}/${targets.length}）…`;
           hintEl();
           await sleep(1000);
         }
       }
     }
-    batchBusy = false;
-    batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${batchStop ? '（已手动停止）' : ''}`;
-    toast(batchHint, fail ? 'warn' : 'ok');
+    st.batchBusy = false;
+    st.batchHint = `批量提交结束：成功 ${done}${fail ? `，失败 ${fail}` : ''}${st.batchStop ? '（已手动停止）' : ''}`;
+    toast(st.batchHint, fail ? 'warn' : 'ok');
     bus.emit('tasks-changed');
-    if (currentProjectId === projectId) await renderProject(projectId);
+    if (st.currentProjectId === projectId) await renderProject(projectId);
   }
 
   /* ---------------- M2：分镜区（生成 / 编辑 / 排序 / 历史版本） ---------------- */
@@ -1292,7 +1282,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           ttsBtn.disabled = true;
           ttsBtn.textContent = '配音中…';
           const done = await genShotTts(projectId, id, '本镜');
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
           if (!done && ttsBtn.isConnected) {
             ttsBtn.disabled = false;
             ttsBtn.textContent = '🎙️ 配本镜旁白';
@@ -1416,7 +1406,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay || e.target.closest('.modal-close') || e.target.closest('.btn.ghost')) close();
     });
-    const shots = projectsShotsCache;
+    const shots = st.projectsShotsCache;
     overlay.querySelectorAll('[data-adopt]').forEach((b) => {
       b.onclick = async () => {
         const it = r.issues[Number(b.dataset.adopt)];
@@ -1436,7 +1426,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           b.textContent = '✓ 已采纳';
           b.closest('.rv-item').classList.add('rv-done');
           toast(`镜头 ${it.shot_seq} 的${FIELD_LABEL[it.field] || it.field}已更新`, 'ok');
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
         } catch (e2) {
           toast('采纳失败：' + e2.message, 'err');
           b.disabled = false;
@@ -1447,10 +1437,10 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
   }
 
   async function genStoryboard(projectId) {
-    if (storyBusy) return; // 防重入
-    if (currentShotCount > 0 && !confirm('重新生成分镜：将先与当前分镜对比，由你选择采用（历史版本保留），继续？'))
+    if (st.storyBusy) return; // 防重入
+    if (st.currentShotCount > 0 && !confirm('重新生成分镜：将先与当前分镜对比，由你选择采用（历史版本保留），继续？'))
       return;
-    storyBusy = true;
+    st.storyBusy = true;
     await renderProject(projectId);
     let stopHints = null;
     try {
@@ -1501,19 +1491,19 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           } catch (e) {
             toast(e.message, 'err');
           }
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
         },
         onKeep: async () => {
           toast('已保留当前分镜（新版本已存入历史，可随时选用）', 'ok');
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
         },
       });
     } catch (e) {
       toast('分镜生成失败：' + e.message, 'err');
     } finally {
-      storyBusy = false;
+      st.storyBusy = false;
       stopHints?.();
-      if (currentProjectId === projectId) await renderProject(projectId);
+      if (st.currentProjectId === projectId) await renderProject(projectId);
     }
   }
 
@@ -1544,7 +1534,7 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
   function startRenderPoll(projectId) {
     clearInterval(renderPollTimer);
     renderPollTimer = setInterval(async () => {
-      if (currentProjectId !== projectId) {
+      if (st.currentProjectId !== projectId) {
         clearInterval(renderPollTimer);
         renderPollTimer = null;
         return;
@@ -1650,8 +1640,8 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
 
   /** 生成文案：首次生成直接采用；已有文案时落库不选中，弹对比窗由用户二选一。返回是否成功 */
   async function genScript(projectId) {
-    if (scriptBusy) return false; // 防双击并发（两次 LLM 调用 + 两条重复版本）
-    scriptBusy = true;
+    if (st.scriptBusy) return false; // 防双击并发（两次 LLM 调用 + 两条重复版本）
+    st.scriptBusy = true;
     await renderProject(projectId);
     let stopHints = null;
     try {
@@ -1705,11 +1695,11 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
           } catch (e) {
             toast(e.message, 'err');
           }
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
         },
         onKeep: async () => {
           toast('已保留当前文案（新版本已存入历史，可随时选用）', 'ok');
-          if (currentProjectId === projectId) await renderProject(projectId);
+          if (st.currentProjectId === projectId) await renderProject(projectId);
         },
       });
       return true;
@@ -1717,21 +1707,21 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
       toast('文案生成失败：' + e.message, 'err');
       return false;
     } finally {
-      scriptBusy = false;
+      st.scriptBusy = false;
       stopHints?.();
       // 用户可能已离开该项目视图，不强行拉回
-      if (currentProjectId === projectId) await renderProject(projectId);
+      if (st.currentProjectId === projectId) await renderProject(projectId);
     }
   }
 
   async function genCharacterImage(projectId) {
-    if (imgGenBusy) return; // 防双击并发
+    if (st.imgGenBusy) return; // 防双击并发
     const desc = $('#wsCharDesc')?.value.trim();
     if (!desc) {
       toast('请先填写角色外观描述', 'err');
       return;
     }
-    imgGenBusy = true;
+    st.imgGenBusy = true;
     await renderProject(projectId);
     let stopHints = null;
     try {
@@ -1752,9 +1742,9 @@ import { bindTtsEvents, bindVoiceMarket, genShotTts, defaultTtsText, wsDefaultSp
     } catch (e) {
       toast('图片生成失败：' + e.message, 'err');
     } finally {
-      imgGenBusy = false;
+      st.imgGenBusy = false;
       stopHints?.();
-      if (currentProjectId === projectId) await renderProject(projectId);
+      if (st.currentProjectId === projectId) await renderProject(projectId);
     }
   }
 
