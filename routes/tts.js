@@ -94,8 +94,7 @@ module.exports = function registerTtsRoutes(app) {
         pageNumber: Number(req.query.page_number) || 1,
         pageSize: Math.min(Math.max(Number(req.query.page_size) || 12, 1), 30),
       });
-      if (!r.ok)
-        throw upstreamError(r.status, String(r.error || ''), '声音广场（鱼音网页 Token 可能无效或过期）');
+      if (!r.ok) throw upstreamError(r.status, String(r.error || ''), '声音广场（鱼音网页 Token 可能无效或过期）');
       const items = r.items
         .filter((m) => m.type === 'tts' && m.state === 'trained')
         .map((m) => ({
@@ -136,17 +135,13 @@ module.exports = function registerTtsRoutes(app) {
         // v2.2.2：绑定镜头的配音必须 ≤ 秒数×4（渲染会被镜头时长截断，说一半不如提前拦截）
         const cap = Math.max(8, Math.floor((Number(shot.seconds) || 5) * 4));
         if (text.length > cap) {
-          throw new ApiError(
-            400,
-            `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多 ${cap} 字（含标点），请删减后再合成`,
-          );
+          throw new ApiError(400, `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多 ${cap} 字（含标点），请删减后再合成`);
         }
       }
       const effKind = b.kind === undefined && shotId !== null ? 'shot' : kind;
       // v2.2.2：请求显式传了不存在的音色/模型 → 直接 400，不再静默回退默认音（成片音色不符难排查）
       const rawVoice = b.voice === undefined || b.voice === null || b.voice === '' ? '' : String(b.voice);
-      const voiceKnown =
-        TTS_VOICES.some((v) => v.id === rawVoice) || getVoicePool().some((v) => v.id === rawVoice);
+      const voiceKnown = TTS_VOICES.some((v) => v.id === rawVoice) || getVoicePool().some((v) => v.id === rawVoice);
       if (rawVoice && !voiceKnown) {
         throw new ApiError(400, `音色 id「${rawVoice.slice(0, 60)}」无效：请选择列表内音色，或先加入声音广场备选池`);
       }

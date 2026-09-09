@@ -260,8 +260,7 @@ module.exports = function registerProjectRoutes(app) {
       } else {
         const nar = String(b.narration).trim() || null;
         if (nar) {
-          const effSec =
-            b.seconds !== undefined && b.seconds !== null ? String(b.seconds) : (shot.seconds || '5');
+          const effSec = b.seconds !== undefined && b.seconds !== null ? String(b.seconds) : shot.seconds || '5';
           const cap = narrationCap(effSec);
           if (nar.length > cap) {
             throw new ApiError(400, `旁白过长：该镜头 ${effSec} 秒最多 ${cap} 字（含标点），请删减后保存`);

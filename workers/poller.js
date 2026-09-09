@@ -116,7 +116,10 @@ class Poller {
     }
     const waitMs = ARCHIVE_RETRY_MS[attempt - 1];
     this.pendingArchive.set(taskId, { attempt, at: Date.now() + waitMs });
-    log('warn', `任务 #${taskId} 视频归档失败，${Math.round(waitMs / 1000)}s 后自动重试（${attempt}/${ARCHIVE_RETRY_MS.length}）`);
+    log(
+      'warn',
+      `任务 #${taskId} 视频归档失败，${Math.round(waitMs / 1000)}s 后自动重试（${attempt}/${ARCHIVE_RETRY_MS.length}）`,
+    );
   }
 
   /** v1.3 归档补扫：为历史 completed 任务补齐本地视频（顺序 + 500ms 限速，失败不阻塞）。
