@@ -743,17 +743,6 @@ const getViewMode = () => state.viewMode;
 
 /** 装配任务中心交互（清空按钮 / 搜索 / 状态筛选 / 视图切换 / 事件委托 / 悬停播放） */
 function initTaskCenter() {
-  $('#btnClearDone').addEventListener('click', async () => {
-    if (!confirm('确认删除全部已完成任务？')) return;
-    try {
-      const r = await api('/api/tasks/bulk/clear-completed', { method: 'POST' });
-      toast(`已清理 ${r.removed} 条`, 'ok');
-      if (state.detailId) refreshDetail(); // 被清空的任务若是当前打开的详情，触发 404 自动关闭
-      loadTasks();
-    } catch (e) {
-      toast(e.message, 'err');
-    }
-  });
   $('#btnClearFailed').addEventListener('click', async () => {
     if (!confirm('确认删除全部失败/提交失败任务？')) return;
     try {
