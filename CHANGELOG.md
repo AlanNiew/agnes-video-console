@@ -6,6 +6,8 @@
 
 ### Refactored
 
+- **M4-B4：`style.css`（2341 行）按视图拆分为 `public/styles/` 六文件，M4 前端重构专项收官**——base（变量/reset/顶栏/按钮/弹窗/表单/日志/Toast/空状态/导航 tabs）/ task-center（工具栏/视图切换/时间线/分页/看板/卡片/详情弹窗）/ new-task（类型 Tab/图片产物墙）/ workspace（分镜卡片/对比弹窗/步骤引导/风格预设/高级配置/全自动时间线/主体布局）/ works（作品库卡片墙）/ theme-light（浅色主题覆盖）。**逐行原样搬运零行为变化**（脚本校验 27 段内容逐行一致）；**层叠安全**：拆分前解析全部 387 条规则，确认同选择器跨文件相对顺序零翻转，theme-light 保持在加载顺序末尾；`index.html` 改为按序六个 `<link>`（顺序敏感：base 在前、theme-light 最后），vite 构建合并为单产物（构建产物中顺序复核通过），未构建时 public 回退直载同样成立。顺带补齐上个提交遗留的 5 文件 prettier 格式漂移（README×2/routes×2/workers×1，纯换行）。`lint`（0 errors）/ `format:check` / `build` / 84 单测 / e2e（含静态首页）全绿。
+
 - **M4-B3-7：renderProject 内联绑定清空——第⑥步 BGM 面板拆出 `public/ws-bgm.js`、第⑦步成片渲染面板拆出 `public/ws-render-panel.js`（workspace.js → 约 880 行，仅剩装配与步骤导航）**——渲染按钮提交 / 成片风格预设套用 / 高级配置实时配方说明 / 渲染任务轮询迁入 ws-render-panel（startRenderPoll 随迁，renderJobItem 常量复用 ws-render）；BGM 在线搜索/试听/选用/清除迁入 ws-bgm（bgmCurrentHtml/fmtSecs/precheckHtmlFromDetail 复用 ws-render）。**交互改「局部更新」**：渲染提交成功只在 `#wsRenderJobs` 顶部插入新任务行并续轮询、轮询只增改该子树且全部落定即停（不再整页重绘 → 保留面板已调配置与其作步骤未保存输入）；BGM 选用/清除后只刷 `#wsBgmCurrent` 与步骤⑥圆点与 `#wsPrecheck`（ws-render 新增纯函数 `precheckHtmlFromDetail`，refreshTasks 一并复用，统计口径不变）。行为等价，`lint`（0 errors）/ `format:check` / `build` / 84 单测全绿。M4-B3 六步模块拆分至此全部交付，剩 CSS 拆分/收尾（B4）。
 
 - **netmusic 客户端解耦数据层**：`clients/netmusic.js` 不再 require db —— 改为依赖注入工厂 `createNetmusicClient(settings)`，由装配方接线（routes/music、routes/settings 只取静态 `LEVELS`，workers/auto、workers/render 注入 settings 后使用）；消除客户端↔数据层耦合，行为不变（e2e BGM 搜索/试听/选用/渲染流全绿）。

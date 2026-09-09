@@ -1,0 +1,81 @@
+/* new-task.css —— 新建任务弹窗：类型 Tab（视频 / 图片）/ 图片任务产物墙（M4-B4 自 style.css 拆出，内容原样搬运零行为变化） */
+/* ===== P1：新建任务类型 Tab（视频 / 图片）（原 style.css 282–316 行，逐行原样搬运） ===== */
+/* ---------- P1：新建任务类型 Tab（视频 / 图片） ---------- */
+.type-tabs {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.type-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 12px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  font-size: 14px;
+  transition: 0.15s;
+}
+.type-tab:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.type-tab.active {
+  background: linear-gradient(135deg, rgba(99, 102, 241, 0.25), rgba(139, 92, 246, 0.18));
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.type-tab .pt-emoji {
+  font-size: 17px;
+}
+
+/* ===== P1：图片任务产物墙（原 style.css 317–360 行，逐行原样搬运） ===== */
+/* ---------- P1：图片任务产物墙 ---------- */
+.detail-image-wall {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 10px;
+  margin: 10px 0 4px;
+}
+.detail-image-wall a {
+  display: block;
+  border-radius: 9px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  aspect-ratio: 1;
+  background: #0d1117;
+}
+.detail-image-wall a:hover {
+  border-color: var(--accent);
+}
+.detail-image-wall img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.img-preview-row {
+  display: flex;
+  gap: 6px;
+  margin: 9px 0 0;
+  flex-wrap: wrap;
+}
+.img-preview-row a {
+  display: block;
+  border-radius: 7px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  background: #0d1117;
+}
+.img-preview-row a:hover {
+  border-color: var(--accent);
+}
+.img-preview-row img {
+  height: 76px;
+  display: block;
+}

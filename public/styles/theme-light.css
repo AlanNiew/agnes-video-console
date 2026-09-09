@@ -1,0 +1,58 @@
+/* theme-light.css —— 浅色主题覆盖（依赖 base.css 变量，必须按导入顺序最后加载）（M4-B4 自 style.css 拆出，内容原样搬运零行为变化） */
+/* ===== v2.2 浅色主题（覆盖深色变量，必须最后加载）（原 style.css 2287–2343 行，逐行原样搬运） ===== */
+/* ================= v2.2 浅色主题 =================
+ * 真实主题落 <html data-theme="light">（common.js 按 dark/light/system 解析后设置）。
+ * 只覆盖变量 + 少量硬编码深色；视频/图片查看底(#0d1117)与日志/JSON 终端风(#0b0e15)
+ * 为刻意设计，两种主题下均保持不变。 */
+html[data-theme='light'] {
+  color-scheme: light;
+  --bg: #f4f5fa;
+  --bg-2: #ffffff;
+  --bg-3: #eceef5;
+  --border: #d7dbe7;
+  --text: #1d2434;
+  --text-dim: #5c6579;
+  --shadow: 0 10px 30px rgba(30, 40, 80, 0.14);
+}
+html[data-theme='light'] body {
+  background:
+    radial-gradient(1200px 500px at 80% -10%, rgba(99, 102, 241, 0.08), transparent 60%),
+    radial-gradient(900px 400px at -10% 110%, rgba(139, 92, 246, 0.07), transparent 60%), var(--bg);
+}
+html[data-theme='light'] .topbar {
+  background: rgba(255, 255, 255, 0.86);
+}
+html[data-theme='light'] .col {
+  background: rgba(255, 255, 255, 0.6);
+}
+html[data-theme='light'] .steps {
+  background: rgba(255, 255, 255, 0.92);
+}
+html[data-theme='light'] .modal-overlay {
+  background: rgba(40, 50, 90, 0.35);
+}
+/* 透明底 hover 原为白字（深色下正确，浅色下白字隐形）→ 改主题色 */
+html[data-theme='light'] .btn:hover {
+  color: var(--accent);
+}
+html[data-theme='light'] .act:hover {
+  color: var(--accent);
+}
+html[data-theme='light'] .modal-close:hover {
+  color: var(--text);
+}
+/* 靛蓝浅字（深色下的点缀色）→ 浅色下换深靛蓝保证对比度 */
+html[data-theme='light'] .t-src,
+html[data-theme='light'] .card-src,
+html[data-theme='light'] .shot-field-label,
+html[data-theme='light'] .film-recipe b,
+html[data-theme='light'] .adv-group > b,
+html[data-theme='light'] .step-guide summary,
+html[data-theme='light'] .rv-rev div {
+  color: #4f46e5;
+}
+/* spinner 白色转轮 → 深色轨道 */
+html[data-theme='light'] .spinner {
+  border-color: rgba(0, 0, 0, 0.15);
+  border-top-color: #4f46e5;
+}
