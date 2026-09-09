@@ -125,8 +125,11 @@ function directRequest(headers, payload) {
 function proxiedRequest(tlsSock, headers, payload) {
   return new Promise((resolve, reject) => {
     // 隧道已是 TLS 加密流 → 用 http.request 在加密 socket 上发应用层请求（避免二次握手）
+    // 注意：这里不能传 agent:false —— agent:false 会 new 一个默认 Agent 并忽略 createConnection，
+    // 导致实际绕过隧道自行 DNS+连接（实测被污染 DNS 解析到不可达 IP，ETIMEDOUT；
+    // v2.3.0 修复——此前本机走 TUN 全局代理直连，该路径从未被触发）
     const req = http.request(
-      { host: BASE_HOST, path: '/v1/tts', method: 'POST', headers, createConnection: () => tlsSock, agent: false },
+      { host: BASE_HOST, path: '/v1/tts', method: 'POST', headers, createConnection: () => tlsSock },
       (res) => collect(res).then(resolve),
     );
     req.on('error', reject);
