@@ -647,18 +647,23 @@ class Renderer {
     }
   }
 
-  /** 片头卡：合成星野 + 居中片名（字体缺失/无中文字体时降级为纯星野） */
+  /**
+   * 片头卡：暖褐渐变底 + 居中片名（v2.3.0 改版：原星野随机白点观感像噪点/灰尘，
+   * 用户反馈后去除——纯色渐变观感更典雅；noise=alls=2 仅作 8bit 暗部渐变防色带 dither，
+   * 不产生可见颗粒）。字体缺失/无中文字体时降级为纯渐变底。
+   */
   async makeTitleCard(tmpDir, font, title, dims = { w: 1280, h: 720 }) {
     const bg = path.join(tmpDir, 'title-bg.png');
+    // 渐变：左上暗 → 右下略亮且带暖褐（cr 渐升），符合暖色修表铺/温情题材；深底保证片名 F2ECDC 对比度
     const r1 = await runFfmpeg([
       '-f',
       'lavfi',
       '-i',
-      `nullsrc=s=${dims.w}x${dims.h},geq=lum='if(lt(random(2),0.0025),170+random(0)*85,14)':cb=128:cr=128`,
+      `nullsrc=s=${dims.w}x${dims.h},geq=lum='8+40*(0.5*X/W+0.5*Y/H)':cb='126+2*X/W':cr='127+6*Y/H',noise=alls=2:allf=t`,
       '-frames:v',
       '1',
       '-vf',
-      'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.3',
+      'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.85',
       bg,
     ]);
     if (!r1.ok) return { file: null, duration: TITLE_DUR, failed: r1.err };
