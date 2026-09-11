@@ -8,6 +8,7 @@
 
 - **质检报告可视化告警（P1-1）**：渲染任务卡与作品详情里的质检徽章按阈值着色，超出即醒目标红黄——时长偏差 >8% 黄 / >15% 红，响度偏离 -16 LUFS >1dB 黄 / >2dB 红；`🔍 质检` 汇总徽章同步按最严重项着色。新增纯函数 `public/ws-render.js` `qualityFlags`，渲染任务卡与 `works-panel.js` 作品详情复用同一套阈值（`.meta-tag.warn`/`.meta-tag.bad`）。
 - **全自动等待时间预估（P1-2）**：全自动时间线在「等待视频完成」阶段显示「预计还需约 X 分钟 · 提交限流 1 次/分钟，剩 N 镜未完成」——`workers/auto.js` 每轮把剩余镜数与 ETA（纯函数 `estimateWaitMinutes`，按 `submit_interval_ms` 逐镜累加、未限流按每镜 0.5 分钟兜底）写入 `auto_state.wait_videos`，前端 `ws-render.js` 时间线展示（`.at-wait`）。单测 84 → 89。
+- **机械性 high 自审问题自动修复（P1-4）**：全自动管道里 L1 自审对「角色镜头漏注入 `<Picture 1>` 前缀」这类**确定性缺陷**不再只提示、直接自动修复（按当前提示词幂等补前缀，不采信 LLM 改写以防主观漂移）；主观性 high（叙事/节奏/画面取舍）仍留人工确认。新增纯函数 `services/prompts.js` `ensureCharacterRefPrefix`/`isMechanicalPromptFix`，`services/pipeline.js` 提交路径复用同一前缀来源（消除硬编码漂移）；单测 89 → 97。
 
 ## [2.3.0] - 2026-09-09
 

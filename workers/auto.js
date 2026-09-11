@@ -38,6 +38,8 @@ const {
   parseLLMJson,
   normalizeStoryboardShots,
   normalizeReviewResult,
+  ensureCharacterRefPrefix,
+  isMechanicalPromptFix,
 } = require('../services/prompts');
 const { buildPayload } = require('../services/payloads');
 const { submitTask } = require('../services/task-queue');
@@ -327,11 +329,20 @@ class AutoPipeline {
     }
     const shotById = new Map(shots.map((s) => [s.seq, s]));
     let applied = 0;
+    let mech = 0;
     let pending = [];
     for (const it of reviewed.issues) {
       const shot = shotById.get(it.shot_seq);
       if (!shot) continue;
       if (it.severity === 'high') {
+        // P1-4：确定性缺陷（角色镜头漏注入 <Picture 1> 前缀）自动机械修复；
+        // 主观性 high（叙事/节奏/画面取舍）仍留人工确认
+        if (isMechanicalPromptFix(it, shot)) {
+          projects.updateShot(shot.id, { video_prompt: ensureCharacterRefPrefix(shot.video_prompt) });
+          applied += 1;
+          mech += 1;
+          continue;
+        }
         pending.push(`镜头${it.shot_seq} ${it.issue}`);
         continue; // 高严重度留给人工（不盲改），流水线继续
       }
@@ -340,7 +351,7 @@ class AutoPipeline {
       projects.updateShot(shot.id, patch);
       applied += 1;
     }
-    const detail = `自审发现 ${reviewed.issues.length} 项：自动修订 ${applied} 项${pending.length ? `；${pending.length} 项高优先级建议人工确认（${pending[0]}…）` : ''}`;
+    const detail = `自审发现 ${reviewed.issues.length} 项：自动修订 ${applied} 项${mech ? `（机械修复 ${mech} 项）` : ''}${pending.length ? `；${pending.length} 项高优先级建议人工确认（${pending[0]}…）` : ''}`;
     this.advance(projectId, 'character', detail);
   }
 

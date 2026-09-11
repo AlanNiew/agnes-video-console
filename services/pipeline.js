@@ -8,6 +8,7 @@
  *       不要求角色图、不注入 <Picture 1> 前缀。
  * 依赖由 server.js 注入（避免循环 require）。
  */
+const { ensureCharacterRefPrefix } = require('./prompts');
 
 function createPipelineService(deps) {
   const { projects, buildPayload, submitTask, ApiError, log } = deps;
@@ -54,8 +55,8 @@ function createPipelineService(deps) {
     if (!charImg || !charImg.remote_url) {
       throw new ApiError(400, '请先完成「角色设定」并定稿一张角色图（纯空镜镜头可在镜头中关闭「引用角色图」）');
     }
-    // 提示词中必须引用角色图，显式保持外观一致
-    const finalPrompt = text.includes('<Picture 1>') ? text : `以 <Picture 1> 中的角色为参考，保持其外观一致。${text}`;
+    // 提示词中必须引用角色图，显式保持外观一致（前缀注入单一来源见 services/prompts.js）
+    const finalPrompt = ensureCharacterRefPrefix(text);
     const { payload, meta } = buildPayload({
       model: 'agnes-video-2.5-flash',
       prompt: finalPrompt,

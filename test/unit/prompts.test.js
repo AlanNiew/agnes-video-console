@@ -7,6 +7,9 @@ const {
   parseLLMJson,
   normalizeStoryboardShots,
   clampNarration,
+  ensureCharacterRefPrefix,
+  isMechanicalPromptFix,
+  CHAR_REF_PREFIX,
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
   REVIEW_SYSTEM_PROMPT,
@@ -119,6 +122,55 @@ describe('clampNarration（v2.0.3 旁白限长纯函数）', () => {
 
   test('seconds 非法按 5 秒兜底', () => {
     expect(clampNarration('一'.repeat(25), 'abc')).toHaveLength(20);
+  });
+});
+
+describe('ensureCharacterRefPrefix（P1-4 角色引用前缀幂等注入）', () => {
+  test('缺前缀时前置标准引用句', () => {
+    expect(ensureCharacterRefPrefix('低机位特写黄胶鞋')).toBe(CHAR_REF_PREFIX + '低机位特写黄胶鞋');
+  });
+
+  test('已含 <Picture 1> 时原样返回（幂等，含大小写/空格变体）', () => {
+    const p = '以 <Picture 1> 中的角色为参考，保持其外观一致。后文';
+    expect(ensureCharacterRefPrefix(p)).toBe(p);
+    expect(ensureCharacterRefPrefix('前缀 <picture 1> 大小写变体')).toBe('前缀 <picture 1> 大小写变体');
+    expect(ensureCharacterRefPrefix('前缀 <Picture  1> 多空格')).toBe('前缀 <Picture  1> 多空格');
+  });
+
+  test('空/空值输入安全补前缀', () => {
+    expect(ensureCharacterRefPrefix('')).toBe(CHAR_REF_PREFIX);
+    expect(ensureCharacterRefPrefix(null)).toBe(CHAR_REF_PREFIX);
+  });
+});
+
+describe('isMechanicalPromptFix（P1-4 机械性 high 判定）', () => {
+  const refShot = (vp) => ({ use_character_ref: 1, mode: 'reference', video_prompt: vp });
+
+  test('命中：角色镜头缺前缀 + 审查描述确为未引用角色', () => {
+    const it = { field: 'video_prompt', severity: 'high', issue: '提示词缺少 <Picture 1> 角色引用', revised: 'x' };
+    expect(isMechanicalPromptFix(it, refShot('低机位特写'))).toBe(true);
+    expect(isMechanicalPromptFix({ ...it, issue: '未引用角色图，外观会漂移' }, refShot('x'))).toBe(true);
+  });
+
+  test('不命中：当前提示词已含前缀（幂等保护，防误改无关 high）', () => {
+    const it = { field: 'video_prompt', severity: 'high', issue: '动作量超出时长承载', revised: 'x' };
+    expect(isMechanicalPromptFix(it, refShot('以 <Picture 1> 中的角色为参考，保持其外观一致。后文'))).toBe(false);
+  });
+
+  test('不命中：空镜/纯文生镜头不注入前缀', () => {
+    const it = { field: 'video_prompt', issue: '缺少 <Picture 1> 引用', revised: 'x' };
+    expect(isMechanicalPromptFix(it, { use_character_ref: 0, mode: 'reference', video_prompt: 'x' })).toBe(false);
+    expect(isMechanicalPromptFix(it, { use_character_ref: 1, mode: 'text', video_prompt: 'x' })).toBe(false);
+  });
+
+  test('不命中：审查描述与角色引用无关（主观性 high 留人工）', () => {
+    const it = { field: 'video_prompt', severity: 'high', issue: '动作量超出该镜时长承载', revised: 'x' };
+    expect(isMechanicalPromptFix(it, refShot('低机位特写'))).toBe(false);
+  });
+
+  test('不命中：非 video_prompt 字段或 shot 缺失', () => {
+    expect(isMechanicalPromptFix({ field: 'narration', issue: '缺少 <Picture 1>' }, refShot('x'))).toBe(false);
+    expect(isMechanicalPromptFix({ field: 'video_prompt', issue: '缺少 <Picture 1>' }, null)).toBe(false);
   });
 });
 

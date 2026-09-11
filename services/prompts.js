@@ -51,6 +51,27 @@ const REVIEW_SYSTEM_PROMPT = `你是严谨的视频分镜审查导演。审查�
 审查维度：①分镜与文案（故事梗概/角色描述）的一致性——角色外观、时空、剧情走向是否矛盾；②镜头节奏——开场是否建立时空、结尾是否收束情绪、相邻镜头动作衔接是否连贯；③提示词质量——是否具体可拍摄、动作量是否与 seconds 匹配（5 秒最多 2~3 个动作）、有角色镜头是否以「以 <Picture 1> 中的角色为参考，保持其外观一致」开头；④旁白——是否与画面互补而非复述、连起来是否成文、**字数是否 ≤ 该镜 seconds × 4**（配音约 5 字/秒，超长会被镜头时长截断——发现超长必须给出压缩后的修订版）。
 规则：只报告确实存在的问题，不臆造；field 只能是 video_prompt / narration / seconds 三者之一（seconds 的 revised 为 "4"~"12" 数字字符串）；severity：high=影响成片质量的硬伤，medium=明显可改进，low=锦上添花；无问题时 issues 为空数组。`;
 
+/** P1-4：角色引用前缀（与 pipeline 提交时注入保持单一来源）——有角色镜头提示词的机械注入片段 */
+const CHAR_REF_PREFIX = '以 <Picture 1> 中的角色为参考，保持其外观一致。';
+const PICTURE_RE = /<Picture\s*1>/i;
+
+/** 幂等补前缀：已含 <Picture 1> 原样返回，否则前置标准引用句（确定性、无主观改写） */
+function ensureCharacterRefPrefix(prompt) {
+  const t = String(prompt || '');
+  return PICTURE_RE.test(t) ? t : `${CHAR_REF_PREFIX}${t}`;
+}
+
+/** P1-4：判定某条审查建议是否为「机械性」high——仅限确定性缺陷，可安全自动修复。
+ *  当前规则：镜头已引用定稿角色图，但当前提示词漏注入 <Picture 1> 前缀，
+ *  且审查描述确为「未引用角色」。主观性 high（叙事/节奏/画面取舍）一律返回 false，留人工。 */
+function isMechanicalPromptFix(issue, shot) {
+  if (!issue || issue.field !== 'video_prompt' || !shot) return false;
+  const usesRef = shot.use_character_ref !== 0 && shot.mode !== 'text';
+  if (!usesRef) return false;
+  if (PICTURE_RE.test(String(shot.video_prompt || ''))) return false; // 已含前缀 → 幂等跳过
+  return /picture|引用.{0,4}角色|角色.{0,4}参考|角色图/i.test(String(issue.issue || ''));
+}
+
 /** 容错解析 LLM 输出 JSON：剥 markdown 围栏 → 提取首个平衡对象 → JSON.parse */
 function parseLLMJson(text) {
   if (!text) return null;
@@ -171,4 +192,7 @@ module.exports = {
   normalizeStoryboardShots,
   normalizeReviewResult,
   clampNarration,
+  CHAR_REF_PREFIX,
+  ensureCharacterRefPrefix,
+  isMechanicalPromptFix,
 };
