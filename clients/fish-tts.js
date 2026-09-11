@@ -162,6 +162,58 @@ function collect(res) {
 }
 
 /**
+ * 通用 JSON 请求（支持 FISH_PROXY 隧道）：声音广场等 GET 接口用。
+ * v2.3.0 修复：原用 Node 原生 fetch，不走代理 → 配了 FISH_PROXY 的环境下必失败（fetch failed）。
+ * 与 synthesize/proxiedRequest 同一隧道机制；注意不传 agent:false（会忽略 createConnection）。
+ */
+function requestJson({ method = 'GET', path, headers = {}, body = null, timeoutMs = 20_000 }) {
+  return new Promise((resolve) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const h = { ...headers };
+    if (payload) {
+      h['Content-Type'] = 'application/json';
+      h['Content-Length'] = Buffer.byteLength(payload);
+    }
+    const onResponse = (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => {
+        let json = null;
+        try {
+          json = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          /* 非 JSON 保持 null */
+        }
+        resolve({ status: res.statusCode || 0, json });
+      });
+      res.on('error', () => resolve({ status: 0, json: null }));
+    };
+    const proxy = proxyConfig();
+    if (proxy) {
+      tunnel(proxy.host, proxy.port)
+        .then((raw) => {
+          const tlsSock = tls.connect({ socket: raw, servername: BASE_HOST });
+          tlsSock.once('secureConnect', () => {
+            const req = http.request({ host: BASE_HOST, path, method, headers: h, createConnection: () => tlsSock }, onResponse);
+            req.on('error', () => resolve({ status: 0, json: null }));
+            req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
+            if (payload) req.write(payload);
+            req.end();
+          });
+          tlsSock.once('error', () => resolve({ status: 0, json: null }));
+        })
+        .catch(() => resolve({ status: 0, json: null }));
+    } else {
+      const req = https.request({ hostname: BASE_HOST, path, method, headers: h }, onResponse);
+      req.on('error', () => resolve({ status: 0, json: null }));
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
+      if (payload) req.write(payload);
+      req.end();
+    }
+  });
+}
+
+/**
  * 声音广场：浏览社区音色模型（v1.9）
  * GET https://api.fish.audio/model/web?page_size=&page_number=&sort_by=trending|task_count|created_at&language=zh&tag=male&tag=young
  * 认证：Authorization: Bearer <web token>（与 TTS API Key 不同，来自 fish.audio 网页端会话）
@@ -174,20 +226,20 @@ async function listWebModels({
   pageNumber = 1,
   pageSize = 20,
 }) {
-  const url = new URL('https://api.fish.audio/model/web');
-  url.searchParams.set('page_size', String(Math.min(Math.max(Number(pageSize) || 20, 1), 30)));
-  url.searchParams.set('page_number', String(Math.max(Number(pageNumber) || 1, 1)));
-  if (sortBy) url.searchParams.set('sort_by', String(sortBy));
-  if (language) url.searchParams.set('language', String(language));
-  for (const t of tags || []) if (t) url.searchParams.append('tag', String(t));
-  const res = await fetch(url, {
+  const params = new URLSearchParams();
+  params.set('page_size', String(Math.min(Math.max(Number(pageSize) || 20, 1), 30)));
+  params.set('page_number', String(Math.max(Number(pageNumber) || 1, 1)));
+  if (sortBy) params.set('sort_by', String(sortBy));
+  if (language) params.set('language', String(language));
+  for (const t of tags || []) if (t) params.append('tag', String(t));
+  const { status, json: j } = await requestJson({
+    method: 'GET',
+    path: '/model/web?' + params.toString(),
     headers: { accept: 'application/json', authorization: 'Bearer ' + String(token || '') },
-    signal: AbortSignal.timeout(20_000),
   });
-  const j = await res.json().catch(() => null);
-  if (!res.ok || !j || !Array.isArray(j.items)) {
-    const detail = j && j.message ? j.message : `HTTP ${res.status}`;
-    return { ok: false, status: res.status, items: [], error: detail };
+  if (status < 200 || status >= 300 || !j || !Array.isArray(j.items)) {
+    const detail = j && j.message ? j.message : `HTTP ${status}`;
+    return { ok: false, status, items: [], error: detail };
   }
   return { ok: true, items: j.items, has_more: Boolean(j.has_more) };
 }
