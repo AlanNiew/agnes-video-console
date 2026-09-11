@@ -23,6 +23,7 @@ let seq = 0;
 let rateLimitRemaining = 0; // v1.3：429 模拟计数器（>0 时 POST /v1/videos 返回 429）
 let fixtureFile = null; // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
 let bgmFixture = null; // v1.4：BGM 渲染用的可解码测试音频（有 ffmpeg 时生成）
+let imageFixture = null; // P2：图片 URL 用的真实 PNG（海报底图；有 ffmpeg 时生成）
 
 function mockResult(job) {
   const completed = job.status === 'completed';
@@ -91,6 +92,13 @@ const mockServer = http.createServer(async (req, res) => {
 
   // v1.3：模拟完成的视频文件（供本地归档下载与成片渲染 e2e；有 ffmpeg 时返回可解码的真实测试视频）
   if (req.method === 'GET' && u.pathname.startsWith('/out/')) {
+    // 图片 URL（海报底图 img-mock-*.png）须返回真实图片：否则会落到下方视频 fixture，
+    // 让海报的 drawtext 合成把多帧视频写单个 PNG 而报错（image2: Cannot write more than one file）
+    if (u.pathname.endsWith('.png') && imageFixture && fs.existsSync(imageFixture)) {
+      const buf = fs.readFileSync(imageFixture);
+      res.writeHead(200, { 'Content-Type': 'image/png', 'Content-Length': buf.length });
+      return res.end(buf);
+    }
     if (fixtureFile && fs.existsSync(fixtureFile)) {
       const buf = fs.readFileSync(fixtureFile);
       res.writeHead(200, { 'Content-Type': 'video/mp4', 'Content-Length': buf.length });
@@ -379,6 +387,28 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       );
       if (fb.status !== 0 || !fs.existsSync(bgmFixture)) bgmFixture = null;
     }
+    // P2：图片 fixture（真实 PNG，供海报底图下载；testsrc 单帧 ~30KB，过 poster 的 1KB 下限）
+    imageFixture = path.join(DATA_DIR_ROOT, 'e2e-fixture.png');
+    const fp = spawnSync(
+      'ffmpeg',
+      [
+        '-y',
+        '-hide_banner',
+        '-loglevel',
+        'error',
+        '-f',
+        'lavfi',
+        '-i',
+        'testsrc=size=640x360:rate=1',
+        '-frames:v',
+        '1',
+        '-update',
+        '1',
+        imageFixture,
+      ],
+      { encoding: 'utf8', timeout: 60_000 },
+    );
+    if (fp.status !== 0 || !fs.existsSync(imageFixture)) imageFixture = null;
   } catch {
     fixtureFile = null;
   }

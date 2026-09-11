@@ -14,6 +14,10 @@
 - **成片多版本对比视图（P2-6）**：第⑦步新增「⚖️ 多版本对比」按钮——拉取同项目全部已完成成片，弹窗并排播放（最新在左，各自标注时长/响度/偏差徽章与下载），支持「▶ 同步播放」（各版从同一起点播放并自动对齐进度）/「⏸ 全部暂停」，便于发现剪辑节奏、配音与时长差异；不足 2 版时提示。
 - **成功案例参数模板化（P2-7）**：新增「创作模板」——把「创意写法 + 风格 + 画幅/时长 + 成片预设配方」存成可复用模板。渲染面板「💾 存为创作模板」保存当前项目参数；新建项目弹窗「📋 套用创作模板」一键回填（含成片预设卡片自动选中）并可删除。存储用 `settings.creation_templates`（JSON KV，与 `tts_voice_pool` 同款，**零新表**）；新增 `GET/POST/DELETE /api/templates`（`routes/templates.js`，名称必填、上限 50 条）；openapi/AGENTS/README 同步（路由域 9 → 10、契约 59 → 62 条），e2e 新增模板 CRUD 用例（新建/字段校验/空名 400/列表/删除/重复删 404）。
 
+### Fixed
+
+- **e2e 海报生成告警澄清（mock 缺陷，非产品 bug）**：mock 的 `/out/` 前缀分支对图片 URL（`img-mock-*.png`）也返回视频 fixture（MP4），海报底图实际下到多帧视频，drawtext 合成把多帧写单个 PNG 触发 image2「Cannot write more than one file」warn（首帧仍落盘，故 e2e 误显「海报 ✓」）。为 `.png` 路径补充真实 PNG fixture（ffmpeg 单帧生成），海报链路 e2e 干净通过（warning 清零）。生产 `generateImage` 返回真实图片 URL，无此问题。
+
 ## [2.3.0] - 2026-09-09
 
 ### Added
