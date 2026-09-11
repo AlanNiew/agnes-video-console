@@ -5,7 +5,7 @@
  * 依赖：common.js、ws-state.js（st）、ws-render.js（FILM_PRESETS/TRANSITION_LABELS/
  * SUBSTYLE_LABELS 为纯常量，renderJobItem 渲染任务行）。
  */
-import { $, esc, toast, api } from './common.js';
+import { $, esc, fmtTime, toast, api } from './common.js';
 import { st } from './ws-state.js';
 import { FILM_PRESETS, TRANSITION_LABELS, SUBSTYLE_LABELS, renderJobItem } from './ws-render.js';
 
@@ -63,6 +63,82 @@ async function submitRender(projectId) {
   return job;
 }
 
+/** P2-6：同项目多版成片并排对比（可选同步播放，便于发现剪辑/配音/时长差异） */
+async function openRenderCompare(projectId) {
+  let jobs;
+  try {
+    const r = await api(`/api/projects/${projectId}/render/jobs`);
+    jobs = ((r && r.data && r.data.items) || []).filter((j) => j.status === 'completed' && j.output_url);
+  } catch (e) {
+    toast('加载渲染版本失败：' + e.message, 'err');
+    return;
+  }
+  if (jobs.length < 2) {
+    toast('至少需要 2 版已完成成片才能对比', 'warn');
+    return;
+  }
+  const filmCard = (j, i) => {
+    const q = j.quality || {};
+    const lbl = i === 0 ? '最新' : `v${jobs.length - i}`;
+    return `<div class="cmp-film" data-job="${j.id}">
+        <div class="cmp-film-head"><b>${esc(lbl)}</b> · 渲染 #${j.id} · ${esc(fmtTime(j.created_at))}
+          ${q.duration_s != null ? `<span class="meta-tag">${q.duration_s}s</span>` : ''}
+          ${q.loudness_lufs != null ? `<span class="meta-tag">${q.loudness_lufs} LUFS</span>` : ''}
+          ${q.duration_deviation_pct != null ? `<span class="meta-tag">偏差 ${q.duration_deviation_pct > 0 ? '+' : ''}${q.duration_deviation_pct}%</span>` : ''}
+        </div>
+        <video controls preload="metadata" src="${esc(j.output_url)}"></video>
+        <div style="margin-top:6px"><a class="btn ghost sm" href="${esc(j.output_url)}" download>⬇️ 下载该版</a></div>
+      </div>`;
+  };
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+      <div class="modal wide">
+        <div class="modal-head"><h2>⚖️ 多版本成片对比（${jobs.length} 版）</h2><button class="modal-close">✕</button></div>
+        <div class="modal-body">
+          <div class="hint" style="margin-bottom:10px">最新版在左。点「▶ 同步播放」让各版从同一时刻并排播放，便于比对剪辑节奏、配音与时长差异。</div>
+          <div class="cmp-films">${jobs.map(filmCard).join('')}</div>
+        </div>
+        <div class="modal-foot">
+          <button class="btn primary sm" id="cmpSyncPlay">▶ 同步播放</button>
+          <button class="btn ghost sm" id="cmpPauseAll">⏸ 全部暂停</button>
+          <span style="flex:1"></span>
+          <button class="btn ghost" id="cmpClose">关闭</button>
+        </div>
+      </div>`;
+  document.body.appendChild(overlay);
+  const vids = () => [...overlay.querySelectorAll('.cmp-films video')];
+  let syncTimer = null;
+  const close = () => {
+    clearInterval(syncTimer);
+    syncTimer = null;
+    overlay.remove();
+  };
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay || e.target.closest('.modal-close') || e.target.closest('#cmpClose')) close();
+  });
+  overlay.querySelector('#cmpSyncPlay').onclick = () => {
+    const vs = vids();
+    if (!vs.length) return;
+    vs.forEach((v) => {
+      v.currentTime = 0;
+      v.play().catch(() => {});
+    });
+    clearInterval(syncTimer);
+    syncTimer = setInterval(() => {
+      const t = vs[0].currentTime;
+      vs.slice(1).forEach((v) => {
+        if (Math.abs(v.currentTime - t) > 0.4) v.currentTime = t;
+      });
+    }, 400);
+  };
+  overlay.querySelector('#cmpPauseAll').onclick = () => {
+    clearInterval(syncTimer);
+    syncTimer = null;
+    vids().forEach((v) => v.pause());
+  };
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
   const rbtn = $('#wsRenderBtn');
@@ -79,6 +155,9 @@ function bindRenderPanel(projectId, renderJobs = []) {
       }
     };
   }
+  // P2-6：多版本对比（点开时拉取已完成成片，≥2 版才可对比）
+  const cmpBtn = $('#wsRenderCompare');
+  if (cmpBtn) cmpBtn.onclick = () => openRenderCompare(projectId);
   // P2：风格预设交互 —— 点击卡片套用整套配方；手动改高级配置即切换为「自定义配方」
   const filmRecipeEl = $('#wsFilmRecipe');
   const renderRecipe = () => {

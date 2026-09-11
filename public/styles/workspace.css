@@ -528,6 +528,30 @@ html[data-theme='light'] .pc-chip.info {
   padding-top: 8px;
   border-top: 1px dashed var(--border);
 }
+/* P2-6 多版本成片对比（并排播放） */
+.cmp-films {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 12px;
+}
+.cmp-film {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+.cmp-film-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+  font-size: 12.5px;
+}
+.cmp-film video {
+  width: 100%;
+  border-radius: 6px;
+  background: #000;
+}
 
 /* v2.2 作品归档目录提示行 */
 .work-dir-row {

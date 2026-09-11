@@ -730,6 +730,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
             </select>
             <span class="meta-tag" title="已绑定镜头配音的镜头数（在第⑤步配音墙中绑定）">🎙️ 旁白 ${narratedShots}/${shots.length} 镜</span>
             <span class="spacer" style="flex:1"></span>
+            <button class="btn ghost" id="wsRenderCompare" title="并排播放对比同项目的多版成片（需 ≥2 版已完成）">⚖️ 多版本对比</button>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>
           <!-- P2：高级配置（分组折叠，默认收起；选中预设后可展开微调） -->
