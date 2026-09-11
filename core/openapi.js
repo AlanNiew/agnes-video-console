@@ -93,6 +93,11 @@ const paths = {
     delete:
       '删除渲染任务（渲染中不可删；artifacts 渲染缓存一并清理；**作品目录 data/works 保留**——作品是用户劳动成果）',
   },
+  '/api/templates': {
+    get: 'P2-7 创作模板列表 {items:[{id,name,idea,style,aspect_ratio,seconds,film_preset,created_at}]}（存于 settings.creation_templates）',
+    post: '新建创作模板 {name(必填,≤40), idea?, style?, aspect_ratio?, seconds?, film_preset?} → 201 模板对象；上限 50 条',
+  },
+  '/api/templates/{id}': { delete: '删除创作模板' },
   '/api/music/search': {
     get: 'BGM 在线曲库搜索 ?keyword=&limit= → {items:[{id,name,artist,album,duration_s,cover,levels[]}]}（需设置 music_api_base）',
   },

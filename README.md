@@ -100,7 +100,7 @@ agnes-video-console/
 ├── db/                  # 数据层：kernel.js（连接/DDL/迁移/tx）· sql.js（prepare 注册表）· repos/（settings/tasks/projects/renders 表族仓库）· index.js 组合出口（require('./db') 目录解析指向）
 ├── instance-lock.js     # 单实例工作锁（settings 键原子 CAS，跨进程互斥；M3 自数据层拆出）
 ├── workers/             # 后台进程（单实例工作锁约束）：submitter（提交节流 + 429 退避）· poller（轮询归档）· image-worker（图片任务）· render（成片渲染器）· auto（全自动成片编排器）· manager（worker 统一启停/唤醒）
-├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render）
+├── routes/              # 按领域拆分的 API 路由（meta / settings / tasks / llm / images / tts / music / projects / render / templates）
 ├── public/              # 前端单页应用（index.html / common.js 公共工具 / app.js 任务中心 / workspace.js 创作工作台）
 ├── test/unit/           # 单元测试（jest：payload 校验 / LLM 解析 / ASS 字幕 / 退避数学）
 ├── test/mock-e2e.js     # 端到端冒烟测试（本地模拟 Agnes API，含 429 限流、图片任务、全自动成片与真实 ffmpeg 渲染用例）

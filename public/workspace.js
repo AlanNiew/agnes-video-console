@@ -316,6 +316,11 @@ import { bindRenderPanel } from './ws-render-panel.js';
       <div class="modal">
         <div class="modal-head"><h2>新建创作项目</h2><button class="modal-close">✕</button></div>
         <div class="modal-body">
+          <div class="field" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <label style="margin:0">📋 套用创作模板</label>
+            <select id="npTemplate" style="flex:1;min-width:150px"><option value="">（不使用模板）</option></select>
+            <button type="button" class="btn ghost sm" id="npTplDel" disabled title="删除当前选中的模板">🗑 删除</button>
+          </div>
           <div class="field"><label>项目名称 *</label><input type="text" id="npName" placeholder="如：夏日麦田少年" /></div>
           <div class="field"><label>一句话创意 *</label><textarea id="npIdea" rows="3" placeholder="例：黄昏麦田，穿黄胶鞋的少年沿着土路走向远方，暖金色逆光"></textarea></div>
           <div class="field"><label>风格偏好 <span class="hint">点选卡片，或在下方自定义</span></label>
@@ -348,7 +353,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
           </div>
         </div>
         <div class="modal-foot">
-          <button class="btn ghost">取消</button>
+          <button class="btn ghost" id="npCancel">取消</button>
           <button class="btn primary" id="npCreate">创建并逐步制作</button>
         </div>
       </div>`;
@@ -368,6 +373,65 @@ import { bindRenderPanel } from './ws-render-panel.js';
           .querySelectorAll('.style-preset')
           .forEach((x) => x.classList.toggle('active', x.dataset.style === styleInput.value));
       });
+    // P2-7：创作模板（套用 / 删除；保存入口在成片渲染面板「存为创作模板」）
+    let templates = [];
+    let pickedFilmPreset = '';
+    const tplSel = $('#npTemplate', overlay);
+    const tplDel = $('#npTplDel', overlay);
+    const applyTemplate = (t) => {
+      if (!t) return;
+      if (t.idea) $('#npIdea', overlay).value = t.idea;
+      if (t.style) {
+        styleInput.value = t.style;
+        styleInput.dispatchEvent(new Event('input'));
+      }
+      const setOpt = (sel, val) => {
+        const el = $(sel, overlay);
+        if (el && val && [...el.options].some((o) => o.value === val)) el.value = val;
+      };
+      setOpt('#npAspect', t.aspect_ratio);
+      setOpt('#npSeconds', t.seconds);
+      pickedFilmPreset = t.film_preset || '';
+    };
+    const reloadTemplates = async () => {
+      try {
+        const r = await api('/api/templates');
+        templates = r.items || [];
+      } catch {
+        templates = [];
+      }
+      if (!tplSel) return;
+      tplSel.innerHTML =
+        '<option value="">（不使用模板）</option>' +
+        templates
+          .map(
+            (t) =>
+              `<option value="${esc(t.id)}">${esc(t.name)}${t.film_preset ? ` · ${esc(t.film_preset)}` : ''}</option>`,
+          )
+          .join('');
+      tplSel.value = '';
+      if (tplDel) tplDel.disabled = true;
+    };
+    if (tplSel)
+      tplSel.onchange = () => {
+        const t = templates.find((x) => x.id === tplSel.value);
+        applyTemplate(t);
+        if (tplDel) tplDel.disabled = !t;
+      };
+    if (tplDel)
+      tplDel.onclick = async () => {
+        const t = templates.find((x) => x.id === tplSel.value);
+        if (!t) return;
+        if (!confirm(`删除创作模板「${t.name}」？`)) return;
+        try {
+          await api(`/api/templates/${t.id}`, { method: 'DELETE' });
+          toast('模板已删除', 'ok');
+          await reloadTemplates();
+        } catch (e) {
+          toast('删除失败：' + e.message, 'err');
+        }
+      };
+    reloadTemplates();
     let cancelled = false; // v2.2.2：请求在途时关闭弹窗 = 取消本次创建
     const close = () => {
       cancelled = true;
@@ -378,7 +442,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
         e.target === overlay ||
         e.target.closest('[data-close]') ||
         e.target.classList.contains('modal-close') ||
-        e.target.closest('.btn.ghost')
+        e.target.closest('#npCancel')
       )
         close();
     });
@@ -429,6 +493,10 @@ import { bindRenderPanel } from './ws-render-panel.js';
           return;
         }
         await renderProject(p.id);
+        // P2-7：套用模板携带的成片预设配方（若所选模板含配方且渲染面板已渲染出对应卡片）
+        if (pickedFilmPreset) {
+          document.querySelector(`#wsFilmPresets .film-preset[data-preset="${pickedFilmPreset}"]`)?.click();
+        }
         toast('项目已创建，正在生成文案…', 'ok');
         // 一键到分镜：文案成功且勾选时自动接续生成分镜（失败即停）
         genScript(p.id).then(async (okScript) => {
@@ -730,6 +798,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
             </select>
             <span class="meta-tag" title="已绑定镜头配音的镜头数（在第⑤步配音墙中绑定）">🎙️ 旁白 ${narratedShots}/${shots.length} 镜</span>
             <span class="spacer" style="flex:1"></span>
+            <button class="btn ghost" id="wsSaveTemplate" title="把本项目的创意/风格/画幅/时长与当前成片预设存成可复用模板（新建项目时套用）">💾 存为创作模板</button>
             <button class="btn ghost" id="wsRenderCompare" title="并排播放对比同项目的多版成片（需 ≥2 版已完成）">⚖️ 多版本对比</button>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>

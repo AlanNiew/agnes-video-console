@@ -139,6 +139,35 @@ async function openRenderCompare(projectId) {
   };
 }
 
+/** P2-7：把当前项目参数（创意/风格/画幅/时长 + 当前成片预设）存成可复用创作模板 */
+async function saveProjectTemplate(projectId) {
+  let p;
+  try {
+    p = (await api(`/api/projects/${projectId}`)).project;
+  } catch (e) {
+    toast('读取项目失败：' + e.message, 'err');
+    return;
+  }
+  const name = prompt('模板名称（创意 + 风格 + 画幅/时长 + 成片预设）', p.name || '');
+  if (!name || !name.trim()) return;
+  try {
+    await api('/api/templates', {
+      method: 'POST',
+      body: {
+        name: name.trim(),
+        idea: p.idea || '',
+        style: p.style || '',
+        aspect_ratio: p.aspect_ratio,
+        seconds: p.seconds,
+        film_preset: st.wsFilmPresetId || '',
+      },
+    });
+    toast('已存为创作模板，新建项目时可一键套用', 'ok');
+  } catch (e) {
+    toast('保存模板失败：' + e.message, 'err');
+  }
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
   const rbtn = $('#wsRenderBtn');
@@ -158,6 +187,9 @@ function bindRenderPanel(projectId, renderJobs = []) {
   // P2-6：多版本对比（点开时拉取已完成成片，≥2 版才可对比）
   const cmpBtn = $('#wsRenderCompare');
   if (cmpBtn) cmpBtn.onclick = () => openRenderCompare(projectId);
+  // P2-7：存为创作模板（成功案例参数模板化）
+  const saveTplBtn = $('#wsSaveTemplate');
+  if (saveTplBtn) saveTplBtn.onclick = () => saveProjectTemplate(projectId);
   // P2：风格预设交互 —— 点击卡片套用整套配方；手动改高级配置即切换为「自定义配方」
   const filmRecipeEl = $('#wsFilmRecipe');
   const renderRecipe = () => {

@@ -1680,6 +1680,31 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if ((statsAfter.data.byStatus.completed || 0) !== 0) err('清空已完成任务后仍有 completed 残留');
   ok(`批量清空正常（失败 ${bulkF.data.removed} 条 / 已完成 ${bulkC.data.removed} 条）`);
 
+  // 10.6 P2-7：创作模板 CRUD
+  const tplList0 = await api('GET', '/api/templates');
+  if (tplList0.status !== 200 || !Array.isArray(tplList0.data.items)) err('模板列表接口异常');
+  const tplNew = await api('POST', '/api/templates', {
+    name: '测试模板',
+    idea: '夏日麦田少年走向远方',
+    style: '胶片质感',
+    aspect_ratio: '9:16',
+    seconds: '8',
+    film_preset: 'healing',
+  });
+  if (tplNew.status !== 201 || !tplNew.data.id) err(`创建模板失败: ${JSON.stringify(tplNew.data)}`);
+  if (tplNew.data.aspect_ratio !== '9:16' || tplNew.data.seconds !== '8') err('模板字段未按输入保存');
+  const tplBad = await api('POST', '/api/templates', { name: '   ' });
+  if (tplBad.status !== 400) err('空名称模板未被 400 拒绝');
+  const tplList1 = await api('GET', '/api/templates');
+  if (!tplList1.data.items.some((t) => t.id === tplNew.data.id)) err('新建模板未出现在列表');
+  const tplDel = await api('DELETE', `/api/templates/${tplNew.data.id}`);
+  if (tplDel.status !== 200 || !tplDel.data.ok) err('删除模板失败');
+  const tplDel404 = await api('DELETE', `/api/templates/${tplNew.data.id}`);
+  if (tplDel404.status !== 404) err('重复删除模板未被 404 拒绝');
+  const tplList2 = await api('GET', '/api/templates');
+  if (tplList2.data.items.some((t) => t.id === tplNew.data.id)) err('删除后模板仍在列表');
+  ok('创作模板 CRUD 正常（新建/校验/列表/删除/404）');
+
   // 10. 静态首页
   const home = await fetch(APP_BASE + '/');
   const html = await home.text();

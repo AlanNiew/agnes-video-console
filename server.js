@@ -42,6 +42,7 @@ require('./routes/tts')(app); // /api/tts/*（voices/pool/market/generate/select
 require('./routes/music')(app); // /api/music/* + /api/projects/:id/bgm
 require('./routes/projects')(app); // /api/projects*（文案/图片/镜头/视频任务/重拍/定稿）
 require('./routes/render')(app); // /api/projects/:id/render + /api/render/jobs*
+require('./routes/templates')(app); // /api/templates*
 
 /* ---------------- 本地产物静态服务 ---------------- */
 try {
