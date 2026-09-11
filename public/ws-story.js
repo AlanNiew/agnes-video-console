@@ -170,6 +170,7 @@ async function reviewStoryboard(projectId) {
     return;
   }
   // 报告窗（动态 modal）
+  const nonHigh = r.issues.filter((it) => it.severity !== 'high').length;
   const overlay = document.createElement('div');
   overlay.className = 'modal-overlay';
   const itemHTML = (it, i) => `
@@ -187,10 +188,12 @@ async function reviewStoryboard(projectId) {
       <div class="modal wide">
         <div class="modal-head"><h2>🔍 分镜 AI 审查报告</h2><button class="modal-close">✕</button></div>
         <div class="modal-body">
-          <div class="hint" style="margin-bottom:10px">总体：${esc(r.overall || '')} —— 共 ${r.issues.length} 项建议。逐条采纳会直接写入对应镜头；全自动模式下中低优先级已自动采纳。</div>
+          <div class="hint" style="margin-bottom:10px">总体：${esc(r.overall || '')} —— 共 ${r.issues.length} 项建议。逐条采纳会直接写入对应镜头；全自动模式下中低优先级已自动采纳。${nonHigh ? `可用「采纳全部非 high」一次性应用 ${nonHigh} 项中/低优先级修订（高优先级硬伤建议逐条确认）。` : ''}</div>
           <div class="rv-list">${r.issues.map(itemHTML).join('')}</div>
         </div>
         <div class="modal-foot">
+          ${nonHigh ? `<button class="btn primary sm" id="rvAdoptNonHigh">✅ 采纳全部非 high（${nonHigh} 项）</button>` : ''}
+          <span class="spacer" style="flex:1"></span>
           <button class="btn ghost">关闭</button>
         </div>
       </div>`;
@@ -199,26 +202,46 @@ async function reviewStoryboard(projectId) {
   overlay.addEventListener('click', (e) => {
     if (e.target === overlay || e.target.closest('.modal-close') || e.target.closest('.btn.ghost')) close();
   });
-  const shots = st.projectsShotsCache;
+  const shotBySeq = new Map((st.projectsShotsCache || []).map((s) => [s.seq, s]));
+  const adopted = new Set();
+  // 共享采纳逻辑：按 seq 找镜头 → PATCH 该字段；返回 {ok} 或 {missing} 或抛错
+  const adoptOne = async (i) => {
+    if (adopted.has(i)) return { ok: true, skipped: true };
+    const it = r.issues[i];
+    const shot = shotBySeq.get(Number(it.shot_seq));
+    if (!shot) return { ok: false, missing: true };
+    await api(`/api/projects/${projectId}/shots/${shot.id}`, {
+      method: 'PATCH',
+      body: { [it.field]: it.revised },
+    });
+    adopted.add(i);
+    return { ok: true };
+  };
+  const markDone = (i) => {
+    const item = overlay.querySelector(`.rv-item[data-i="${i}"]`);
+    if (!item) return;
+    item.classList.add('rv-done');
+    const b = item.querySelector('[data-adopt]');
+    if (b) {
+      b.disabled = true;
+      b.textContent = '✓ 已采纳';
+    }
+  };
   overlay.querySelectorAll('[data-adopt]').forEach((b) => {
     b.onclick = async () => {
-      const it = r.issues[Number(b.dataset.adopt)];
-      // 按 seq 找镜头 id（renderProject 缓存当前 shots）
-      const shot = (shots || []).find((s) => s.seq === Number(it.shot_seq));
-      if (!shot) {
-        toast('找不到对应镜头（分镜可能已变化，请刷新后重试）', 'err');
-        return;
-      }
+      const i = Number(b.dataset.adopt);
       b.disabled = true;
       b.textContent = '写入中…';
       try {
-        await api(`/api/projects/${projectId}/shots/${shot.id}`, {
-          method: 'PATCH',
-          body: { [it.field]: it.revised },
-        });
-        b.textContent = '✓ 已采纳';
-        b.closest('.rv-item').classList.add('rv-done');
-        toast(`镜头 ${it.shot_seq} 的${FIELD_LABEL[it.field] || it.field}已更新`, 'ok');
+        const res = await adoptOne(i);
+        if (!res.ok) {
+          toast('找不到对应镜头（分镜可能已变化，请刷新后重试）', 'err');
+          b.disabled = false;
+          b.textContent = '采纳修订';
+          return;
+        }
+        markDone(i);
+        toast(`镜头 ${r.issues[i].shot_seq} 的${FIELD_LABEL[r.issues[i].field] || r.issues[i].field}已更新`, 'ok');
         bus.emit('ws-project-changed', projectId);
       } catch (e2) {
         toast('采纳失败：' + e2.message, 'err');
@@ -227,6 +250,38 @@ async function reviewStoryboard(projectId) {
       }
     };
   });
+  // P1-3：一键采纳全部非 high（medium/low），高优先级硬伤留人工逐条确认
+  const batchBtn = overlay.querySelector('#rvAdoptNonHigh');
+  if (batchBtn) {
+    batchBtn.onclick = async () => {
+      const targets = r.issues.map((_it, i) => i).filter((i) => r.issues[i].severity !== 'high');
+      batchBtn.disabled = true;
+      let okN = 0;
+      let missN = 0;
+      let failN = 0;
+      for (const i of targets) {
+        batchBtn.textContent = `采纳中…（${okN + missN + failN}/${targets.length}）`;
+        try {
+          const res = await adoptOne(i);
+          if (res.ok) {
+            okN += 1;
+            markDone(i);
+          } else {
+            missN += 1;
+          }
+        } catch {
+          failN += 1;
+        }
+      }
+      if (okN) bus.emit('ws-project-changed', projectId);
+      const parts = [`已采纳 ${okN} 项`];
+      if (missN) parts.push(`${missN} 项找不到镜头`);
+      if (failN) parts.push(`${failN} 项失败`);
+      toast(parts.join('，'), failN || missN ? 'warn' : 'ok');
+      batchBtn.textContent = okN === targets.length ? '✓ 已全部采纳' : `✅ 采纳全部非 high（${targets.length} 项）`;
+      batchBtn.disabled = okN === targets.length;
+    };
+  }
 }
 
 async function genStoryboard(projectId) {
