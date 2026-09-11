@@ -443,6 +443,12 @@ html[data-theme='light'] .pc-chip.info {
   font-size: 11.5px;
   color: var(--text-dim);
 }
+/* P1-2 等待视频阶段：剩余镜数与预计时间 */
+.at-wait {
+  font-size: 11.5px;
+  color: var(--amber);
+  margin: 2px 0 4px;
+}
 
 /* 审查报告 */
 .rv-list {

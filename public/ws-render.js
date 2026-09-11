@@ -221,6 +221,11 @@ function autoTimelineHTML(st) {
     return `<span class="at-step ${cls}">${cls === 'active' ? '<span class="spinner"></span>' : `<b>${icon}</b>`}${esc(label)}</span>`;
   }).join('<span class="at-arrow">→</span>');
   const last = (st.history || []).at(-1);
+  // P1-2：等待视频阶段展示剩余镜数与预估时间（后端 auto_state.wait_videos，见 workers/auto.js）
+  const waitInfo =
+    st.stage === 'wait_videos' && st.wait_videos && st.wait_videos.pending
+      ? `<div class="at-wait">⏳ 预计还需约 ${st.wait_videos.eta_min} 分钟 · 提交限流 1 次/分钟，剩 ${st.wait_videos.pending} 镜未完成</div>`
+      : '';
   const head = isError
     ? `🚨 全自动成片中断 · 需人工介入`
     : isDone
@@ -238,6 +243,7 @@ function autoTimelineHTML(st) {
           ${st.error ? `<span class="at-err" title="${esc(st.error)}">⚠ ${esc(String(st.error).slice(0, 60))}${st.error.length > 60 ? '…' : ''}</span>` : ''}
         </div>
         <div class="at-steps">${steps}</div>
+        ${waitInfo}
         ${last ? `<div class="at-last">最近：${esc(last.detail || AUTO_STAGE_LABEL[last.stage] || last.stage)} · ${relTimeAuto(last.ts)}</div>` : ''}
       </div>`;
 }

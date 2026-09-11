@@ -66,6 +66,15 @@ const STAGE_META = {
   stopped: { label: '已停止', step: 9 },
 };
 
+/** P1-2 等待视频剩余时间预估（分钟）：提交受上游「1 次/分钟」限流约束，逐镜按提交间隔累加；
+ *  未限流（intervalMs=0）时按每镜最少 0.5 分钟（生成耗时）兜底。纯函数，便于回归。 */
+function estimateWaitMinutes(pending, intervalMs) {
+  const n = Math.max(0, Math.floor(Number(pending) || 0));
+  if (n === 0) return 0;
+  const perShotMin = Math.max((Number(intervalMs) || 0) / 60000, 0.5);
+  return Math.max(1, Math.round(n * perShotMin));
+}
+
 class AutoPipeline {
   constructor() {
     this.timer = null;
@@ -443,7 +452,15 @@ class AutoPipeline {
       }
       pending += 1; // queued / in_progress
     }
-    if (pending > 0) return; // 等下一轮
+    if (pending > 0) {
+      // P1-2：把剩余镜数与预估时间落库，前端时间线展示「预计还需 X 分钟」
+      st.wait_videos = {
+        pending,
+        eta_min: estimateWaitMinutes(pending, settings.get('submit_interval_ms', 60000)),
+      };
+      this.saveState(projectId, st);
+      return; // 等下一轮
+    }
     if (failed.length) {
       // 自动重拍失败镜头（每镜头一次）
       for (const s of failed) {
@@ -614,3 +631,4 @@ class AutoPipeline {
 
 module.exports = new AutoPipeline();
 module.exports.STAGE_META = STAGE_META;
+module.exports.estimateWaitMinutes = estimateWaitMinutes;
