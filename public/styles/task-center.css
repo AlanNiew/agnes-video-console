@@ -511,6 +511,19 @@
   padding: 2px 7px;
   border-radius: 5px;
 }
+/* P1-1 质检超阈值告警着色（时长偏差/响度偏离，见 ws-render.js qualityFlags） */
+.meta-tag.warn {
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  background: transparent;
+  font-weight: 600;
+}
+.meta-tag.bad {
+  color: var(--red);
+  border: 1px solid var(--red);
+  background: transparent;
+  font-weight: 600;
+}
 .card-error {
   margin-top: 7px;
   font-size: 12px;

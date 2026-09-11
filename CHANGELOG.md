@@ -2,6 +2,12 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [Unreleased]
+
+### Added
+
+- **质检报告可视化告警（P1-1）**：渲染任务卡与作品详情里的质检徽章按阈值着色，超出即醒目标红黄——时长偏差 >8% 黄 / >15% 红，响度偏离 -16 LUFS >1dB 黄 / >2dB 红；`🔍 质检` 汇总徽章同步按最严重项着色。新增纯函数 `public/ws-render.js` `qualityFlags`，渲染任务卡与 `works-panel.js` 作品详情复用同一套阈值（`.meta-tag.warn`/`.meta-tag.bad`）。
+
 ## [2.3.0] - 2026-09-09
 
 ### Added

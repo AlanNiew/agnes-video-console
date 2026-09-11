@@ -663,19 +663,42 @@ function fmtSecs(s) {
   return `${Math.floor(n / 60)}:${String(n % 60).padStart(2, '0')}`;
 }
 
+const TARGET_LUFS = -16; // 全片响度标准化目标（见 workers/render.js loudnorm）
+
+/** P1-1 质检阈值分级：时长偏差 >8% 黄 / >15% 红；响度偏离 -16 LUFS >1dB 黄 / >2dB 红。
+ *  返回 '' | 'warn' | 'bad' 三态，供 meta-tag 着色（纯函数，便于复用与回归）。 */
+function qualityFlags(q) {
+  const out = { dev: '', loud: '', overall: '' };
+  if (!q) return out;
+  const dev = q.duration_deviation_pct;
+  if (dev !== null && dev !== undefined) {
+    const a = Math.abs(dev);
+    out.dev = a > 15 ? 'bad' : a > 8 ? 'warn' : '';
+  }
+  const l = q.loudness_lufs;
+  if (l !== null && l !== undefined) {
+    const d = Math.abs(l - TARGET_LUFS);
+    out.loud = d > 2 ? 'bad' : d > 1 ? 'warn' : '';
+  }
+  out.overall = out.dev === 'bad' || out.loud === 'bad' ? 'bad' : out.dev || out.loud ? 'warn' : '';
+  return out;
+}
+
 function renderJobItem(j) {
   const active = j.status === 'queued' || j.status === 'rendering';
-  // P3 质检摘要：时长/偏差/响度/镜头覆盖/旁白覆盖/字幕行数
+  // P3 质检摘要：时长/偏差/响度/镜头覆盖/旁白覆盖/字幕行数（超阈值着色告警）
   let qualityHtml = '';
   if (j.status === 'completed' && j.quality) {
     const q = j.quality;
+    const f = qualityFlags(q);
+    const cls = (lvl) => (lvl ? ` ${lvl}` : '');
     const dev = q.duration_deviation_pct;
     const devTxt = dev === null || dev === undefined ? '' : ` · 时长偏差 ${dev > 0 ? '+' : ''}${dev}%`;
     const loud = q.loudness_lufs !== null && q.loudness_lufs !== undefined ? `${q.loudness_lufs} LUFS` : '?';
-    qualityHtml = `<div class="quality-row" title="P3 质检报告">
-        <span class="meta-tag">🔍 质检</span>
-        <span class="meta-tag">${q.duration_s}s${devTxt}</span>
-        <span class="meta-tag">响度 ${loud}</span>
+    qualityHtml = `<div class="quality-row" title="P3 质检报告：时长偏差 >8% 黄 / >15% 红；响度偏离 -16 LUFS >1dB 黄 / >2dB 红">
+        <span class="meta-tag${cls(f.overall)}">🔍 质检</span>
+        <span class="meta-tag${cls(f.dev)}">${q.duration_s}s${devTxt}</span>
+        <span class="meta-tag${cls(f.loud)}">响度 ${loud}</span>
         <span class="meta-tag">${q.shots} 镜 · 旁白 ${q.narrated_shots}/${q.shots}</span>
         <span class="meta-tag">字幕 ${q.sub_lines} 行</span>
       </div>`;
@@ -781,6 +804,7 @@ export {
   bgmCurrentHtml,
   renderVoicePool,
   fmtSecs,
+  qualityFlags,
   renderJobItem,
   renderTtsWall,
 };

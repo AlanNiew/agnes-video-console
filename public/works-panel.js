@@ -3,6 +3,7 @@
  * 依赖：common.js。由 app 装配（切到作品视图时调用 loadWorks）。
  */
 import { $, esc, fmtTime, toast, api } from './common.js';
+import { qualityFlags } from './ws-render.js';
 
 let worksCache = []; // 最近一次 /api/works 结果（详情弹窗复用）
 
@@ -55,6 +56,8 @@ function openWork(w) {
   const latest = w.films[0];
   $('#wkTitle').textContent = `《${w.name}》`;
   const q = w.quality || {};
+  const qf = qualityFlags(q);
+  const qcls = (lvl) => (lvl ? ` ${lvl}` : '');
   const dlRowHtml = (label, file, icon) =>
     file
       ? `<a class="btn ghost sm" href="${esc(file.url)}" download title="${esc(file.name)}（${file.size_kb}KB）">${icon} ${label}</a>`
@@ -77,8 +80,8 @@ function openWork(w) {
       ${
         q.duration_s
           ? `<div class="wk-quality">
-        <span class="meta-tag">⏱ ${q.duration_s}s${q.duration_deviation_pct != null ? `（偏差 ${q.duration_deviation_pct > 0 ? '+' : ''}${q.duration_deviation_pct}%）` : ''}</span>
-        ${q.loudness_lufs != null ? `<span class="meta-tag">🔊 ${q.loudness_lufs} LUFS</span>` : ''}
+        <span class="meta-tag${qcls(qf.overall)}">⏱ ${q.duration_s}s${q.duration_deviation_pct != null ? `（偏差 ${q.duration_deviation_pct > 0 ? '+' : ''}${q.duration_deviation_pct}%）` : ''}</span>
+        ${q.loudness_lufs != null ? `<span class="meta-tag${qcls(qf.loud)}">🔊 ${q.loudness_lufs} LUFS</span>` : ''}
         ${q.shots ? `<span class="meta-tag">🎬 ${q.shots} 镜</span>` : ''}
         ${q.narrated_shots != null ? `<span class="meta-tag">🎙️ 旁白 ${q.narrated_shots}/${q.shots}</span>` : ''}
         ${q.sub_lines != null ? `<span class="meta-tag">💬 字幕 ${q.sub_lines} 行</span>` : ''}
