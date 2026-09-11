@@ -368,6 +368,12 @@ function ttsBtnForShot(s, ttsList) {
   return `<button class="btn ghost sm" data-shot-tts="${s.id}" title="${bound ? '重新生成本镜配音（覆盖旧绑定）' : '用本镜旁白文案合成配音并自动绑定'}">${bound ? '🎙️ 重配本镜' : '🎙️ 配本镜旁白'}</button>`;
 }
 
+/** P2-5：旁白编辑→重渲快捷链路按钮（有旁白才显示）——重配本镜配音 + 立即触发一次成片渲染 */
+function rerenderBtnForShot(s) {
+  if (!(s.narration || '').trim()) return '';
+  return `<button class="btn ghost sm" data-shot-rerender="${s.id}" title="用本镜最新旁白重新配音，并立即渲染一版成片（免去手动走配音+渲染两步）">🎙️🎬 配音并重渲</button>`;
+}
+
 /* v2.1 旁白计量：TTS 实测约 4.6 字/秒（标定见 docs/CREATION_PLAYBOOK.md），上限 = 秒数×4 字。
  * 生成端已有 clampNarration 硬限（v2.0.3），此处把同样的规则前移到编辑时即时反馈。 */
 const NARR_CPS = 4.6;
@@ -546,6 +552,7 @@ function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
               <select data-shot-seconds class="meta-tag" style="background:var(--bg)">${secondsOpts(s.seconds)}</select>
               <button class="btn ghost sm" data-shot-save>保存修改</button>
               ${ttsBtnForShot(s, ttsList)}
+              ${rerenderBtnForShot(s)}
             </div>
           </div>`,
             )

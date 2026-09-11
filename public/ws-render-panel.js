@@ -36,6 +36,33 @@ function startRenderPoll(projectId) {
   }, 2000);
 }
 
+/** 提交一次成片渲染（读面板当前配置）。返回 job；渲染按钮与「配音并重渲」快捷链路共用。 */
+async function submitRender(projectId) {
+  const job = await api(`/api/projects/${projectId}/render`, {
+    method: 'POST',
+    body: {
+      transition_ms: Number($('#wsRTransition')?.value || 600),
+      transition_type: $('#wsRTransitionType')?.value || 'fade',
+      narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
+      title_card: $('#wsRTitle')?.checked !== false,
+      end_card: $('#wsREnd')?.checked !== false,
+      bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
+      bgm_duck: $('#wsRDuck')?.checked !== false,
+      narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
+      burn_subtitles: $('#wsRSubs')?.checked !== false,
+      subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
+      subtitle_style: $('#wsRSubStyle')?.value || 'white-outline',
+      subtitle_position: $('#wsRSubPos')?.value || 'bottom',
+      aspect: $('#wsRAspect')?.value || '16:9',
+    },
+  });
+  // 局部更新：新任务行插入列表顶部并启动轮询（不整页重绘，保留面板已调配置）
+  const box = $('#wsRenderJobs');
+  if (box && job) box.insertAdjacentHTML('afterbegin', renderJobItem(job));
+  startRenderPoll(projectId);
+  return job;
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
   const rbtn = $('#wsRenderBtn');
@@ -43,30 +70,8 @@ function bindRenderPanel(projectId, renderJobs = []) {
     rbtn.onclick = async () => {
       rbtn.disabled = true;
       try {
-        // v1.3 成片渲染（v2.0：新增转场类型 / 字幕样式 / 字幕位置）
-        const job = await api(`/api/projects/${projectId}/render`, {
-          method: 'POST',
-          body: {
-            transition_ms: Number($('#wsRTransition')?.value || 600),
-            transition_type: $('#wsRTransitionType')?.value || 'fade',
-            narration_offset_ms: Number($('#wsRNarrOffset')?.value || 500),
-            title_card: $('#wsRTitle')?.checked !== false,
-            end_card: $('#wsREnd')?.checked !== false,
-            bgm_volume: Number($('#wsRBgmVol')?.value || 35) / 100,
-            bgm_duck: $('#wsRDuck')?.checked !== false,
-            narration_volume: Number($('#wsRNarrVol')?.value || 140) / 100,
-            burn_subtitles: $('#wsRSubs')?.checked !== false,
-            subtitle_fontsize: Number($('#wsRSubSize')?.value || 42),
-            subtitle_style: $('#wsRSubStyle')?.value || 'white-outline',
-            subtitle_position: $('#wsRSubPos')?.value || 'bottom',
-            aspect: $('#wsRAspect')?.value || '16:9',
-          },
-        });
+        await submitRender(projectId);
         toast('渲染任务已创建，后台合成中（可离开本页）', 'ok');
-        // 局部更新：新任务行插入列表顶部并启动轮询（不整页重绘，保留面板已调配置）
-        const box = $('#wsRenderJobs');
-        if (box && job) box.insertAdjacentHTML('afterbegin', renderJobItem(job));
-        startRenderPoll(projectId);
       } catch (e) {
         toast('渲染失败：' + e.message, 'err');
       } finally {
@@ -138,4 +143,4 @@ function bindRenderPanel(projectId, renderJobs = []) {
   if (renderJobs.some((j) => j.status === 'queued' || j.status === 'rendering')) startRenderPoll(projectId);
 }
 
-export { bindRenderPanel };
+export { bindRenderPanel, submitRender };

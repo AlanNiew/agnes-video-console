@@ -10,6 +10,7 @@ import { st } from './ws-state.js';
 import { stageHints, STAGES_SCRIPT, STAGES_STORY } from './ws-util.js';
 import { genShotTts } from './ws-tts.js';
 import { narrMeterHTML } from './ws-render.js';
+import { submitRender } from './ws-render-panel.js';
 import { compare } from './compare.js';
 
 /** 旁白计量实时刷新：旁白输入 / 时长下拉联动（渲染后由 bindStoryboardEvents 统一绑定） */
@@ -79,6 +80,36 @@ function bindStoryboardEvents(projectId) {
         if (!done && ttsBtn.isConnected) {
           ttsBtn.disabled = false;
           ttsBtn.textContent = ttsBtn.dataset.label;
+        }
+      };
+    }
+    // P2-5：配音并重渲（重配本镜配音 → 立即触发一次成片渲染）
+    const rerenderBtn = card.querySelector('[data-shot-rerender]');
+    if (rerenderBtn) {
+      const rrLabel = rerenderBtn.textContent;
+      rerenderBtn.onclick = async () => {
+        if (!confirm('将用本镜最新旁白重新配音，并立即渲染一版成片（后台进行）。继续？')) return;
+        rerenderBtn.disabled = true;
+        rerenderBtn.textContent = '配音中…';
+        const okTts = await genShotTts(projectId, id, '本镜');
+        if (!okTts) {
+          if (rerenderBtn.isConnected) {
+            rerenderBtn.disabled = false;
+            rerenderBtn.textContent = rrLabel;
+          }
+          return;
+        }
+        rerenderBtn.textContent = '提交渲染…';
+        try {
+          await submitRender(projectId);
+          toast('已重配本镜配音并提交渲染（后台合成中，可在第⑦步查看）', 'ok');
+          bus.emit('ws-project-changed', projectId);
+        } catch (e) {
+          toast('重渲失败：' + e.message, 'err');
+          if (rerenderBtn.isConnected) {
+            rerenderBtn.disabled = false;
+            rerenderBtn.textContent = rrLabel;
+          }
         }
       };
     }
