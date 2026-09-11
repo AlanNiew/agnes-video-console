@@ -194,7 +194,7 @@ function collectSegments(projectId) {
       src: done.video_local_path || done.metadata_url,
       narrationPath: narr ? narr.local_path : null,
       narrationDuration: narr ? narr.duration : null,
-      narrationText: narr ? narr.text : null, // v1.6：字幕烧录用旁白原文
+      narrationText: shot.narration || (narr ? narr.text : null), // 字幕文本：优先镜头旁白脚本（支持外语配音+本地语言字幕），无则回退配音文本
       narrationOffsetMs: narr ? narr.offset_ms || null : null, // v2.3 逐镜偏移（角色对白）：null=用全局 offset
       nominalSeconds: Number(shot.seconds || p.seconds || 5) || 5,
     });
