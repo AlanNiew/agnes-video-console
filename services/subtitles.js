@@ -22,24 +22,30 @@ function assTime(t) {
 function assEscape(text) {
   return String(text || '')
     .replace(/[{}]/g, '')
-    .replace(/\r?\n/g, ' ')
+    .replace(/\r\n?/g, '\n')
     .trim();
 }
 
-/** 中文按字数预换行（libass 对无空格 CJK 长句不做自动换行，必须显式 \N）；标点不领头 */
+/** 中文按字数预换行（libass 对无空格 CJK 长句不做自动换行，必须显式 \N）；标点不领头。
+ * v2.3.0：支持多语言——文本内的 \n 视为硬换行（如「中文\n日文」双语字幕），每段各自换行。 */
 function wrapCJK(text, maxChars) {
   const t = assEscape(text);
   const NO_LEAD = '。，、；：？！）」』】》·—…';
-  const lines = [];
-  for (let i = 0; i < t.length; i += maxChars) lines.push(t.slice(i, i + maxChars));
-  // 行首标点回收到上一行行尾（上一行允许超 1–2 字）
-  for (let i = 1; i < lines.length; i++) {
-    while (lines[i] && NO_LEAD.includes(lines[i][0])) {
-      lines[i - 1] += lines[i][0];
-      lines[i] = lines[i].slice(1);
-    }
-  }
-  return lines.filter(Boolean).join('\\N');
+  const blocks = String(t)
+    .split('\n')
+    .map((block) => {
+      const lines = [];
+      for (let i = 0; i < block.length; i += maxChars) lines.push(block.slice(i, i + maxChars));
+      // 行首标点回收到上一行行尾（上一行允许超 1–2 字）
+      for (let i = 1; i < lines.length; i++) {
+        while (lines[i] && NO_LEAD.includes(lines[i][0])) {
+          lines[i - 1] += lines[i][0];
+          lines[i] = lines[i].slice(1);
+        }
+      }
+      return lines.filter(Boolean);
+    });
+  return blocks.flat().join('\\N');
 }
 
 /**
@@ -123,6 +129,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`
 }
 
 /** v2.2：SRT 字幕生成（纯函数，作品归档用——社交平台/剪辑软件通用格式）
+ * v2.3.0：保留文本内 \n 作为多行（双语字幕）
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒，与成片对齐） */
 function buildSrt(lines) {
   const fmt = (t) => {
@@ -135,7 +142,7 @@ function buildSrt(lines) {
   };
   return (lines || [])
     .filter((l) => l && l.text && l.end > l.start)
-    .map((l, i) => `${i + 1}\n${fmt(l.start)} --> ${fmt(l.end)}\n${String(l.text).replace(/\r?\n/g, ' ')}\n`)
+    .map((l, i) => `${i + 1}\n${fmt(l.start)} --> ${fmt(l.end)}\n${String(l.text).replace(/\r\n?/g, '\n')}\n`)
     .join('\n');
 }
 

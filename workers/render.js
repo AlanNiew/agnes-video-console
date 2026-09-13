@@ -189,12 +189,16 @@ function collectSegments(projectId) {
     const narr = tts
       .filter((x) => x.kind === 'shot' && x.shot_id === shot.id && x.local_path && !x.error_message)
       .sort((a, b) => b.id - a.id)[0];
+    // 字幕文本：优先镜头旁白脚本（支持外语配音+本地语言字幕）；配音文本与脚本不同则双语两行（脚本在上、配音在下）
+    const scriptText = shot.narration || (narr ? narr.text : null);
+    const dubText = narr ? narr.text : null;
+    const narrationText = dubText && scriptText && dubText !== scriptText ? `${scriptText}\n${dubText}` : scriptText;
     segments.push({
       shot,
       src: done.video_local_path || done.metadata_url,
       narrationPath: narr ? narr.local_path : null,
       narrationDuration: narr ? narr.duration : null,
-      narrationText: shot.narration || (narr ? narr.text : null), // 字幕文本：优先镜头旁白脚本（支持外语配音+本地语言字幕），无则回退配音文本
+      narrationText,
       narrationOffsetMs: narr ? narr.offset_ms || null : null, // v2.3 逐镜偏移（角色对白）：null=用全局 offset
       nominalSeconds: Number(shot.seconds || p.seconds || 5) || 5,
     });

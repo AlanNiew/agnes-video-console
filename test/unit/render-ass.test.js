@@ -152,7 +152,7 @@ describe('buildSrt（v2.2 作品归档 SRT 导出）', () => {
     expect(srt).toContain('01:01:01,005 --> 01:01:02,999');
   });
 
-  test('过滤无效行（end≤start / 空文本 / null），多行文本压成单行', () => {
+  test('过滤无效行（end≤start / 空文本 / null），多行文本保留为多行（v2.3.0 双语字幕）', () => {
     const srt = buildSrt([
       { start: 0, end: 1, text: '第一句' },
       { start: 2, end: 2, text: '零时长' },
@@ -161,7 +161,7 @@ describe('buildSrt（v2.2 作品归档 SRT 导出）', () => {
       { start: 5, end: 6, text: '多行\n台词' },
     ]);
     expect(srt).toContain('第一句');
-    expect(srt).toContain('多行 台词');
+    expect(srt).toContain('多行\n台词'); // 换行保留（双语字幕：脚本行 + 配音行）
     expect(srt).not.toContain('零时长');
     expect((srt.match(/^\d+$/gm) || []).length).toBe(2); // 只有序号 1、2
   });
