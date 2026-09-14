@@ -63,19 +63,22 @@ const paths = {
   },
   '/api/projects/{id}/select-text': { post: '选定文案版本 {text_id}' },
   '/api/projects/{id}/texts/{textId}': { patch: '编辑文案内容 {content}' },
-  '/api/projects/{id}/select-image': { post: '定稿角色/场景图 {image_id}' },
+  '/api/projects/{id}/select-image': {
+    post: '定稿角色/场景图 {image_id, selected?(默认 true；false = 取消定稿), append?(默认 false = 替换同 kind 旧定稿；true = 追加，多角色用)}',
+  },
   '/api/projects/{id}/storyboard/apply': { post: '选用历史分镜版本 {text_id}（重建镜头）' },
   '/api/projects/{id}/shots': {
-    get: '(经项目详情返回) 镜头列表：{id, seq, title, video_prompt, narration, seconds, mode, use_character_ref}',
-    post: '添加镜头 {title?, video_prompt, narration?, seconds?, mode?(reference|text), use_character_ref?(默认 true；false = 纯空镜，text 模式提交不引用角色图)}',
+    get: '(经项目详情返回) 镜头列表：{id, seq, title, video_prompt, narration, seconds, mode, use_character_ref, ref_image_ids}',
+    post: '添加镜头 {title?, video_prompt, narration?, seconds?, mode?(reference|text), use_character_ref?(默认 true；false = 纯空镜，text 模式提交不引用角色图), ref_image_ids?(本镜出场角色图 id 数组 ≤5；省略 = 引用全部定稿角色图)}',
   },
   '/api/projects/{id}/shots/{shotId}': {
-    patch: '编辑镜头 {title?, video_prompt?, narration?, seconds?, use_character_ref?}',
+    patch:
+      '编辑镜头 {title?, video_prompt?, narration?, seconds?, use_character_ref?, ref_image_ids?(≤5；null = 引用全部)}',
     delete: '删除镜头（任务保留）',
   },
   '/api/projects/{id}/shots/reorder': { post: '镜头排序 {ids[]}' },
   '/api/projects/{id}/shots/{shotId}/videos': {
-    post: '单镜头提交视频任务（入队语义）。镜头 use_character_ref=false 或 mode=text → 纯文生模式；否则引用角色定稿图并自动注入 <Picture 1> 前缀',
+    post: '单镜头提交视频任务（入队语义）。镜头 use_character_ref=false 或 mode=text → 纯文生模式；否则按 ref_image_ids（省略 = 全部定稿角色图，≤5 张）注入多张参考图并自动注入 <Picture 1>…<Picture N> 前缀',
   },
   '/api/projects/{id}/shots/{shotId}/retakes': {
     post: '镜头重拍：一次提交 count(1-3) 条候选任务（提交队列自动节流），完成后用 select-take 点选定稿',

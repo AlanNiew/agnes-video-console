@@ -29,6 +29,32 @@ function projectRowToApi(row) {
   };
 }
 
+/** 图片行 → API 形状（v2.5：images() / selectedImage() / selectedImages() 共用同一映射） */
+function imageRowToApi(row) {
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    project_id: Number(row.project_id),
+    kind: row.kind,
+    prompt: row.prompt,
+    remote_url: row.remote_url,
+    local_path: row.local_path,
+    local_url: row.local_path ? '/artifacts/' + path.basename(row.local_path) : null,
+    size: row.size,
+    ratio: row.ratio,
+    model: row.model,
+    selected: Boolean(row.selected),
+    created_at: Number(row.created_at),
+  };
+}
+
+/** v2.5 多角色：ref_image_ids 入参（数组）→ 存储（JSON 字符串 / null） */
+function serializeRefIds(v) {
+  if (v === undefined || v === null) return null;
+  const arr = (Array.isArray(v) ? v : []).map(Number).filter((n) => Number.isInteger(n) && n > 0);
+  return arr.length ? JSON.stringify(arr) : null;
+}
+
 function shotRowToApi(row) {
   if (!row) return null;
   return {
@@ -42,6 +68,7 @@ function shotRowToApi(row) {
     mode: row.mode || 'reference',
     use_character_ref:
       row.use_character_ref === null || row.use_character_ref === undefined ? 1 : Number(row.use_character_ref),
+    ref_image_ids: parseJson(row.ref_image_ids), // v2.5 多角色：本镜引用的角色图 id 数组（null = 引用全部定稿角色图）
     take_task_id: row.take_task_id === null || row.take_task_id === undefined ? null : Number(row.take_task_id), // v1.7 重拍定稿
     created_at: Number(row.created_at),
     updated_at: Number(row.updated_at),
@@ -156,20 +183,7 @@ const projects = {
   },
 
   images(projectId) {
-    return stmts.listProjectImages.all(Number(projectId)).map((r) => ({
-      id: Number(r.id),
-      project_id: Number(r.project_id),
-      kind: r.kind,
-      prompt: r.prompt,
-      remote_url: r.remote_url,
-      local_path: r.local_path,
-      local_url: r.local_path ? '/artifacts/' + path.basename(r.local_path) : null,
-      size: r.size,
-      ratio: r.ratio,
-      model: r.model,
-      selected: Boolean(r.selected),
-      created_at: Number(r.created_at),
-    }));
+    return stmts.listProjectImages.all(Number(projectId)).map(imageRowToApi);
   },
 
   addImage({ project_id, kind, prompt, remote_url, local_path, size, ratio, model }) {
@@ -188,29 +202,26 @@ const projects = {
     return Number(r.lastInsertRowid);
   },
 
-  selectImage(id, kind, projectId) {
+  /** 定稿图片：默认"替换"（同 kind 唯一，历史语义）；v2.5 多角色用 append=true 追加（character 可多张并存）；
+   *  selected=false 取消该图定稿（不删除记录） */
+  selectImage(id, kind, projectId, { selected = true, append = false } = {}) {
     tx(() => {
-      stmts.unselectProjectImages.run(Number(projectId), kind, Number(id));
+      if (!selected) {
+        stmts.deselectProjectImage.run(Number(id));
+        return;
+      }
+      if (!append) stmts.unselectProjectImages.run(Number(projectId), kind, Number(id));
       stmts.selectProjectImage.run(Number(id));
     });
   },
 
   selectedImage(projectId, kind) {
-    const row = stmts.getSelectedProjectImage.get(Number(projectId), kind);
-    if (!row) return null;
-    return {
-      id: Number(row.id),
-      project_id: Number(row.project_id),
-      kind: row.kind,
-      prompt: row.prompt,
-      remote_url: row.remote_url,
-      local_path: row.local_path,
-      size: row.size,
-      ratio: row.ratio,
-      model: row.model,
-      selected: true,
-      created_at: Number(row.created_at),
-    };
+    return imageRowToApi(stmts.getSelectedProjectImage.get(Number(projectId), kind));
+  },
+
+  /** v2.5 多角色：全部定稿图（character 可能多张；id 升序 = 定稿先后 = <Picture N> 编号顺序） */
+  selectedImages(projectId, kind) {
+    return stmts.listSelectedProjectImages.all(Number(projectId), kind).map(imageRowToApi);
   },
 
   removeImage(id) {
@@ -233,7 +244,7 @@ const projects = {
     return stmts.listShots.all(Number(projectId)).map(shotRowToApi);
   },
 
-  addShot({ project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref }) {
+  addShot({ project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref, ref_image_ids }) {
     const now = Date.now();
     const r = stmts.insertShot.run(
       Number(project_id),
@@ -244,6 +255,7 @@ const projects = {
       mode || 'reference',
       narration || null,
       use_character_ref === undefined || use_character_ref === null ? 1 : use_character_ref ? 1 : 0,
+      serializeRefIds(ref_image_ids),
       now,
       now,
     );
@@ -265,6 +277,7 @@ const projects = {
             .slice(0, 200) || null
         : cur.narration,
       patch.use_character_ref !== undefined ? (patch.use_character_ref ? 1 : 0) : cur.use_character_ref,
+      patch.ref_image_ids !== undefined ? serializeRefIds(patch.ref_image_ids) : cur.ref_image_ids,
       Date.now(),
       Number(id),
     );
@@ -292,6 +305,7 @@ const projects = {
             s.mode || 'reference',
             s.narration || null,
             s.use_character_ref === undefined || s.use_character_ref === null ? 1 : s.use_character_ref ? 1 : 0,
+            serializeRefIds(s.ref_image_ids),
             now,
             now,
           ).lastInsertRowid,

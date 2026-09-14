@@ -101,7 +101,10 @@ module.exports = function registerImageRoutes(app) {
             model: IMAGE_MODEL,
           });
           if (i === 0) {
-            projects.selectImage(imgId, kind, b.project_id);
+            // v2.5 多角色：仅在"尚无定稿图"时自动定稿首张；后续角色图需手动定稿（否则历史定稿图会在提交时累积注入）
+            if (!projects.selectedImage(b.project_id, kind)) {
+              projects.selectImage(imgId, kind, b.project_id);
+            }
             if (kind === 'character') projects.update(b.project_id, { status: 'character_done' });
           }
           image = projects.images(b.project_id).find((x) => x.id === imgId) || null;

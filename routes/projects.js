@@ -158,14 +158,17 @@ module.exports = function registerProjectRoutes(app) {
     res.json({ ok: true });
   });
 
-  // 选定图片定稿（同一 kind 只有一张 selected）
+  // 选定图片定稿（v2.5：kind='character' 允许多张并存 = 多角色；其他 kind 同 kind 唯一）
   app.post('/api/projects/:id/select-image', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) throw new ApiError(404, '项目不存在');
     const imgId = Number(req.body?.image_id);
     const target = projects.images(p.id).find((x) => x.id === imgId);
     if (!target) throw new ApiError(404, '图片记录不存在');
-    projects.selectImage(imgId, target.kind, p.id);
+    // selected 默认 true；传 false 可取消该图定稿（不删除记录）；append=true 追加（多角色）而非替换
+    const selected = req.body?.selected === undefined ? true : Boolean(req.body.selected);
+    const append = Boolean(req.body?.append);
+    projects.selectImage(imgId, target.kind, p.id, { selected, append });
     res.json({ ok: true });
   });
 
@@ -229,6 +232,7 @@ module.exports = function registerProjectRoutes(app) {
       mode,
       narration,
       use_character_ref: b.use_character_ref,
+      ref_image_ids: b.ref_image_ids, // v2.5 多角色：本镜出场角色图 id 数组（省略 = 引用全部定稿角色图）
     });
     res.status(201).json(projects.shots(p.id).find((s) => s.id === id));
   });
@@ -271,6 +275,19 @@ module.exports = function registerProjectRoutes(app) {
     }
     if (b.use_character_ref !== undefined) {
       patch.use_character_ref = b.use_character_ref ? 1 : 0;
+    }
+    // v2.5 多角色：本镜出场的角色图 id（null = 引用全部定稿角色图；数组上限 5 张）
+    if (b.ref_image_ids !== undefined) {
+      if (b.ref_image_ids === null) {
+        patch.ref_image_ids = null;
+      } else if (Array.isArray(b.ref_image_ids)) {
+        patch.ref_image_ids = b.ref_image_ids
+          .map(Number)
+          .filter((n) => Number.isInteger(n) && n > 0)
+          .slice(0, 5);
+      } else {
+        throw new ApiError(400, 'ref_image_ids 需为角色图 id 数组（或 null）');
+      }
     }
     projects.updateShot(shot.id, patch);
     res.json(projects.shots(p.id).find((s) => s.id === shot.id));

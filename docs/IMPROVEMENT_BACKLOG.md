@@ -8,18 +8,21 @@
 
 ## P0 — 解锁"系列化"（不补则剧本被功能反向限制）
 
-### ⬜ P0-1 多角色引用（一个项目只能锚一张角色图）
+### ✅ P0-1 多角色引用（一个项目只能锚一张角色图）—— 已落地 v2.5
 
-- **问题**：视频提交只注入一张角色定稿图，多角色同框/对手戏无法锚定。
-- **证据**：`services/pipeline.js` `submitVideoTask()` 取 `projects.selectedImage(p.id, 'character')`，
-  且 `selectImage` 语义为"同一 kind 只有一张 selected"（`core/openapi.js` 亦如此描述）。
-- **影响**：E02 的"风花＋修鞋匠"只能靠**构图规避**（鞋匠不给正脸/只出镜手部与侧影）+ 文字锚硬撑；
-  企划 S1 计划"商店街的人们逐步常驻"、后续"一镜一人一句"的对手戏——**这条路目前走不通**。
-- **建议**：
-  1. `images.kind` 扩展（`character` 多张 selected，或 `character2/character3`）；
-  2. `pipeline` 注入多图，prompt 以 `<Picture 1>` / `<Picture 2>` 指代（2.5-flash 支持多参考）；
-  3. 前端角色区改为**多角色管理**：角色名 + 定稿图 + 服色锚文本 + 是否默认引用；
-  4. 溯源字段 `image_id` → `image_ids`（或保留主图 + 附加图数组）。
+- **落地方案**：镜头级 `ref_image_ids`（≤5，省略=全部定稿角色图）+ 定稿改 `append`（追加）+ `pipeline` 多图注入。
+- **问题**（原）：视频提交只注入一张角色定稿图，多角色同框/对手戏无法锚定。
+- **证据**（原）：`services/pipeline.js` `submitVideoTask()` 取 `projects.selectedImage(p.id, 'character')`，
+  且 `selectImage` 语义为"同一 kind 只有一张 selected"。
+- **影响**：E02 的"风花＋修鞋匠"只能靠**构图规避**（鞋匠不给正脸/只出镜手部与侧影）+ 文字锚硬撑。
+- **实现**：
+  1. `select-image` 支持 `append:true`（追加定稿）/ `selected:false`（取消定稿），默认仍为替换（向后兼容）；
+  2. 镜头 `ref_image_ids`（本镜出场角色图 id，≤5）——`POST/PATCH /api/projects/:id/shots/:shotId`；
+  3. `pipeline` 按镜头选角色，注入多图（Flash 上限 5 张）；前缀自动并列编号，已含 `<Picture N>` 幂等不改写；
+  4. 图片任务"首张自动定稿"改为**仅当该 kind 尚无定稿时**（避免多角色下历史图累积）；
+  5. 数据层 `shots.ref_image_ids` 迁移 + `projects.selectedImages()` + `imageRowToApi` 统一映射。
+- **验证**：e2e 新增多角色用例（多张定稿/取消/精确选取/前缀）+ 单测 99；**实拍**：镜12 绑两张参考图
+  生成「風花＋修鞋匠」同框，两人形象与各自种子图一致 ✓。
 
 ### ⬜ P0-2 跨项目角色资产库（系列的核心资产没有一等公民）
 

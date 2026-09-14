@@ -53,12 +53,17 @@ const REVIEW_SYSTEM_PROMPT = `你是严谨的视频分镜审查导演。审查�
 
 /** P1-4：角色引用前缀（与 pipeline 提交时注入保持单一来源）——有角色镜头提示词的机械注入片段 */
 const CHAR_REF_PREFIX = '以 <Picture 1> 中的角色为参考，保持其外观一致。';
-const PICTURE_RE = /<Picture\s*1>/i;
+const PICTURE_RE = /<Picture\s*\d+/i; // v2.5：匹配任意编号（多角色时会有 <Picture 2>…）
 
-/** 幂等补前缀：已含 <Picture 1> 原样返回，否则前置标准引用句（确定性、无主观改写） */
-function ensureCharacterRefPrefix(prompt) {
+/** 幂等补前缀：已含 <Picture N> 原样返回，否则前置标准引用句（确定性、无主观改写）。
+ *  v2.5 多角色：count = 本镜注入的参考图张数（1 张文案与历史完全一致；多张并列 <Picture 1>、<Picture 2>…） */
+function ensureCharacterRefPrefix(prompt, count = 1) {
   const t = String(prompt || '');
-  return PICTURE_RE.test(t) ? t : `${CHAR_REF_PREFIX}${t}`;
+  if (PICTURE_RE.test(t)) return t;
+  const n = Math.max(1, Math.min(Number(count) || 1, 5));
+  if (n === 1) return `${CHAR_REF_PREFIX}${t}`;
+  const pics = Array.from({ length: n }, (_, i) => `<Picture ${i + 1}>`).join('、');
+  return `以 ${pics} 中的角色为参考，保持其外观一致。${t}`;
 }
 
 /** P1-4：判定某条审查建议是否为「机械性」high——仅限确定性缺陷，可安全自动修复。

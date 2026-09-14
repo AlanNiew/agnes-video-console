@@ -183,6 +183,7 @@ for (const [name, type] of [
   ['narration', 'TEXT'], // 镜头旁白文案
   ['use_character_ref', 'INTEGER DEFAULT 1'], // 是否引用角色定稿图（0 = 纯空镜，text 模式提交）
   ['take_task_id', 'INTEGER'], // v1.7 重拍定稿：选定的 take 任务 id（NULL = 自动用最新完成条）
+  ['ref_image_ids', 'TEXT'], // v2.5 多角色引用：本镜引用的角色图 id（JSON 数组；NULL = 引用全部定稿角色图，≤5 张）
 ]) {
   if (!shotCols.has(name)) db.exec(`ALTER TABLE shots ADD COLUMN ${name} ${type}`);
 }

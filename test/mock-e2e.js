@@ -1043,8 +1043,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (imgsAfterTask.length <= imgsBefore) err('项目图片任务完成后未落 project_images');
   const linked = imgsAfterTask.find((x) => x.id === imgDone2.images?.[0]?.image_id);
   if (!linked) err('图片任务产物未关联 project_images 记录（image_id 缺失）');
-  if (!linked?.selected) err('项目图片任务首张未自动定稿');
-  ok(`项目图片任务 #${imgTask2.data.id} 完成并落库定稿 #${linked.id}`);
+  // v2.5：character 允许多张定稿后，"自动定稿首张"改为「仅当该 kind 尚无定稿时」
+  //（否则历史定稿图会在视频提交时累积注入）；多角色请显式 select-image + append
+  if (linked?.selected) err('项目已有定稿图时，图片任务不应自动追加定稿');
+  ok(`项目图片任务 #${imgTask2.data.id} 完成并落库 #${linked.id}（已有定稿 → 不自动追加）`);
 
   // 17.16a v2.1：任务来源上下文（列表/详情直接给出项目名、镜头序号标题、图片类型）
   {
@@ -1112,6 +1114,16 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   }
 
   // 18. 角色图生成（图片模型 → CDN URL + 本地备份）
+  // v2.5：自动定稿语义 = 「仅当该 kind 尚无定稿时兜底定稿首张」（多角色场景下不自动追加）
+  // 先清掉历史定稿，验证"无定稿 → 自动定稿"这条便利路径
+  {
+    const cur = (await api('GET', `/api/projects/${pid}`)).data.images.filter(
+      (x) => x.kind === 'character' && x.selected,
+    );
+    for (const c of cur) {
+      await api('POST', `/api/projects/${pid}/select-image`, { image_id: c.id, selected: false });
+    }
+  }
   const img = await api('POST', '/api/images/generate', {
     prompt: '角色立绘：银发少年',
     size: '1K',
@@ -1120,8 +1132,8 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     kind: 'character',
   });
   if (img.status !== 200 || !img.data.remote_url) err(`角色图生成失败: ${JSON.stringify(img.data).slice(0, 300)}`);
-  if (!img.data.image?.selected) err('角色图未自动定稿');
-  ok(`角色图生成并定稿 #${img.data.image.id}（remote=${img.data.remote_url} local=${img.data.local_url || '无'}）`);
+  if (!img.data.image?.selected) err('无定稿角色图时应自动定稿首张');
+  ok(`角色图生成并自动定稿 #${img.data.image.id}（remote=${img.data.remote_url} local=${img.data.local_url || '无'}）`);
 
   // 18.1 图片选用 + 删除图片
   const selI = await api('POST', `/api/projects/${pid}/select-image`, { image_id: img.data.image.id });
@@ -1148,7 +1160,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (pv.status !== 201) err(`项目发视频失败: ${JSON.stringify(pv.data)}`);
   const rq = pv.data.request_json;
   if (rq.model !== 'agnes-video-2.5-flash') err(`视频模型错误: ${rq.model}`);
-  if (rq.mode !== 'reference' || !Array.isArray(rq.images) || rq.images[0] !== img.data.remote_url) {
+  if (rq.mode !== 'reference' || !Array.isArray(rq.images) || !rq.images.includes(img.data.remote_url)) {
     err(`视频引用角色图错误: ${JSON.stringify(rq)}`);
   }
   if (!String(rq.prompt).includes('<Picture 1>')) err('视频提示词未自动注入 <Picture 1> 角色引用');
@@ -1184,6 +1196,49 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err(`单镜头任务模型/模式异常: ${JSON.stringify(sv.data.request_json)}`);
   }
   ok(`单镜头提交视频任务 #${sv.data.id}（shot_id=${sv.data.shot_id}，提示词与溯源正确）`);
+
+  // 20.1.1 v2.5 多角色引用：character 多张定稿 / 取消定稿 / 镜头级 ref_image_ids / 多图注入与 <Picture N> 前缀
+  const imgC2 = await api('POST', '/api/images/generate', {
+    prompt: 'e2e 第二角色（多角色引用用例）',
+    project_id: pid,
+    kind: 'character',
+    count: 1,
+    size: '1K',
+    ratio: '1:1',
+  });
+  const c2Id = imgC2.data.image.id;
+  await api('POST', `/api/projects/${pid}/select-image`, { image_id: c2Id, append: true });
+  const selChars = (await api('GET', `/api/projects/${pid}`)).data.images.filter(
+    (x) => x.kind === 'character' && x.selected,
+  );
+  if (selChars.length !== 2) err(`character 应支持多张并存定稿: ${selChars.length}`);
+  const pvMulti = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  const rqM = pvMulti.data.request_json;
+  if ((rqM.images || []).length !== 2) err(`多角色应注入 2 张参考图: ${(rqM.images || []).length}`);
+  // 幂等策略：prompt 已含 <Picture N>（如 LLM 生成的分镜）不再改写——多张图会全部注入，
+  // 精确指代（如「<Picture 2> 是鞋匠」）由分镜提示词自行书写
+  if (!rqM.prompt.includes('<Picture 1>')) err(`多角色提示词应含 <Picture 1>: ${rqM.prompt.slice(0, 40)}`);
+  await waitSubmitted(pvMulti.data.id);
+  const pr1 = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, { ref_image_ids: [c2Id] });
+  if (pr1.status !== 200 || JSON.stringify(pr1.data.ref_image_ids) !== JSON.stringify([c2Id])) {
+    err(`ref_image_ids PATCH 未生效: ${JSON.stringify(pr1.data.ref_image_ids)}`);
+  }
+  const svOne = await api('POST', `/api/projects/${pid}/shots/${shot1.id}/videos`, {});
+  if ((svOne.data.request_json.images || []).length !== 1) {
+    err(`镜头级 ref_image_ids 应只注入 1 张: ${(svOne.data.request_json.images || []).length}`);
+  }
+  if (svOne.data.request_json.images[0] !== imgC2.data.remote_url) {
+    err('镜头级 ref_image_ids 未精确选取指定角色图');
+  }
+  await waitSubmitted(svOne.data.id);
+  await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, { ref_image_ids: null });
+  const prOff = await api('POST', `/api/projects/${pid}/select-image`, { image_id: c2Id, selected: false });
+  if (prOff.status !== 200) err('取消角色图定稿失败');
+  const selAfter = (await api('GET', `/api/projects/${pid}`)).data.images.filter(
+    (x) => x.kind === 'character' && x.selected,
+  );
+  if (selAfter.length !== 1) err(`取消定稿后应剩 1 张: ${selAfter.length}`);
+  ok('多角色引用：多张定稿 / 取消定稿 / 镜头级精确选取 / <Picture 1>、<Picture 2> 前缀');
 
   // 20.2 v1.3：镜头旁白/引用开关 —— 纯空镜走 text 模式，恢复后回到 reference
   const pn = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, {

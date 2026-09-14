@@ -190,7 +190,10 @@ class ImageWorker {
             model: IMAGE_MODEL,
           });
           if (i === 0) {
-            projects.selectImage(imageId, imageKind, t.project_id);
+            // v2.5 多角色：仅在"尚无定稿图"时自动定稿首张；后续角色图需手动定稿（否则历史定稿图会在提交时累积注入）
+            if (!projects.selectedImage(t.project_id, imageKind)) {
+              projects.selectImage(imageId, imageKind, t.project_id);
+            }
             if (imageKind === 'character') projects.update(t.project_id, { status: 'character_done' });
           }
         }

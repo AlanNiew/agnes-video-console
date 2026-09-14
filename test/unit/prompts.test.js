@@ -141,6 +141,21 @@ describe('ensureCharacterRefPrefix（P1-4 角色引用前缀幂等注入）', ()
     expect(ensureCharacterRefPrefix('')).toBe(CHAR_REF_PREFIX);
     expect(ensureCharacterRefPrefix(null)).toBe(CHAR_REF_PREFIX);
   });
+
+  test('v2.5 多角色：count>1 时前缀并列编号（≤5 张封顶）', () => {
+    expect(ensureCharacterRefPrefix('场景', 2)).toBe(
+      '以 <Picture 1>、<Picture 2> 中的角色为参考，保持其外观一致。场景',
+    );
+    expect(ensureCharacterRefPrefix('场景', 3)).toContain('<Picture 1>、<Picture 2>、<Picture 3>');
+    expect(ensureCharacterRefPrefix('场景', 9)).toContain('<Picture 5>');
+    expect(ensureCharacterRefPrefix('场景', 9)).not.toContain('<Picture 6>');
+    expect(ensureCharacterRefPrefix('场景', 1)).toBe(CHAR_REF_PREFIX + '场景'); // 单张文案与历史一致
+  });
+
+  test('v2.5 幂等：已含任意编号 <Picture N>（含 <Picture 2>）原样返回', () => {
+    const p = '以 <Picture 2> 中的老人为参考，保持其外观一致。后文';
+    expect(ensureCharacterRefPrefix(p, 2)).toBe(p);
+  });
 });
 
 describe('isMechanicalPromptFix（P1-4 机械性 high 判定）', () => {

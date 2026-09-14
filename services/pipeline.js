@@ -51,12 +51,20 @@ function createPipelineService(deps) {
       return task;
     }
 
-    const charImg = projects.selectedImage(p.id, 'character');
-    if (!charImg || !charImg.remote_url) {
-      throw new ApiError(400, '请先完成「角色设定」并定稿一张角色图（纯空镜镜头可在镜头中关闭「引用角色图」）');
+    // v2.5 多角色引用：项目全部定稿角色图（kind='character' 允许多张）；镜头可用 ref_image_ids 指定本镜出场角色
+    const allChars = projects.selectedImages(p.id, 'character');
+    let refs = allChars;
+    if (shot && Array.isArray(shot.ref_image_ids) && shot.ref_image_ids.length) {
+      const idSet = new Set(shot.ref_image_ids.map(Number));
+      const picked = allChars.filter((c) => idSet.has(c.id));
+      if (picked.length) refs = picked;
+    }
+    refs = refs.filter((c) => c.remote_url).slice(0, 5); // Flash 上限：images ≤ 5 张
+    if (!refs.length) {
+      throw new ApiError(400, '请先完成「角色设定」并定稿角色图（纯空镜镜头可在镜头中关闭「引用角色图」）');
     }
     // 提示词中必须引用角色图，显式保持外观一致（前缀注入单一来源见 services/prompts.js）
-    const finalPrompt = ensureCharacterRefPrefix(text);
+    const finalPrompt = ensureCharacterRefPrefix(text, refs.length);
     const { payload, meta } = buildPayload({
       model: 'agnes-video-2.5-flash',
       prompt: finalPrompt,
@@ -64,16 +72,17 @@ function createPipelineService(deps) {
       seconds: secondsFinal,
       size: '720P',
       aspect_ratio: ratioFinal,
-      images: [charImg.remote_url],
+      images: refs.map((c) => c.remote_url),
     });
     const task = await submitTask(payload, meta, {
       project_id: p.id,
       shot_id: shotId,
-      image_id: charImg.id,
+      image_id: refs[0].id, // 溯源主图（首张定稿角色图）
     });
     log(
       'info',
-      `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}（引用角色图 #${charImg.id}）`,
+      `项目 #${p.id} 发起视频任务 #${task.id}${shotId ? `（镜头 #${shotId}）` : ''}` +
+        `（引用角色图 ${refs.map((c) => '#' + c.id).join('/')}，共 ${refs.length} 张）`,
     );
     return task;
   }

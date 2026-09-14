@@ -125,10 +125,15 @@ const stmts = {
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   listProjectImages: db.prepare('SELECT * FROM project_images WHERE project_id = ? ORDER BY created_at DESC, id DESC'),
+  // v2.5 多角色引用的全部定稿图（character 允许多张 selected；按定稿先后排序，用于 <Picture N> 编号）
+  listSelectedProjectImages: db.prepare(
+    'SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id ASC',
+  ),
   unselectProjectImages: db.prepare(
     'UPDATE project_images SET selected = 0 WHERE project_id = ? AND kind = ? AND id != ?',
   ),
   selectProjectImage: db.prepare('UPDATE project_images SET selected = 1 WHERE id = ?'),
+  deselectProjectImage: db.prepare('UPDATE project_images SET selected = 0 WHERE id = ?'),
   deleteProjectImage: db.prepare('DELETE FROM project_images WHERE id = ?'),
   getSelectedProjectImage: db.prepare(
     'SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1',
@@ -158,13 +163,13 @@ const stmts = {
 
   /* M2：镜头 */
   insertShot: db.prepare(`
-    INSERT INTO shots (project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO shots (project_id, seq, title, video_prompt, seconds, mode, narration, use_character_ref, ref_image_ids, created_at, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `),
   getShot: db.prepare('SELECT * FROM shots WHERE id = ?'),
   listShots: db.prepare('SELECT * FROM shots WHERE project_id = ? ORDER BY seq ASC, id ASC'),
   updateShotFull: db.prepare(
-    'UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, narration = ?, use_character_ref = ?, updated_at = ? WHERE id = ?',
+    'UPDATE shots SET seq = ?, title = ?, video_prompt = ?, seconds = ?, mode = ?, narration = ?, use_character_ref = ?, ref_image_ids = ?, updated_at = ? WHERE id = ?',
   ),
   updateShotSeq: db.prepare('UPDATE shots SET seq = ?, updated_at = ? WHERE id = ? AND project_id = ?'),
   deleteShot: db.prepare('DELETE FROM shots WHERE id = ?'),
