@@ -194,7 +194,10 @@ function requestJson({ method = 'GET', path, headers = {}, body = null, timeoutM
         .then((raw) => {
           const tlsSock = tls.connect({ socket: raw, servername: BASE_HOST });
           tlsSock.once('secureConnect', () => {
-            const req = http.request({ host: BASE_HOST, path, method, headers: h, createConnection: () => tlsSock }, onResponse);
+            const req = http.request(
+              { host: BASE_HOST, path, method, headers: h, createConnection: () => tlsSock },
+              onResponse,
+            );
             req.on('error', () => resolve({ status: 0, json: null }));
             req.setTimeout(timeoutMs, () => req.destroy(new Error('请求超时')));
             if (payload) req.write(payload);
