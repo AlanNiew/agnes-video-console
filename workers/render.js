@@ -489,10 +489,14 @@ class Renderer {
           fl.push(bgmChain(bgmVolume));
           // v1.5 闪避调优：阈值贴旁白电平、中等比率、快攻慢放——说话时音乐让路、句间自然回升
           fl.push('[narmix]asplit=2[narMain][narSc]');
-          fl.push('[bgm][narSc]sidechaincompress=threshold=0.035:ratio=9:attack=40:release=450[bgmD]');
-          fl.push(`[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,${loudnessChain}[aout]`);
+          // v2.4.1 修复：sidechaincompress 输出长度随侧链结束而截断——侧链补静音到片长，
+          // 否则「最后一条旁白之后」的 BGM 段整段丢失（成片尾部静音，实测 137.7s 片音频仅 128.4s）
+          fl.push(`[narSc]apad=whole_dur=${total.toFixed(2)}[narScP]`);
+          fl.push('[bgm][narScP]sidechaincompress=threshold=0.035:ratio=9:attack=40:release=450[bgmD]');
+          // 末尾 apad 兜底：任何上游短于片长的情形（无闪避/单旁白等）也保证音轨铺满全片
+          fl.push(`[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,${loudnessChain},apad[aout]`);
         } else {
-          fl.push(`[narmix]${loudnessChain}[aout]`);
+          fl.push(`[narmix]${loudnessChain},apad[aout]`);
         }
         aout = '[aout]';
       } else if (bgmIdx >= 0) {
