@@ -145,6 +145,14 @@ module.exports = function registerRenderRoutes(app) {
           RENDER_PARAMS_DEFAULTS.bgm_start_ms,
           'BGM 起始偏移 bgm_start_ms',
         ),
+        // v2.5 镜头原声（AI 环境声）混入音量：0 = 剥离（默认），>0 低音量混入
+        ambient_volume: parseNumRange(
+          b.ambient_volume,
+          0,
+          1,
+          RENDER_PARAMS_DEFAULTS.ambient_volume,
+          '镜头原声音量 ambient_volume',
+        ),
         // v1.5 旁白增益
         narration_volume: parseNumRange(b.narration_volume, 0.5, 3, 1.4, '旁白音量 narration_volume'),
         // v1.6 字幕烧录

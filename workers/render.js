@@ -288,6 +288,8 @@ class Renderer {
     // v1.4 BGM：音量 0–1（默认 0.35）；有旁白时可选闪避（sidechaincompress）
     const bgmVolume = Math.min(Math.max(Number(params.bgm_volume) || 0.35, 0), 1);
     const bgmDuck = params.bgm_duck !== false;
+    // v2.5 镜头原声（AI 生成的环境声）混入音量：0 = 剥离（默认），>0 低音量混入
+    const ambVolume = Math.min(Math.max(Number(params.ambient_volume) || 0, 0), 1);
     // v1.5 旁白增益：TTS 原始电平偏保守，默认提升 1.4 倍让人声稳坐音乐之上
     const narrVolume = Math.min(Math.max(Number(params.narration_volume) || 1.4, 0.5), 3);
     // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72；v2.0 样式与位置
@@ -327,15 +329,27 @@ class Renderer {
         const r = await runFfmpeg([
           '-i',
           seg.src,
+          // v2.5：保留镜头原声（AI 环境声）供低音量混入；无音轨的素材不报错
+          '-map',
+          '0:v:0',
+          '-map',
+          '0:a:0?',
           '-vf',
           `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},setsar=1,fps=${OUT_FPS},format=yuv420p`,
-          '-an',
           '-c:v',
           'libx264',
           '-preset',
           'veryfast',
           '-crf',
           '18',
+          '-c:a',
+          'aac',
+          '-b:a',
+          '128k',
+          '-ar',
+          '44100',
+          '-ac',
+          '2',
           dest,
         ]);
         if (!r.ok) {
@@ -479,13 +493,31 @@ class Renderer {
         }
         shotStart += s.duration - fade;
       }
+      // v2.5 镜头原声（AI 环境声）时间轴：同样按"镜头起幅点"对齐，低音量混入
+      const ambLabels = [];
+      if (ambVolume > 0) {
+        let ambStart = cards.some((c) => c.kind === 'head') ? seqs[0].duration : 0;
+        let ai = 0;
+        for (const s of norm) {
+          const segIdx = seqs.indexOf(s); // 段在 seqs / inputs 中的索引
+          const label = `[amb${ai}]`;
+          fl.push(
+            `[${segIdx}:a]highpass=f=60,volume=${ambVolume},` +
+              `atrim=0:${s.duration.toFixed(3)},adelay=${Math.round(ambStart * 1000)}:all=1${label}`,
+          );
+          ambLabels.push(label);
+          ai += 1;
+          ambStart += s.duration - fade;
+        }
+      }
       // 终局响度标准化（EBU R128 单遍）：对齐流媒体响度目标，成片之间音量一致
       const loudnessChain = 'loudnorm=I=-16:TP=-1.5:LRA=11,alimiter=limit=0.95';
-      let aout;
       // v1.4 BGM 铺底链：循环源裁到片长 + 音量 + 首尾淡入淡出；有旁白可选闪避
       const bgmChain = (vol, label = '[bgm]') =>
         `[${bgmIdx}:a]atrim=0:${total.toFixed(2)},volume=${vol},` +
         `afade=t=in:st=0:d=2,afade=t=out:st=${Math.max(0, total - 3).toFixed(2)}:d=3${label}`;
+      // v2.5 终混重构：旁白 / BGM / 镜头原声各自成形后统一 amix（环境声可独立叠加）
+      const mixSrc = [];
       if (narrLabels.length) {
         fl.push(`${narrLabels.join('')}amix=inputs=${narrLabels.length}:duration=longest:normalize=0[narmix]`);
         if (bgmIdx >= 0) {
@@ -496,18 +528,35 @@ class Renderer {
           // 否则「最后一条旁白之后」的 BGM 段整段丢失（成片尾部静音，实测 137.7s 片音频仅 128.4s）
           fl.push(`[narSc]apad=whole_dur=${total.toFixed(2)}[narScP]`);
           fl.push('[bgm][narScP]sidechaincompress=threshold=0.035:ratio=9:attack=40:release=450[bgmD]');
-          // 末尾 apad 兜底：任何上游短于片长的情形（无闪避/单旁白等）也保证音轨铺满全片
-          fl.push(`[narMain][bgmD]amix=inputs=2:duration=longest:normalize=0,${loudnessChain},apad[aout]`);
+          mixSrc.push('[narMain]', '[bgmD]');
         } else {
-          fl.push(`[narmix]${loudnessChain},apad[aout]`);
+          mixSrc.push('[narmix]');
         }
-        aout = '[aout]';
       } else if (bgmIdx >= 0) {
         // 无旁白：BGM 适当抬升音量（保证成片有可听的音乐底）
-        fl.push(bgmChain(Math.max(bgmVolume, 0.55), '[aout]'));
+        fl.push(bgmChain(Math.max(bgmVolume, 0.55), '[bgmSolo]'));
+        mixSrc.push('[bgmSolo]');
+      }
+      if (ambLabels.length) {
+        if (ambLabels.length === 1) {
+          mixSrc.push(ambLabels[0]);
+        } else {
+          fl.push(`${ambLabels.join('')}amix=inputs=${ambLabels.length}:duration=longest:normalize=0[ambmix]`);
+          mixSrc.push('[ambmix]');
+        }
+      }
+      let aout;
+      if (mixSrc.length === 0) {
+        aout = `${narrIdxStart}:a`; // 静音源直接作为音轨（直接流映射不能带方括号标签）
+      } else if (mixSrc.length === 1) {
+        // 末尾 apad 兜底：任何上游短于片长的情形也保证音轨铺满全片
+        fl.push(`${mixSrc[0]}${loudnessChain},apad[aout]`);
         aout = '[aout]';
       } else {
-        aout = `${narrIdxStart}:a`; // 静音源直接作为音轨（直接流映射不能带方括号标签）
+        fl.push(
+          `${mixSrc.join('')}amix=inputs=${mixSrc.length}:duration=longest:normalize=0,${loudnessChain},apad[aout]`,
+        );
+        aout = '[aout]';
       }
 
       const outName = `render-${job.id}-${Date.now()}.mp4`;
