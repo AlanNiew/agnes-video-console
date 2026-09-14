@@ -419,6 +419,9 @@ class Renderer {
       let bgmIdx = -1;
       if (bgmFile) {
         bgmIdx = narrIdxStart + narrationFiles.length + (silentIdx >= 0 ? 1 : 0);
+        // v2.4.1：支持跳过音源开头（部分 BGM 文件开头有静音 padding 或爆音/咔哒，听感像"咯噔"）
+        const bgmStartSec = Math.max(0, (Number(params.bgm_start_ms) || 0) / 1000);
+        if (bgmStartSec > 0) inputs.push('-ss', bgmStartSec.toFixed(3));
         inputs.push('-stream_loop', '-1', '-i', bgmFile); // BGM 不足片长则循环
       }
 

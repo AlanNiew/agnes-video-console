@@ -137,6 +137,14 @@ module.exports = function registerRenderRoutes(app) {
         // v1.4 BGM
         bgm_volume: parseNumRange(b.bgm_volume, 0, 1, 0.35, 'BGM 音量 bgm_volume'),
         bgm_duck: b.bgm_duck === undefined ? true : Boolean(b.bgm_duck),
+        // v2.4.1 BGM 起始偏移（毫秒）：跳过音源开头的静音 padding / 爆音段
+        bgm_start_ms: parseIntRange(
+          b.bgm_start_ms,
+          0,
+          10000,
+          RENDER_PARAMS_DEFAULTS.bgm_start_ms,
+          'BGM 起始偏移 bgm_start_ms',
+        ),
         // v1.5 旁白增益
         narration_volume: parseNumRange(b.narration_volume, 0.5, 3, 1.4, '旁白音量 narration_volume'),
         // v1.6 字幕烧录

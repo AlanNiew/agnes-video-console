@@ -21,6 +21,7 @@
 - **e2e 海报生成告警澄清（mock 缺陷，非产品 bug）**：mock 的 `/out/` 前缀分支对图片 URL（`img-mock-*.png`）也返回视频 fixture（MP4），海报底图实际下到多帧视频，drawtext 合成把多帧写单个 PNG 触发 image2「Cannot write more than one file」warn（首帧仍落盘，故 e2e 误显「海报 ✓」）。为 `.png` 路径补充真实 PNG fixture（ffmpeg 单帧生成），海报链路 e2e 干净通过（warning 清零）。生产 `generateImage` 返回真实图片 URL，无此问题。
 - **声音广场（`listWebModels`）在代理环境不可用**：原实现用 Node 原生 `fetch`（不走 `FISH_PROXY` 隧道），配了代理的机器上必 `fetch failed`（与早前 TTS 代理问题同源）。改为走隧道（新增通用 `requestJson`：CONNECT + TLS + `createConnection`，注意不传 `agent:false`），实测 `/api/tts/market` 恢复正常。
 - **成片尾部静音（BGM 未铺满全片）**：`sidechaincompress`（旁白闪避）的**输出长度随侧链结束而截断**——最后一条旁白之后的 BGM 段整段丢失（实测：137.7s 成片音频流仅 128.4s ≈ 最后一句旁白结束点，尾部 9.3s 无 BGM，用户可听出"BGM 差几秒没到结尾"）。修复：闪避侧链 `apad=whole_dur=<片长>` 补静音至片长后再入 sidechaincompress，输出链尾再加 `apad` 兜底（覆盖无闪避/单旁白等其余短音频路径）。重渲验证：音频流 137.68s ≈ 视频流 137.70s。
+- **BGM 开头爆音（听感"咯噔"）**：部分音源文件开头有孤立强瞬态（实测 E02 用的《阴雨天》在 0.25/0.5/0.75s 处为 -0.2/-1.9/-13.9 dB，非音乐内容，成片开头可清晰听到），另有音源开头带静音 padding（E01《承诺》前 1s 为 -91dB）。新增渲染参数 `bgm_start_ms`（0–10000，默认 0）跳过音源开头；E01/E02 均以 1000ms 重渲，开头恢复平滑淡入、无突兀脉冲。
 
 ## [2.3.0] - 2026-09-09
 

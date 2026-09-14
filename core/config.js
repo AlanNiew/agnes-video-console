@@ -22,6 +22,7 @@ const RENDER_PARAMS_DEFAULTS = {
   subtitle_style: 'white-outline',
   subtitle_position: 'bottom',
   creator: '', // v2.4 片头/片尾署名（创作人/工作室名，空则不显示）
+  bgm_start_ms: 0, // v2.4.1 BGM 起始偏移（跳过音源文件开头的静音 padding 或爆音/咔哒）
 };
 
 /** ffprobe 探测媒体时长（秒，保留两位小数）；ffprobe 不存在/失败时返回 null 不阻塞 */

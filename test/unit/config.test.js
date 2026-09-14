@@ -26,6 +26,7 @@ describe('RENDER_PARAMS_DEFAULTS 单源', () => {
       subtitle_style: 'white-outline',
       subtitle_position: 'bottom',
       creator: '', // v2.4 片头/片尾署名（默认空，不显示）
+      bgm_start_ms: 0, // v2.4.1 BGM 起始偏移（默认 0，不跳过）
     });
   });
 });
