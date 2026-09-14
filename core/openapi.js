@@ -85,7 +85,7 @@ const paths = {
   },
   '/api/projects/{id}/videos': { post: '整项目提交视频任务（旧入口，单提示词）' },
   '/api/projects/{id}/render': {
-    post: '一键成片渲染：镜头视频（本地归档优先，重拍定稿 take 优先）+ 逐镜旁白 + 项目 BGM（可选）→ xfade 转场 + 旁白对齐混音 + BGM 铺底/闪避 + 字幕烧录（ASS）→ mp4。body：{transition_ms?(200-2000, 默认600), transition_type?(fade|dissolve|wipeleft|wiperight|slideup|slidedown|circleopen, 默认fade), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true), narration_volume?(0.5-3, 默认1.4), burn_subtitles?(默认true), subtitle_fontsize?(24-72, 默认42), subtitle_style?(white-outline|yellow-box|bottom-bar, 默认white-outline), subtitle_position?(bottom|center, 默认bottom), aspect?(16:9|9:16, 默认跟随项目画幅)}；完成后自动生成 3 张封面候选（covers 字段）；需本机 ffmpeg，≥2 个已完成镜头',
+    post: '一键成片渲染：镜头视频（本地归档优先，重拍定稿 take 优先）+ 逐镜旁白 + 项目 BGM（可选）→ xfade 转场 + 旁白对齐混音 + BGM 铺底/闪避 + 字幕烧录（ASS）→ mp4。body：{transition_ms?(200-2000, 默认600), transition_type?(fade|dissolve|wipeleft|wiperight|slideup|slidedown|circleopen, 默认fade), narration_offset_ms?(0-3000, 默认500), title_card?(默认true), end_card?(默认true), bgm_volume?(0-1, 默认0.35), bgm_duck?(默认true), narration_volume?(0.5-3, 默认1.4), burn_subtitles?(默认true), subtitle_fontsize?(24-72, 默认42), subtitle_style?(white-outline|yellow-box|bottom-bar, 默认white-outline), subtitle_position?(bottom|center, 默认bottom), aspect?(16:9|9:16, 默认跟随项目画幅), creator?(片头片尾署名/创作人, ≤40 字, 默认空), title?(片头主标题, ≤60 字, 默认取项目名首个空格前段), subtitle?(片头副标题, ≤60 字, 默认取项目名余段)}；片头卡用项目场景图作主题背景（无则暖褐渐变底），片尾卡场景图压暗完成后自动生成 3 张封面候选（covers 字段）；需本机 ffmpeg，≥2 个已完成镜头',
   },
   '/api/projects/{id}/render/jobs': { get: '项目渲染任务列表' },
   '/api/render/jobs/{id}': {

@@ -142,6 +142,14 @@ module.exports = function registerRenderRoutes(app) {
         // v1.6 字幕烧录
         burn_subtitles: b.burn_subtitles === undefined ? true : Boolean(b.burn_subtitles),
         subtitle_fontsize: parseIntRange(b.subtitle_fontsize, 24, 72, 42, '字幕字号 subtitle_fontsize'),
+        // v2.4 片头/片尾卡文字：署名（creator）+ 主/副标题（未传时由项目名拆分）
+        creator:
+          b.creator === undefined || b.creator === null
+            ? RENDER_PARAMS_DEFAULTS.creator
+            : String(b.creator).trim().slice(0, 40),
+        title: b.title === undefined || b.title === null ? null : String(b.title).trim().slice(0, 60) || null,
+        subtitle:
+          b.subtitle === undefined || b.subtitle === null ? null : String(b.subtitle).trim().slice(0, 60) || null,
         // v1.8 成片方向：显式参数 > 项目画幅 > 默认横屏
         aspect: ['16:9', '9:16'].includes(String(b.aspect))
           ? String(b.aspect)

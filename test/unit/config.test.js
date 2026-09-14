@@ -25,6 +25,7 @@ describe('RENDER_PARAMS_DEFAULTS 单源', () => {
       transition_type: 'fade',
       subtitle_style: 'white-outline',
       subtitle_position: 'bottom',
+      creator: '', // v2.4 片头/片尾署名（默认空，不显示）
     });
   });
 });

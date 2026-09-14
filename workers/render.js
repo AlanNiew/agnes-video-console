@@ -25,7 +25,7 @@ const { buildSubtitleAss, buildSrt } = require('../services/subtitles');
 
 const TICK_MS = 1500;
 const OUT_FPS = 30;
-const TITLE_DUR = 2.8;
+const TITLE_DUR = 3.8;
 const END_DUR = 3.5;
 // v1.8 支持的成片方向：16:9 横屏（B站/西瓜/视频号）与 9:16 竖屏（抖音/快手）
 const DIMS = { '16:9': { w: 1280, h: 720 }, '9:16': { w: 720, h: 1280 } };
@@ -43,6 +43,14 @@ function resolveDims(aspect, projectRatio) {
 /** 简易中文字符检测（用于字体能力降级） */
 function hasCJK(s) {
   return /[\u4e00-\u9fff\u3400-\u4dbf]/.test(String(s || ''));
+}
+
+/** v2.4 项目名 → 片头卡主/副标题：以首个空格拆分（如「幻灯屋 S1E01 灯を点す」→ 主「幻灯屋」/ 副「S1E01 灯を点す」） */
+function splitCardTitle(name) {
+  const s = String(name || '').trim();
+  const i = s.indexOf(' ');
+  if (i > 0) return { title: s.slice(0, i), subtitle: s.slice(i + 1).trim() };
+  return { title: s, subtitle: '' };
 }
 
 /** 运行时可用的字体（优先中文字体；找不到返回 null） */
@@ -349,21 +357,26 @@ class Renderer {
         renders.update(job.id, { progress: 2 + Math.round((38 * (i + 1)) / segments.length) });
       }
 
-      /* ---- 2) 片头/片尾卡（可选） ---- */
+      /* ---- 2) 片头/片尾卡（可选；v2.4 支持主题画面 + 主/副标题 + 署名） ---- */
       const font = stageFont(tmpDir);
+      const cardScene = sceneImage?.local_path || sceneImage?.remote_url || null;
+      const nameParts = splitCardTitle(project.name);
+      const cardTitle = params.title || nameParts.title;
+      const cardSub = params.subtitle !== undefined && params.subtitle !== null ? params.subtitle : nameParts.subtitle;
+      const creator = params.creator || '';
       const cards = [];
       if (wantTitle) {
-        const card = await this.makeTitleCard(tmpDir, font, project.name, dims);
+        const card = await this.makeTitleCard(
+          tmpDir,
+          font,
+          { title: cardTitle, subtitle: cardSub, creator },
+          cardScene,
+          dims,
+        );
         if (card) cards.push({ kind: 'head', ...card });
       }
       if (wantEnd) {
-        const card = await this.makeEndCard(
-          tmpDir,
-          font,
-          project.name,
-          sceneImage?.local_path || sceneImage?.remote_url || null,
-          dims,
-        );
+        const card = await this.makeEndCard(tmpDir, font, { title: cardTitle, creator }, cardScene, dims);
         if (card) cards.push({ kind: 'tail', ...card });
       }
 
@@ -652,40 +665,38 @@ class Renderer {
   }
 
   /**
-   * 片头卡：暖褐渐变底 + 居中片名（v2.3.0 改版：原星野随机白点观感像噪点/灰尘，
-   * 用户反馈后去除——纯色渐变观感更典雅；noise=alls=2 仅作 8bit 暗部渐变防色带 dither，
-   * 不产生可见颗粒）。字体缺失/无中文字体时降级为纯渐变底。
+   * 片头卡（v2.4 改版）：优先用项目场景图作背景（压暗 + 暗角，突出主题画面），
+   * 叠加「主标题 + 副标题 + 署名」三层文字；无场景图时退回暖褐渐变底。
+   * 文字均带描边保证可读性；字体缺失/不含中文能力时降级为纯背景。
    */
-  async makeTitleCard(tmpDir, font, title, dims = { w: 1280, h: 720 }) {
-    const bg = path.join(tmpDir, 'title-bg.png');
-    // 渐变：左上暗 → 右下略亮且带暖褐（cr 渐升），符合暖色修表铺/温情题材；深底保证片名 F2ECDC 对比度
-    const r1 = await runFfmpeg([
-      '-f',
-      'lavfi',
-      '-i',
-      `nullsrc=s=${dims.w}x${dims.h},geq=lum='8+40*(0.5*X/W+0.5*Y/H)':cb='126+2*X/W':cr='127+6*Y/H',noise=alls=2:allf=t`,
-      '-frames:v',
-      '1',
-      '-vf',
-      'gblur=sigma=0.35,vignette=PI/5,eq=saturation=0.85',
-      bg,
-    ]);
-    if (!r1.ok) return { file: null, duration: TITLE_DUR, failed: r1.err };
+  async makeTitleCard(tmpDir, font, texts, sceneSrc, dims = { w: 1280, h: 720 }) {
+    const { title = '', subtitle = '', creator = '' } = texts || {};
     const dest = path.join(tmpDir, 'card-title.mp4');
-    const vf = ['fade=t=in:st=0:d=0.9,fade=t=out:st=' + (TITLE_DUR - 0.6).toFixed(1) + ':d=0.6', 'format=yuv420p'];
-    if (font && (font.cjk || !hasCJK(title))) {
-      vf.unshift(
-        'drawtext=fontfile=' +
-          font.rel +
-          `:text='${escDrawtext(title)}':fontsize=${Math.round(dims.w * 0.1)}:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2`,
-      );
+    const vf = [];
+    if (sceneSrc) {
+      vf.push(`scale=${dims.w}:${dims.h}:force_original_aspect_ratio=increase,crop=${dims.w}:${dims.h},setsar=1`);
+      vf.push('eq=brightness=-0.2:saturation=0.92');
+      vf.push('vignette=PI/4.5');
     }
+    const canText = font && (font.cjk || !hasCJK(`${title}${subtitle}${creator}`));
+    const draw = (text, size, color, yExpr, border) =>
+      `drawtext=fontfile=${font.rel}:text='${escDrawtext(text)}':fontsize=${Math.round(dims.w * size)}` +
+      `:fontcolor=${color}:borderw=${border}:bordercolor=0x14100C:x=(w-text_w)/2:y=${yExpr}`;
+    if (canText && title) vf.push(draw(title, 0.092, '0xF5EFE2', '(h-text_h)*0.34', 4));
+    if (canText && subtitle) vf.push(draw(subtitle, 0.03, '0xE0D6C4', '(h-text_h)*0.52', 2));
+    if (canText && creator) vf.push(draw(creator, 0.021, '0xCFC4B0', '(h-text_h)*0.86', 2));
+    vf.push(`fade=t=in:st=0:d=0.9,fade=t=out:st=${(TITLE_DUR - 0.6).toFixed(1)}:d=0.6`, 'format=yuv420p');
+    const inputArgs = sceneSrc
+      ? ['-loop', '1', '-i', sceneSrc]
+      : [
+          '-f',
+          'lavfi',
+          '-i',
+          `nullsrc=s=${dims.w}x${dims.h},geq=lum='8+40*(0.5*X/W+0.5*Y/H)':cb='126+2*X/W':cr='127+6*Y/H',noise=alls=2:allf=t`,
+        ];
     const r2 = await runFfmpeg(
       [
-        '-loop',
-        '1',
-        '-i',
-        bg,
+        ...inputArgs,
         '-f',
         'lavfi',
         '-i',
@@ -710,24 +721,36 @@ class Renderer {
     return { file: dest, duration: TITLE_DUR };
   }
 
-  /** 片尾卡：场景图压暗 + 「— 完 —」与片名（无场景图/字体时降级） */
-  async makeEndCard(tmpDir, font, title, sceneSrc, dims = { w: 1280, h: 720 }) {
+  /** 片尾卡（v2.4）：场景图压暗 + 「— 完 —」+ 片名 + 署名（无场景图/字体时降级） */
+  async makeEndCard(tmpDir, font, texts, sceneSrc, dims = { w: 1280, h: 720 }) {
+    const { title = '', creator = '' } = texts || {};
     const dest = path.join(tmpDir, 'card-end.mp4');
     const vf = [
       `scale=${dims.w}:${dims.h}:force_original_aspect_ratio=increase,crop=${dims.w}:${dims.h},setsar=1`,
-      'eq=brightness=-0.12:saturation=0.9',
+      'eq=brightness=-0.16:saturation=0.88',
+      'vignette=PI/5',
     ];
-    if (font && (font.cjk || !hasCJK(title))) {
+    const canText = font && (font.cjk || !hasCJK(`${title}${creator}`));
+    if (canText) {
       vf.push(
         'drawtext=fontfile=' +
           font.rel +
-          `:text='— 完 —':fontsize=54:fontcolor=0xF2ECDC:x=(w-text_w)/2:y=(h-text_h)/2-30`,
+          `:text='— 完 —':fontsize=52:fontcolor=0xF5EFE2:borderw=3:bordercolor=0x14100C:x=(w-text_w)/2:y=(h-text_h)*0.38`,
       );
-      vf.push(
-        'drawtext=fontfile=' +
-          font.rel +
-          `:text='${escDrawtext(title)}':fontsize=26:fontcolor=0xC9CFDB:x=(w-text_w)/2:y=h-120`,
-      );
+      if (title) {
+        vf.push(
+          'drawtext=fontfile=' +
+            font.rel +
+            `:text='${escDrawtext(title)}':fontsize=26:fontcolor=0xD9CFBE:x=(w-text_w)/2:y=(h-text_h)*0.54`,
+        );
+      }
+      if (creator) {
+        vf.push(
+          'drawtext=fontfile=' +
+            font.rel +
+            `:text='${escDrawtext(creator)}':fontsize=22:fontcolor=0xCFC4B0:x=(w-text_w)/2:y=(h-text_h)*0.84`,
+        );
+      }
     }
     vf.push(`fade=t=in:st=0:d=0.8,fade=t=out:st=${(END_DUR - 0.6).toFixed(1)}:d=0.6`, 'format=yuv420p');
     const inputArgs = sceneSrc
