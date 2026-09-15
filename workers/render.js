@@ -22,6 +22,7 @@ const { log } = require('../core/logger');
 const { probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
 const { buildSubtitleAss, buildSrt } = require('../services/subtitles');
+const { buildPublishKit } = require('../lib/publish-kit');
 
 const TICK_MS = 1500;
 // 单次 ffmpeg 调用的硬超时兜底：正常最慢的大合流约 3-6 分钟，20 分钟足够；
@@ -279,6 +280,16 @@ function archiveWork({ job, project, segments, subLines, outPath }) {
       );
     } catch {
       /* 档案生成失败不影响成片归档 */
+    }
+    // v2.5：发布文案（标题/简介/标签/置顶评论/看点时间轴）——一键复制到 B 站发布页
+    try {
+      fs.writeFileSync(
+        path.join(dir, `发布文案-${job.id}.md`),
+        `\ufeff${buildPublishKit({ project, job, srt, segments })}`,
+        'utf8',
+      );
+    } catch {
+      /* 发布文案生成失败不影响成片归档 */
     }
     return dir;
   } catch (e) {

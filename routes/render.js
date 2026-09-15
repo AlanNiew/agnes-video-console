@@ -11,7 +11,8 @@ const { log } = require('../core/logger');
 const { RENDER_PARAMS_DEFAULTS, probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
 const { ApiError, ah } = require('../core/errors');
-const { WORKS_DIR, ARTIFACTS_DIR } = require('../lib/artifacts');
+const { WORKS_DIR, ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
+const { buildPublishKit } = require('../lib/publish-kit'); // v2.5 发布物料（B站一键复制文案）
 const { streamDuration, computeVideoMetrics } = require('../lib/video-metrics'); // v2.5 客观指标（与镜头级筛查共用）
 
 /** v2.5：ffprobe 指定流时长 / 客观指标 统一由 lib/video-metrics.js 提供（渲染质检与镜头级筛查共用） */
@@ -271,6 +272,36 @@ module.exports = function registerRenderRoutes(app) {
             : null,
         ].filter(Boolean),
       });
+    }),
+  );
+
+  // v2.5 发布物料：生成/刷新「发布文案-N.md」到作品目录（标题候选 / 简介 / 标签 / 置顶评论 / 看点时间轴）。
+  // 策展文案在 tools/publish/*.json，改完随时刷新，无需重渲染。
+  app.post(
+    '/api/projects/:id/publish-kit',
+    ah(async (req, res) => {
+      const p = projects.get(req.params.id);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const job =
+        renders
+          .listByProject(p.id)
+          .filter((j) => j.status === 'completed')
+          .sort((a, b) => b.id - a.id)[0] || null;
+      const { dir } = workDirFor(p);
+      let srt = '';
+      if (job) {
+        try {
+          srt = fs.readFileSync(path.join(dir, `字幕-${job.id}.srt`), 'utf8');
+        } catch {
+          /* 无字幕文件时省略看点时间轴 */
+        }
+      }
+      const markdown = buildPublishKit({ project: p, job, srt });
+      const file = path.join(dir, job ? `发布文案-${job.id}.md` : '发布文案.md');
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(file, `\ufeff${markdown}`, 'utf8');
+      log('info', `项目 #${p.id} 发布文案已生成：${file}`);
+      res.json({ ok: true, path: file, markdown });
     }),
   );
 

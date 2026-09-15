@@ -1440,6 +1440,17 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     ok(`制作 checklist（${ck.data.ready}/${ck.data.total} 项就绪 · ${ck.data.ready_pct}%）`);
   }
 
+  // 20.3d v2.5 发布物料（B站一键复制文案）
+  {
+    const pk = await api('POST', `/api/projects/${pid}/publish-kit`);
+    if (pk.status !== 200 || !pk.data.markdown) err('发布物料生成失败');
+    if (!/标题/.test(pk.data.markdown) || !/简介/.test(pk.data.markdown)) err('发布物料缺章节');
+    if ((await api('POST', '/api/projects/999999/publish-kit')).status !== 404) {
+      err('不存在项目的发布物料未被 404 拒绝');
+    }
+    ok(`发布物料生成（落盘：${pk.data.path ? '是' : '否'}）`);
+  }
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});

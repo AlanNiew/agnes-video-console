@@ -51,7 +51,7 @@ workers/      后台进程（均受单实例工作锁约束）：submitter（视
 routes/       11 个领域文件（含 templates 创作模板、characters 角色库），注册顺序必须与 server.js 装配顺序一致（保持现有顺序追加）
 ```
 
-- 69 条 API 路由（路径 × 方法）的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
+- 74 条 API 路由（路径 × 方法）的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
 - 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload）。
 - **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
 - 全自动成片编排在 `workers/auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
