@@ -1423,6 +1423,23 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     if ((await api('GET', '/api/tasks/999999/metrics')).status !== 404) err('不存在任务的指标未被 404 拒绝');
   }
 
+  // 20.3c v2.5 制作 checklist（开拍/交付自检）
+  {
+    const ck = await api('GET', `/api/projects/${pid}/checklist`);
+    if (ck.status !== 200 || !Array.isArray(ck.data.items) || !ck.data.items.length) {
+      err(`制作 checklist 返回异常: ${JSON.stringify(ck.data).slice(0, 160)}`);
+    }
+    const keys = ck.data.items.map((i) => i.key);
+    for (const need of ['idea', 'style', 'characters', 'shots', 'videos', 'tts', 'timing']) {
+      if (!keys.includes(need)) err(`checklist 缺项 ${need}`);
+    }
+    if (typeof ck.data.ready_pct !== 'number') err('checklist 缺 ready_pct');
+    if ((await api('GET', '/api/projects/999999/checklist')).status !== 404) {
+      err('不存在项目的 checklist 未被 404 拒绝');
+    }
+    ok(`制作 checklist（${ck.data.ready}/${ck.data.total} 项就绪 · ${ck.data.ready_pct}%）`);
+  }
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});

@@ -64,6 +64,9 @@ const paths = {
   '/api/projects/{id}/storyboard/review': {
     post: 'P3 L1 分镜 AI 自审：审查分镜与文案一致性/节奏/提示词质量 → {issues:[{shot_seq,severity,field,issue,revised}], overall}（revised 可直接采纳写入镜头）',
   },
+  '/api/projects/{id}/checklist': {
+    get: 'v2.5 制作 checklist（开拍/交付自检）：{items:[{key,label,ok,detail}], ready, total, ready_pct}——覆盖 创意/风格锚/角色定稿/分镜/旁白/镜头视频/逐镜配音/配音时长不超镜长/BGM',
+  },
   '/api/projects/{id}/select-text': { post: '选定文案版本 {text_id}' },
   '/api/projects/{id}/texts/{textId}': { patch: '编辑文案内容 {content}' },
   '/api/projects/{id}/select-image': {

@@ -152,8 +152,53 @@ function fontFamilyName(srcPath) {
   return 'Arial';
 }
 
+/** v2.5：制作档案自动草稿（参数 + 规格 + 镜头清单；「复盘与教训」留空待补）——沉淀为可复用资产 */
+function buildArchiveDoc({ job, project, segments }) {
+  const p = job.params || {};
+  const q = job.quality || {};
+  const row = (s) => {
+    const refs =
+      s.shot.use_character_ref === 0
+        ? '纯空镜'
+        : Array.isArray(s.shot.ref_image_ids) && s.shot.ref_image_ids.length
+          ? s.shot.ref_image_ids.map((x) => '#' + x).join('/')
+          : '全部定稿角色图';
+    const narr = String(s.narrationText || '')
+      .split('\n')[0]
+      .slice(0, 40);
+    return `| ${s.shot.seq} | ${s.shot.title || ''} | ${s.nominalSeconds}s | ${refs} | ${narr} |`;
+  };
+  return [
+    `# 《${project.name}》制作档案（自动草稿 · 渲染 #${job.id}）`,
+    '',
+    '> 由渲染归档自动生成；「复盘与教训」留空待补。素材清单/一致性台账见同目录与 `docs/stories/`。',
+    '',
+    '## 规格',
+    `- 镜数：${q.shots ?? segments.length} · 时长：${q.duration_s ?? '?'}s（偏差 ${q.duration_deviation_pct ?? '?'}%）· 响度：${q.loudness_lufs ?? '?'} LUFS`,
+    `- 旁白覆盖：${q.narrated_shots ?? '?'}/${q.shots ?? '?'} 镜 · 字幕：${q.sub_lines ?? '?'} 行`,
+    '',
+    '## 渲染参数',
+    '',
+    '```json',
+    JSON.stringify(p, null, 2),
+    '```',
+    '',
+    '## 镜头清单',
+    '',
+    '| # | 标题 | 秒 | 角色引用 | 旁白 |',
+    '| --- | --- | --- | --- | --- |',
+    ...segments.map(row),
+    '',
+    '## 复盘与教训',
+    '',
+    '（待补：本集遇到的问题、判型结论、下次可复用要点）',
+    '',
+  ].join('\n');
+}
+
 /** v2.2：作品归档——成片/字幕/台词写入 data/works/《项目名》-id/（与素材目录彻底分开）
  * 成片与字幕按渲染任务版本化（重渲追加），台词/海报为项目最新版覆盖。
+ * v2.5：追加「制作档案-N.md」自动草稿。
  * @returns {string|null} 作品目录绝对路径（失败返回 null，不影响成片状态） */
 function archiveWork({ job, project, segments, subLines, outPath }) {
   try {
@@ -172,6 +217,16 @@ function archiveWork({ job, project, segments, subLines, outPath }) {
       ...narrated.map((s) => `镜头${s.shot.seq}${s.shot.title ? `《${s.shot.title}》` : ''}：${s.narrationText}`),
     ].join('\n');
     fs.writeFileSync(path.join(dir, '旁白台词.txt'), `\ufeff${scriptText}\n`, 'utf8');
+    // v2.5：制作档案自动草稿（沉淀为可复用资产；人工/AI 只需补复盘段）
+    try {
+      fs.writeFileSync(
+        path.join(dir, `制作档案-${job.id}.md`),
+        `\ufeff${buildArchiveDoc({ job, project, segments })}`,
+        'utf8',
+      );
+    } catch {
+      /* 档案生成失败不影响成片归档 */
+    }
     return dir;
   } catch (e) {
     log('warn', `渲染任务 #${job.id} 作品归档失败（不影响成片）：${e.message}`);

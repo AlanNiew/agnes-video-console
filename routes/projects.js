@@ -135,6 +135,67 @@ module.exports = function registerProjectRoutes(app) {
     res.json({ ok: true });
   });
 
+  // v2.5 制作 checklist（开拍/交付自检）：逐项状态 + 就绪度百分比
+  app.get('/api/projects/:id/checklist', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) throw new ApiError(404, '项目不存在');
+    const shots = projects.shots(p.id);
+    const chars = projects.images(p.id).filter((x) => x.kind === 'character' && x.selected);
+    const tasks = projects.tasks(p.id);
+    const tts = projects.tts(p.id);
+    const items = [];
+    const add = (key, label, ok, detail = '') => items.push({ key, label, ok: Boolean(ok), detail });
+    const latestTts = (sid) =>
+      tts
+        .filter((x) => x.kind === 'shot' && x.shot_id === sid && x.local_path && !x.error_message)
+        .sort((a, b) => b.id - a.id)[0];
+    add('idea', '创意已填写', !!p.idea, p.idea ? '' : '一句话创意决定成片上限');
+    add('style', '风格锚已填写', !!p.style, p.style ? '' : '所有镜头需逐字复制同一风格锚（跨镜一致性）');
+    add(
+      'characters',
+      '角色定稿图就绪',
+      chars.length > 0,
+      chars.length ? `${chars.length} 个角色` : '第③步定稿角色图（纯空镜项目可忽略）',
+    );
+    add('shots', '分镜已就绪（≥2 镜）', shots.length >= 2, `${shots.length} 镜`);
+    const noNarr = shots.filter((s) => !s.narration);
+    add(
+      'narration',
+      '每镜有旁白',
+      shots.length > 0 && noNarr.length === 0,
+      noNarr.length ? `${noNarr.length} 镜缺旁白` : '',
+    );
+    const doneShots = shots.filter((s) => tasks.some((t) => t.shot_id === s.id && t.status === 'completed'));
+    add(
+      'videos',
+      '镜头视频完成',
+      shots.length > 0 && doneShots.length === shots.length,
+      `${doneShots.length}/${shots.length} 镜`,
+    );
+    const ttsShots = shots.filter((s) => latestTts(s.id));
+    add(
+      'tts',
+      '逐镜配音完成',
+      shots.length > 0 && ttsShots.length === shots.length,
+      `${ttsShots.length}/${shots.length} 镜`,
+    );
+    const over = shots.filter((s) => {
+      const t = latestTts(s.id);
+      if (!t || !t.duration) return false;
+      const off = (t.offset_ms != null ? t.offset_ms : 500) / 1000;
+      return t.duration + off > Number(s.seconds || p.seconds || 5) * 1.03;
+    });
+    add(
+      'timing',
+      '配音时长未超镜长',
+      over.length === 0,
+      over.length ? `${over.length} 镜可能被截断（${over.map((s) => '镜' + s.seq).join('、')}）` : '',
+    );
+    add('bgm', 'BGM 已选择', !!p.bgm?.song_id, p.bgm?.name ? `《${p.bgm.name}》` : '可选（第⑥步选曲）');
+    const ready = items.filter((i) => i.ok).length;
+    res.json({ ok: true, items, ready, total: items.length, ready_pct: Math.round((ready / items.length) * 100) });
+  });
+
   // 选定文案版本（同一 kind 只有一条 selected）
   app.post('/api/projects/:id/select-text', (req, res) => {
     const p = projects.get(req.params.id);
