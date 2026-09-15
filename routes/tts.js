@@ -11,6 +11,7 @@ const { ARTIFACTS_DIR } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { TTS_VOICES, TTS_MODELS, TTS_MAX_TEXT, MARKET_SORTS } = require('../core/constants');
 const { probeDuration } = require('../core/config');
+const { estimateJaMoras, hasKana } = require('../services/prompts');
 const { ApiError, ah, upstreamError } = require('../core/errors');
 const { getVoicePool, setVoicePool } = require('../services/voice-pool');
 
@@ -133,9 +134,18 @@ module.exports = function registerTtsRoutes(app) {
         shot = projects.shots(projectId).find((s) => s.id === shotId);
         if (!shot) throw new ApiError(404, '镜头不存在（或不属于该项目）');
         // v2.2.2：绑定镜头的配音必须 ≤ 秒数×4（渲染会被镜头时长截断，说一半不如提前拦截）
-        const cap = Math.max(8, Math.floor((Number(shot.seconds) || 5) * 4));
-        if (text.length > cap) {
-          throw new ApiError(400, `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多 ${cap} 字（含标点），请删减后再合成`);
+        // v2.5：日文文本改用"音拍 ×7"口径（TTS 实测约 7–8 拍/秒）
+        const sec = Number(shot.seconds) || 5;
+        const ja = hasKana(text);
+        const cap = Math.max(8, Math.floor(sec * (ja ? 7 : 4)));
+        const span = ja ? estimateJaMoras(text) : text.length;
+        if (span > cap) {
+          throw new ApiError(
+            400,
+            ja
+              ? `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多约 ${cap} 音拍（日文），当前约 ${span} 拍，请删减后再合成`
+              : `旁白过长：该镜头 ${shot.seconds || '5'} 秒最多 ${cap} 字（含标点），请删减后再合成`,
+          );
         }
       }
       const effKind = b.kind === undefined && shotId !== null ? 'shot' : kind;
@@ -265,5 +275,22 @@ module.exports = function registerTtsRoutes(app) {
   app.delete('/api/tts/:id', (req, res) => {
     if (!projects.removeTts(req.params.id)) throw new ApiError(404, '配音记录不存在');
     res.json({ ok: true });
+  });
+
+  // v2.5 逐镜配音偏移：{offset_ms(0-3000 或 null=用全局)} —— 对白镜贴开口时点（此前只能直改库）
+  app.patch('/api/tts/:id', (req, res) => {
+    const t = projects.getTts(req.params.id);
+    if (!t) throw new ApiError(404, '配音记录不存在');
+    const raw = req.body?.offset_ms;
+    let v = null;
+    if (raw !== undefined && raw !== null && raw !== '') {
+      const n = Number(raw);
+      if (!Number.isFinite(n) || n < 0 || n > 3000)
+        throw new ApiError(400, 'offset_ms 需在 0–3000 之间（或 null 用全局偏移）');
+      v = Math.round(n);
+    }
+    projects.setTtsOffset(t.id, v);
+    log('info', `配音 #${t.id} 逐镜偏移设为 ${v === null ? '全局默认' : v + 'ms'}`);
+    res.json({ ok: true, tts: projects.getTts(t.id) });
   });
 };

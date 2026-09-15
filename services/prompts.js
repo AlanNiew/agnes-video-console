@@ -110,6 +110,26 @@ function parseLLMJson(text) {
   return null;
 }
 
+/** v2.5 日文音拍数（モーラ）估算：用于日文配音文本的长度预检（TTS 实测约 7–8 拍/秒）。
+ *  规则：小假名（ぁぃぅぇぉゃゅょゎ 及片假名对应）不单独计拍（并入学前一拍）；
+ *  假名/长音符「ー」/拨音「ん」/促音「っ」各 1 拍；汉字与拉丁/数字按 1 计（读音未知时的保守下限）；
+ *  标点与空白（含 全角/半角 逗号句号、括号、破折号、省略号）不计拍。 */
+function estimateJaMoras(text) {
+  // 去标点与空白（长音符「ー/ｰ」计入拍数，故不在此列）
+  const s = String(text || '').replace(/[\s、。，．！？!?…‥「」『』（）()【】〈〉《》—―・,.:;；：'"]/g, '');
+  let n = 0;
+  for (const ch of s) {
+    if (/[ぁぃぅぇぉゃゅょゎァィゥェォャュョヮ]/.test(ch)) continue; // 拗音小幅不单独计拍
+    n += 1; // 假名 / 长音 / 汉字 / 其他一律各 1 拍（保守估）
+  }
+  return n;
+}
+
+/** 文本是否含日文假名（用于选择"字数×4"还是"音拍×7"的配音长度口径） */
+function hasKana(text) {
+  return /[\u3040-\u309f\u30a0-\u30ff]/.test(String(text || ''));
+}
+
 /** v2.0.3：旁白字数上限 = 镜头秒数 × 4（TTS 实测约 4.9 字/秒含标点停顿；×4 再留出
  * 旁白偏移 0.5s 与叠化余量）。超长时优先在句读处截断，避免渲染时被镜头时长截断导致旁白说一半。
  * 纯函数导出供单测。 */
@@ -200,4 +220,6 @@ module.exports = {
   CHAR_REF_PREFIX,
   ensureCharacterRefPrefix,
   isMechanicalPromptFix,
+  estimateJaMoras,
+  hasKana,
 };

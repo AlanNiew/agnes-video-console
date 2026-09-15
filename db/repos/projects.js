@@ -415,6 +415,12 @@ const projects = {
     );
   },
 
+  /** v2.5：设置逐镜配音偏移（毫秒；null = 用渲染全局 narration_offset_ms）——对白镜贴开口时点 */
+  setTtsOffset(id, offsetMs) {
+    const v = offsetMs === undefined || offsetMs === null || offsetMs === '' ? null : Math.round(Number(offsetMs));
+    return stmts.setTtsOffset.run(Number.isFinite(v) ? v : null, Number(id)).changes > 0;
+  },
+
   /** v1.7：镜头选定重拍定稿 take（taskId=null 恢复自动模式：用最新完成条） */
   setShotTake(id, taskId) {
     return (
@@ -461,6 +467,7 @@ function ttsRowToApi(row) {
     duration: row.duration === null || row.duration === undefined ? null : Number(row.duration),
     size: row.size === null || row.size === undefined ? null : Number(row.size),
     error_message: row.error_message,
+    offset_ms: row.offset_ms === null || row.offset_ms === undefined ? null : Number(row.offset_ms), // v2.5 逐镜偏移
     selected: Boolean(row.selected),
     created_at: Number(row.created_at),
   };

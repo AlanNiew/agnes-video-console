@@ -9,6 +9,8 @@ const {
   clampNarration,
   ensureCharacterRefPrefix,
   isMechanicalPromptFix,
+  estimateJaMoras,
+  hasKana,
   CHAR_REF_PREFIX,
   SCRIPT_SYSTEM_PROMPT,
   STORYBOARD_SYSTEM_PROMPT,
@@ -155,6 +157,27 @@ describe('ensureCharacterRefPrefix（P1-4 角色引用前缀幂等注入）', ()
   test('v2.5 幂等：已含任意编号 <Picture N>（含 <Picture 2>）原样返回', () => {
     const p = '以 <Picture 2> 中的老人为参考，保持其外观一致。后文';
     expect(ensureCharacterRefPrefix(p, 2)).toBe(p);
+  });
+});
+
+describe('estimateJaMoras / hasKana（v2.5 日文配音长度预检）', () => {
+  test('假名逐拍计数，标点/空白不计；汉字与长音各 1 拍', () => {
+    expect(estimateJaMoras('それでは、上映いたします。')).toBe(11);
+    expect(estimateJaMoras('潮見町の夕暮れは、どこより少し早い。')).toBe(16);
+  });
+
+  test('拗音小幅不单独计拍；长音符计 1 拍；空值 0', () => {
+    expect(estimateJaMoras('きょう')).toBe(2);
+    expect(estimateJaMoras('ラーメン')).toBe(4);
+    expect(estimateJaMoras('')).toBe(0);
+    expect(estimateJaMoras(null)).toBe(0);
+  });
+
+  test('hasKana：含假名判定（决定用音拍口径还是字数口径）', () => {
+    expect(hasKana('それでは')).toBe(true);
+    expect(hasKana('中文旁白')).toBe(false); // 无假名 → 用字数口径
+    expect(hasKana('中文 かな 混排')).toBe(true);
+    expect(hasKana('')).toBe(false);
   });
 });
 

@@ -1389,6 +1389,25 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   }
   ok('镜头旁白已注入（模拟 TTS 产物：高通+压缩+增益+闪避全链即将生效）');
 
+  // 20.3a v2.5 逐镜配音偏移 API（对白贴开口；此前只能直改库）
+  {
+    const ttsRows = ((await api('GET', `/api/projects/${pid}`)).data.tts || []).filter((t) => t.kind === 'shot');
+    if (ttsRows.length) {
+      const tid = ttsRows[0].id;
+      const po = await api('PATCH', `/api/tts/${tid}`, { offset_ms: 1200 });
+      if (po.status !== 200 || Number(po.data.tts?.offset_ms) !== 1200) {
+        err(`tts offset_ms PATCH 未生效: ${JSON.stringify(po.data.tts?.offset_ms)}`);
+      }
+      const pclr = await api('PATCH', `/api/tts/${tid}`, { offset_ms: null });
+      if (pclr.status !== 200 || pclr.data.tts?.offset_ms !== null) err('tts offset_ms 清空未生效');
+      if ((await api('PATCH', `/api/tts/${tid}`, { offset_ms: 9999 })).status !== 400) {
+        err('tts offset_ms 越界未被 400 拒绝');
+      }
+      if ((await api('PATCH', '/api/tts/999999', { offset_ms: 500 })).status !== 404) err('tts 不存在未被 404 拒绝');
+      ok('逐镜配音偏移 API（设 1200ms / null 清空 / 越界 400 / 不存在 404）');
+    }
+  }
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});

@@ -109,8 +109,28 @@ module.exports = function registerCharacterRoutes(app) {
       const picked = ids.map((id) => lib.find((c) => c.id === String(id))).filter(Boolean);
       if (!picked.length) throw new ApiError(404, '角色库中无匹配角色');
       const imported = [];
+      const skipped = [];
       for (const ch of picked) {
-        if (!ch.remote_url) continue;
+        if (!ch.remote_url) {
+          skipped.push({ name: ch.name, reason: '无图片' });
+          continue;
+        }
+        // v2.5：导入前探测图 URL 可达性（平台输出 URL 可能过期；不可达则跳过并回报，避免"导入后提交视频才发现拉不到图"）
+        let reachable = false;
+        try {
+          const probe = await fetch(ch.remote_url, {
+            method: 'GET',
+            headers: { Range: 'bytes=0-0' },
+            signal: AbortSignal.timeout(8000),
+          });
+          reachable = probe.ok || probe.status === 206;
+        } catch {
+          reachable = false;
+        }
+        if (!reachable) {
+          skipped.push({ name: ch.name, reason: '图片 URL 不可达（可能已过期，请在原项目重新收藏）' });
+          continue;
+        }
         const imgId = projects.addImage({
           project_id: p.id,
           kind: 'character',
@@ -124,10 +144,15 @@ module.exports = function registerCharacterRoutes(app) {
         projects.selectImage(imgId, 'character', p.id, { append: true });
         imported.push({ character_id: ch.id, name: ch.name, image_id: imgId });
       }
-      if (!imported.length) throw new ApiError(400, '所选角色均无可用图片');
+      if (!imported.length) {
+        throw new ApiError(400, `所选角色均不可用：${skipped.map((s) => `${s.name}（${s.reason}）`).join('；')}`);
+      }
       projects.update(p.id, { status: 'character_done' });
-      log('info', `项目 #${p.id} 从角色库导入 ${imported.length} 个角色`);
-      res.status(201).json({ ok: true, imported });
+      log(
+        'info',
+        `项目 #${p.id} 从角色库导入 ${imported.length} 个角色${skipped.length ? `（跳过 ${skipped.length} 个）` : ''}`,
+      );
+      res.status(201).json({ ok: true, imported, skipped });
     }),
   );
 };

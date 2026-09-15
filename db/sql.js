@@ -186,6 +186,8 @@ const stmts = {
   unselectProjectTts: db.prepare('UPDATE project_tts SET selected = 0 WHERE project_id = ? AND id != ?'),
   selectTts: db.prepare('UPDATE project_tts SET selected = 1 WHERE id = ?'),
   bindTts: db.prepare('UPDATE project_tts SET kind = ?, shot_id = ? WHERE id = ?'),
+  // v2.5 逐镜配音偏移（毫秒：对白镜贴开口时点；null = 用渲染全局偏移）
+  setTtsOffset: db.prepare('UPDATE project_tts SET offset_ms = ? WHERE id = ?'),
   setShotTake: db.prepare('UPDATE shots SET take_task_id = ?, updated_at = ? WHERE id = ?'),
   clearShotTakeByTask: db.prepare('UPDATE shots SET take_task_id = NULL, updated_at = ? WHERE take_task_id = ?'),
   deleteTts: db.prepare('DELETE FROM project_tts WHERE id = ?'),
