@@ -24,6 +24,17 @@ function computeBackoffMs(attempts) {
   return Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_CAP_MS);
 }
 
+/** 归档下载重试（3 次）：图片侧没有像视频那样的补扫兜底，单次失败就会让 local_path 永久为 null；
+ * 而渲染片头/片尾卡的背景图依赖它（缺失时被迫读远端 URL → 弱网下渲染卡死，v2.5 实测）。 */
+async function downloadWithRetry(url, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    const art = await downloadArtifact(url).catch(() => null);
+    if (art) return art;
+    if (i < attempts - 1) await new Promise((r) => setTimeout(r, 3000 * (i + 1)));
+  }
+  return null;
+}
+
 class ImageWorker {
   constructor() {
     this.timer = null;
@@ -176,7 +187,7 @@ class ImageWorker {
       const images = [];
       for (let i = 0; i < remoteUrls.length; i++) {
         const remoteUrl = remoteUrls[i];
-        const backup = await downloadArtifact(remoteUrl).catch(() => null);
+        const backup = await downloadWithRetry(remoteUrl);
         let imageId = null;
         if (t.project_id) {
           imageId = projects.addImage({

@@ -24,6 +24,9 @@ const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../
 const { buildSubtitleAss, buildSrt } = require('../services/subtitles');
 
 const TICK_MS = 1500;
+// 单次 ffmpeg 调用的硬超时兜底：正常最慢的大合流约 3-6 分钟，20 分钟足够；
+// 没有它时一旦输入不可达（远端 URL 弱网阻塞/磁盘写满），渲染会永久停在 rendering（v2.5 实测卡在 40%）
+const FFMPEG_TIMEOUT_MS = 20 * 60 * 1000;
 const OUT_FPS = 30;
 const TITLE_DUR = 3.8;
 const END_DUR = 3.5;
@@ -83,9 +86,8 @@ function hasFfmpeg() {
 
 // probeDuration 统一由 config.js 提供（消除与 server 侧的双实现漂移）
 
-/** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
-/** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)） */
-function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {}) {
+/** promisified ffmpeg 运行（可选 -progress 回调，onProgressPct(0-1)；timeoutMs 硬超时兜底） */
+function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined, timeoutMs = FFMPEG_TIMEOUT_MS } = {}) {
   return new Promise((resolve) => {
     // -y：输出已存在时直接覆盖；-nostdin：断绝一切 stdin 交互。
     // 缺失时若产物同名文件已存在（如 jobId 复用的封面文件），ffmpeg 会打印
@@ -96,6 +98,24 @@ function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {
     });
     let err = '';
     let lastTick = 0;
+    let settled = false;
+    const finish = (v) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(v);
+    };
+    const timer = setTimeout(() => {
+      try {
+        child.kill();
+      } catch {
+        /* 忽略：进程可能已退出 */
+      }
+      finish({
+        ok: false,
+        err: `ffmpeg 超时（>${Math.round(timeoutMs / 1000)}s）已强制终止——通常是输入素材网络不可达或磁盘写入阻塞`,
+      });
+    }, timeoutMs);
     child.stderr.on('data', (d) => {
       err += d.toString();
       if (err.length > 8000) err = err.slice(-8000);
@@ -112,9 +132,42 @@ function runFfmpeg(args, { onProgress = null, totalMs = 0, cwd = undefined } = {
         }
       });
     }
-    child.on('error', (e) => resolve({ ok: false, err: `${e.message}（ffmpeg 未安装或不在 PATH？）` }));
-    child.on('close', (code) => resolve({ ok: code === 0, err: err.trim() }));
+    child.on('error', (e) => finish({ ok: false, err: `${e.message}（ffmpeg 未安装或不在 PATH？）` }));
+    child.on('close', (code) => finish({ ok: code === 0, err: err.trim() }));
   });
+}
+
+/** 远端图片落地到工作目录（默认 180s 超时 + 1 次重试；cdn 实测 6MB 图在弱网下要 2 分钟）。
+ * 为何必须本地化：把 http URL 直接喂给 ffmpeg（尤其配 -loop 1）会灾难性放大——
+ * 卡片需要 3.8s×30fps≈114 帧，每帧都重新下载一次整图 → 渲染进度永久冻结（v2.5 实测卡在 40% 30 分钟）。 */
+async function materializeImage(src, tmpDir, baseName, timeoutMs = 180000) {
+  const ext = (path.extname(String(src).split('?')[0]).toLowerCase() || '.png').slice(0, 6);
+  const dest = path.join(tmpDir, baseName + ext);
+  let lastErr = null;
+  for (let i = 0; i < 2; i++) {
+    try {
+      const res = await fetch(src, { signal: AbortSignal.timeout(timeoutMs) });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      fs.writeFileSync(dest, Buffer.from(await res.arrayBuffer()));
+      return dest;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('下载失败');
+}
+
+/** 卡片背景素材解析：本地文件在则直接用，否则先下载远端；都失败返回 null（退化为程序生成背景） */
+async function resolveCardScene(sceneImage, tmpDir, jobId) {
+  const local = sceneImage?.local_path;
+  if (local && fs.existsSync(local)) return local;
+  if (!sceneImage?.remote_url) return null;
+  try {
+    return await materializeImage(sceneImage.remote_url, tmpDir, 'card-scene');
+  } catch (e) {
+    log('warn', `渲染任务 #${jobId} 片头/片尾卡背景图不可用（${e.message}），改用程序生成背景`);
+    return null;
+  }
 }
 
 /** drawtext 文本转义（滤镜参数内的 : ' \ % 需转义；文本用单引号包裹由调用方负责）。
@@ -428,7 +481,8 @@ class Renderer {
 
       /* ---- 2) 片头/片尾卡（可选；v2.4 支持主题画面 + 主/副标题 + 署名） ---- */
       const font = stageFont(tmpDir);
-      const cardScene = sceneImage?.local_path || sceneImage?.remote_url || null;
+      // 背景素材必须先落地成本地文件：远端 URL 直喂 ffmpeg（尤其 -loop 1）在弱网下会永久阻塞
+      const cardScene = await resolveCardScene(sceneImage, tmpDir, job.id);
       const nameParts = splitCardTitle(project.name);
       const cardTitle = params.title || nameParts.title;
       const cardSub = params.subtitle !== undefined && params.subtitle !== null ? params.subtitle : nameParts.subtitle;

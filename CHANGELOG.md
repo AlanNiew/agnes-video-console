@@ -2,7 +2,16 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
-## [Unreleased]
+## [2.5.0] - 2026-09-15
+
+### Fixed
+
+- **渲染不再依赖远端素材（弱网死锁修复）**：`workers/render.js` 的 ffmpeg 调用新增硬超时（20 分钟）；
+  片头/片尾卡背景图必须先落地到工作目录再交给 ffmpeg——此前 `local_path` 缺失时会把握**远端 URL 直接喂 ffmpeg**
+  （`-loop 1 -i https://…`），而卡片需要 3.8s×30fps≈114 帧、**每帧重新下载一次整图**，
+  弱网下渲染进度永久冻结（实测卡在 40% 达 30 分钟，ffmpeg 仅耗 2.9s CPU），且进度条无任何提示。
+- **图片归档下载重试**：`workers/image-worker.js` 归档单次失败即让 `local_path` 永久为 null
+  （图片侧没有视频那样的补扫兜底），改为 3 次重试 + 递增退避。
 
 ### Added
 

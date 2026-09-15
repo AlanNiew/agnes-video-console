@@ -113,6 +113,16 @@
 - 角色图跨项目复用 → `POST /api/projects/:id/characters/import`（不再直连 SQLite 复制）；
 - 逐镜 `offset_ms` → `PATCH /api/tts/{id}`（不再直改库）。
 
+### ✅ E-4 素材归档可靠性（弱网不再毁掉渲染）—— 已落地 v2.5
+
+- **事故**（E03 实拍踩到）：网络抖动 → 归档失败 → 16 个镜头 `video_local_path` 与主题图 `local_path` 全为 null，
+  渲染退化为**全远端读取**；片头卡 `-loop 1 -i https://…` 每帧重下整图 → 进度冻在 40% 达 30 分钟。
+- **修复**：① `workers/render.js` ffmpeg 硬超时 20 分钟（不再永久挂起）；
+  ② 卡片背景图先落地到工作目录再交给 ffmpeg（`resolveCardScene` + `materializeImage`，180s + 1 次重试）；
+  ③ `workers/image-worker.js` 归档下载 3 次重试（图片侧无补扫兜底，单次失败即永久缺失）。
+- **遗留**：① 图片仍无"补扫"（视频有 `poller.sweepArchives`，靠 `video_auto_download` 开关）；
+  ② 渲染进度卡住时 UI 无"疑似卡死"提示（有硬超时后至少 20 分钟内会明确失败）。
+
 ---
 
 ## 沉淀机制（让"复用"不靠人记）—— 已落地 v2.5
