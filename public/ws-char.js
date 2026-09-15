@@ -3,7 +3,7 @@
  * 生成中 busy（st.imgGenBusy）与完成后的整页重刷均经共享 st / bus 'ws-project-changed' 与装配层协作。
  * 依赖：common.js、state.js（bus）、ws-state.js（st）、ws-util.js（stageHints、STAGES_IMG）、compare.js。
  */
-import { $, toast, api, openModal } from './common.js';
+import { $, esc, toast, api, openModal } from './common.js';
 import { bus } from './state.js';
 import { st } from './ws-state.js';
 import { stageHints, STAGES_IMG } from './ws-util.js';
@@ -142,7 +142,7 @@ function bindWallEvents(projectId) {
 
 /** v2.5：从角色库导入角色到本项目（多选，≤5；追加定稿为多角色） */
 async function importFromLibrary(projectId) {
-  let items = [];
+  let items;
   try {
     items = (await api('/api/characters')).items || [];
   } catch (e) {
