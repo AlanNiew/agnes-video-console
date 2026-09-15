@@ -874,3 +874,33 @@ html[data-theme='light'] .work-dir-row {
   color: var(--text-dim);
   font-size: 13px;
 }
+
+/* v2.5 角色库导入弹窗 */
+.ch-lib {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}
+.ch-lib-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+}
+.ch-lib-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+.ch-lib-item img {
+  width: 48px;
+  height: 48px;
+  object-fit: cover;
+  border-radius: 6px;
+  flex: none;
+}
+.ch-lib-item span {
+  font-size: 13px;
+}

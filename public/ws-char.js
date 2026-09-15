@@ -3,7 +3,7 @@
  * 生成中 busy（st.imgGenBusy）与完成后的整页重刷均经共享 st / bus 'ws-project-changed' 与装配层协作。
  * 依赖：common.js、state.js（bus）、ws-state.js（st）、ws-util.js（stageHints、STAGES_IMG）、compare.js。
  */
-import { $, toast, api } from './common.js';
+import { $, toast, api, openModal } from './common.js';
 import { bus } from './state.js';
 import { st } from './ws-state.js';
 import { stageHints, STAGES_IMG } from './ws-util.js';
@@ -119,7 +119,73 @@ function bindWallEvents(projectId) {
         toast(e2.message, 'err');
       }
     });
+    // v2.5：收藏到角色库（跨项目复用）
+    const fav = cell.querySelector('.fav');
+    if (fav) {
+      fav.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const name = prompt('角色名（存入角色库，可在其它项目「从角色库导入」复用）：');
+        if (!name || !name.trim()) return;
+        try {
+          await api('/api/characters', {
+            method: 'POST',
+            body: { name: name.trim(), project_id: projectId, image_id: Number(cell.dataset.imgId) },
+          });
+          toast(`已收藏「${name.trim()}」到角色库`, 'ok');
+        } catch (e2) {
+          toast(e2.message, 'err');
+        }
+      });
+    }
   });
 }
 
-export { optimizeCharDesc, genCharacterImage, bindWallEvents };
+/** v2.5：从角色库导入角色到本项目（多选，≤5；追加定稿为多角色） */
+async function importFromLibrary(projectId) {
+  let items = [];
+  try {
+    items = (await api('/api/characters')).items || [];
+  } catch (e) {
+    return toast(e.message, 'err');
+  }
+  if (!items.length) {
+    return toast('角色库为空：先在任一项目定稿角色图后点 ⭐ 收藏', 'err');
+  }
+  const bodyHTML = `<div class="ch-lib">${items
+    .map(
+      (c) => `<label class="ch-lib-item">
+        <input type="checkbox" value="${esc(c.id)}" />
+        <img src="${esc(c.local_url || c.remote_url)}" alt="${esc(c.name)}" />
+        <span>${esc(c.name)}${c.series ? ` <em class="muted">${esc(c.series)}</em>` : ''}${
+          c.wardrobe ? `<br /><small class="muted">${esc(c.wardrobe)}</small>` : ''
+        }</span>
+      </label>`,
+    )
+    .join(
+      '',
+    )}</div><p class="hint mt">勾选后导入（追加为定稿角色图，最多 5 个/次）；导入后可在此项目的分镜里按镜头选角色。</p>`;
+  openModal({
+    title: '📚 从角色库导入',
+    bodyHTML,
+    footHTML: '<button class="btn primary sm" data-do-import>导入所选</button>',
+    onMount: (el, close) => {
+      el.querySelector('[data-do-import]').addEventListener('click', async () => {
+        const ids = [...el.querySelectorAll('input[type=checkbox]:checked')].map((i) => i.value);
+        if (!ids.length) return toast('请先勾选角色', 'err');
+        try {
+          const r = await api(`/api/projects/${projectId}/characters/import`, {
+            method: 'POST',
+            body: { character_ids: ids },
+          });
+          toast(`已导入 ${r.imported?.length || 0} 个角色`, 'ok');
+          close();
+          bus.emit('ws-project-changed', projectId);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
+    },
+  });
+}
+
+export { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary };

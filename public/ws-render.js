@@ -497,6 +497,7 @@ function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
           <div class="row" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
             ${countSelect}
             <button class="btn primary sm" id="wsGenStoryboard">✨ 生成分镜</button>
+            <button class="btn ghost sm" id="wsBulkShots" title="粘贴分镜 JSON 一次建全部镜头">📥 批量导入分镜</button>
             <button class="btn ghost sm" id="wsPromoteShot" ${hasLegacyPrompt ? '' : 'disabled'} title="把下方当前视频提示词变成 1 个镜头">升级为分镜</button>
           </div>
           <div class="hint mt">生成分镜后，每个镜头可独立编辑、排序、单独提交视频。</div>
@@ -518,6 +519,7 @@ function renderStoryboardArea(texts, shots, p, meta, ttsList = []) {
           <button class="btn primary sm" id="wsGenStoryboard">✨ 重新生成分镜</button>
           <button class="btn ghost sm" id="wsReviewSb" title="AI 审查分镜与文案的一致性、节奏与提示词质量，给出可采纳的修订建议">🔍 AI 审查分镜</button>
           <button class="btn ghost sm" id="wsAddShot">＋ 添加镜头</button>
+          <button class="btn ghost sm" id="wsBulkShots" title="粘贴分镜 JSON 一次建全部镜头（可追加或替换）">📥 批量导入分镜</button>
           ${
             sbVersions.length > 1
               ? `<details class="hint" style="display:inline-block"><summary>历史版本</summary><div class="ver-list mt">
@@ -609,6 +611,11 @@ function imgCell(x) {
       <div class="img-cell ${x.selected ? 'selected' : ''}" data-img-id="${x.id}" data-kind="${x.kind}">
         <img src="${esc(x.local_url || x.remote_url)}" alt="角色图 #${x.id}" loading="lazy" />
         ${x.selected ? '<span class="tick">✓</span>' : ''}
+        ${
+          x.kind === 'character'
+            ? `<button class="fav" data-fav-img="${x.id}" title="收藏到角色库（跨项目复用）" style="position:absolute;left:4px;top:4px;background:rgba(0,0,0,.55);color:#ffd479;border:0;border-radius:6px;padding:2px 6px;cursor:pointer;line-height:1.2">⭐</button>`
+            : ''
+        }
         <button class="del" data-del-img="${x.id}" title="删除">✕</button>
       </div>`;
 }

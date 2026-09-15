@@ -31,7 +31,7 @@ import {
 import { bindTtsEvents, bindVoiceMarket, defaultTtsText, wsDefaultSpeed } from './ws-tts.js';
 import { st } from './ws-state.js';
 import { submitShot, runBatchSubmit, submitVideo } from './ws-video.js';
-import { optimizeCharDesc, genCharacterImage, bindWallEvents } from './ws-char.js';
+import { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary } from './ws-char.js';
 import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, SCRIPT_FIELDS } from './ws-story.js';
 import { bindBgmEvents } from './ws-bgm.js';
 import { bindRenderPanel } from './ws-render-panel.js';
@@ -622,7 +622,9 @@ import { bindRenderPanel } from './ws-render-panel.js';
 
         <!-- ③ 角色设定 -->
         <div class="copy-sect" id="wsCharSection">
-          <h4>🧑‍🎨 角色设定图 <span class="muted" style="font-weight:400">（参考图用于视频，减少角色幻觉）</span></h4>
+          <h4>🧑‍🎨 角色设定图 <span class="muted" style="font-weight:400">（参考图用于视频，减少角色幻觉）</span>
+            <button class="btn ghost sm" id="wsCharLib" style="float:right" title="从角色库导入已收藏的角色（跨项目复用；可多角色）">📚 从角色库导入</button>
+          </h4>
           ${stepGuideHTML(3, !guideOff())}
           <div class="grid2">
             <div class="field"><label>角色外观描述（可手动调整）</label>
@@ -952,6 +954,8 @@ import { bindRenderPanel } from './ws-render-panel.js';
     if (genCharBtn) genCharBtn.onclick = () => genCharacterImage(p.id);
     const optCharBtn = $('#wsOptimizeChar');
     if (optCharBtn) optCharBtn.onclick = () => optimizeCharDesc(p.id);
+    const charLibBtn = $('#wsCharLib');
+    if (charLibBtn) charLibBtn.onclick = () => importFromLibrary(p.id); // v2.5 从角色库导入
     const submitVideoBtn = $('#wsSubmitVideo');
     if (submitVideoBtn) submitVideoBtn.onclick = () => submitVideo(p.id);
     bindTextSectionEvents(p.id);

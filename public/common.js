@@ -54,6 +54,26 @@ const api = async (path, opts = {}) => {
   return data;
 };
 
+/** 通用弹窗（复用 base.css 的 .modal-overlay/.modal 样式）
+ *  {title, bodyHTML, footHTML, onMount(el, close)} → {el, close}；点遮罩或 [data-modal-close] 关闭 */
+const openModal = ({ title, bodyHTML = '', footHTML = '', onMount } = {}) => {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML =
+    `<div class="modal">` +
+    `<div class="modal-head"><h2>${esc(title || '')}</h2><button class="modal-close" data-modal-close>✕</button></div>` +
+    `<div class="modal-body">${bodyHTML}</div>` +
+    (footHTML ? `<div class="modal-foot">${footHTML}</div>` : '') +
+    `</div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => {
+    if (e.target === overlay || e.target.closest('[data-modal-close]')) close();
+  });
+  onMount?.(overlay, close);
+  return { el: overlay, close };
+};
+
 /* ---------------- v2.2 主题管理（深色 / 浅色 / 跟随系统） ----------------
  * 真实主题落 <html data-theme="dark|light">（'system' 仅是用户选择，
  * 应用时按 prefers-color-scheme 解析）；index.html head 内联脚本已做首屏防闪烁。
@@ -112,4 +132,4 @@ window.matchMedia('(prefers-color-scheme: dark)').addEventListener?.('change', (
 
 const theme = { getTheme, setTheme, cycleTheme, applyTheme };
 
-export { $, $$, esc, fmtTime, toast, api, theme };
+export { $, $$, esc, fmtTime, toast, api, openModal, theme };

@@ -4,7 +4,7 @@
  * 依赖：common.js、state.js、ws-state.js（st）、ws-util.js、ws-tts.js（genShotTts）、
  *       ws-render.js（narrMeterHTML）、compare.js。
  */
-import { $, esc, toast, api } from './common.js';
+import { $, esc, toast, api, openModal } from './common.js';
 import { bus } from './state.js';
 import { st } from './ws-state.js';
 import { stageHints, STAGES_SCRIPT, STAGES_STORY } from './ws-util.js';
@@ -28,9 +28,50 @@ function bindNarrMeters() {
   });
 }
 
+/** v2.5：分镜批量导入——粘贴 JSON 数组一次建全部镜头（服务端统一校验：字数/秒数/角色引用/总数） */
+function bulkImportShots(projectId) {
+  const bodyHTML = `
+    <p class="hint">粘贴分镜 JSON 数组（字段：<code>title?</code> <code>video_prompt</code>（必填）<code>seconds?</code> <code>narration?</code> <code>use_character_ref?</code> <code>ref_image_ids?</code>）。</p>
+    <textarea id="wsBulkJson" rows="10" style="width:100%;font-family:monospace" placeholder='[
+  {"title":"镜1","video_prompt":"黄昏的海港…","seconds":"10","narration":"旁白一…"}
+]'></textarea>
+    <div class="mt">
+      <label style="margin-right:14px"><input type="radio" name="wsBulkMode" value="append" checked /> 追加到现有镜头</label>
+      <label><input type="radio" name="wsBulkMode" value="replace" /> 替换全部镜头</label>
+    </div>
+    <p class="hint mt">服务端会一次性校验：提示词非空 / 秒数 4–12 / 旁白 ≤ 秒数×4 / ref_image_ids 必须是本项目已定稿角色图 / 总数 ≤ 20。</p>`;
+  openModal({
+    title: '📥 批量导入分镜',
+    bodyHTML,
+    footHTML: '<button class="btn primary sm" data-do-bulk>导入</button>',
+    onMount: (el, close) => {
+      el.querySelector('[data-do-bulk]').addEventListener('click', async () => {
+        let shots;
+        try {
+          shots = JSON.parse(el.querySelector('#wsBulkJson').value);
+        } catch (e) {
+          return toast('JSON 解析失败：' + e.message, 'err');
+        }
+        const mode = el.querySelector('input[name=wsBulkMode]:checked')?.value || 'append';
+        try {
+          const r = await api(`/api/projects/${projectId}/shots/bulk`, { method: 'POST', body: { shots, mode } });
+          toast(`已导入 ${r.imported} 个镜头`, 'ok');
+          close();
+          bus.emit('ws-project-changed', projectId);
+        } catch (e) {
+          toast(e.message, 'err');
+        }
+      });
+    },
+  });
+}
+
 function bindStoryboardEvents(projectId) {
   const gen = $('#wsGenStoryboard');
   if (gen) gen.onclick = () => genStoryboard(projectId);
+  // v2.5：分镜批量导入（粘贴 JSON 一次建全部镜头）
+  const bulk = $('#wsBulkShots');
+  if (bulk) bulk.onclick = () => bulkImportShots(projectId);
   // P3 L1：AI 审查分镜（报告窗逐条采纳修订）
   const reviewBtn = $('#wsReviewSb');
   if (reviewBtn) reviewBtn.onclick = () => reviewStoryboard(projectId);
