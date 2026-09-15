@@ -99,6 +99,9 @@ const paths = {
     delete:
       '删除渲染任务（渲染中不可删；artifacts 渲染缓存一并清理；**作品目录 data/works 保留**——作品是用户劳动成果）',
   },
+  '/api/render/jobs/{id}/inspect': {
+    get: 'v2.5 渲染质检（按需生成缓存）：关键帧 4 张 + 音频波形图 + 音视频流时长对比（audio_gap_s>0.5 提示尾部静音）+ 客观指标（luma_mean/luma_std/flash_ratio/motion_mean）与 hints',
+  },
   '/api/templates': {
     get: 'P2-7 创作模板列表（v2.5 系列模板含 character_ids/voice/bgm_song_id/naming）',
     post: '新建模板 {name(必填,≤40), idea?, style?, aspect_ratio?, seconds?, film_preset?, character_ids?(角色库 id ≤8), voice?(音色 id), bgm_song_id?, naming?(命名规范)} → 201；上限 50 条',

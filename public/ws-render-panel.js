@@ -5,7 +5,7 @@
  * 依赖：common.js、ws-state.js（st）、ws-render.js（FILM_PRESETS/TRANSITION_LABELS/
  * SUBSTYLE_LABELS 为纯常量，renderJobItem 渲染任务行）。
  */
-import { $, esc, fmtTime, toast, api } from './common.js';
+import { $, esc, fmtTime, toast, api, openModal } from './common.js';
 import { st } from './ws-state.js';
 import { FILM_PRESETS, TRANSITION_LABELS, SUBSTYLE_LABELS, renderJobItem } from './ws-render.js';
 
@@ -187,8 +187,37 @@ async function saveProjectTemplate(projectId) {
   }
 }
 
+/** v2.5 渲染质检弹窗：关键帧 4 张 + 音频波形 + 音视频流时长对比 + 客观指标（亮度/闪烁/运动） */
+async function inspectRender(jobId) {
+  let r;
+  try {
+    r = await api(`/api/render/jobs/${jobId}/inspect`);
+  } catch (e) {
+    return toast('质检失败：' + e.message, 'err');
+  }
+  const m = r.metrics || {};
+  const bodyHTML = `
+    <div class="hint">时长 ${r.duration_s}s · 视频流 ${r.video_stream_s ?? '?'}s · 音频流 ${r.audio_stream_s ?? '?'}s · 差 ${r.audio_gap_s ?? '?'}s</div>
+    ${(r.hints || []).map((h) => `<span class="meta-tag" style="display:inline-block;margin:6px 6px 0 0">${esc(h)}</span>`).join('')}
+    <div class="mt" style="display:flex;gap:8px;flex-wrap:wrap">
+      ${(r.frames || [])
+        .map(
+          (f) =>
+            `<a href="${esc(f.url)}" target="_blank" title="${f.at_s}s 处"><img src="${esc(f.url)}" style="width:31%;border-radius:6px;border:1px solid #333" /></a>`,
+        )
+        .join('')}
+    </div>
+    ${r.wave ? `<div class="mt"><div class="hint">音频波形（整片；开头有孤立尖刺 = 爆音，尾部平坦 = 静音）</div><img src="${esc(r.wave)}" style="width:100%;border-radius:6px" /></div>` : ''}
+    <div class="mt hint">客观指标：亮度均值 ${m.luma_mean ?? '?'} · 亮度波动 ${m.luma_std ?? '?'} · 闪烁帧占比 ${m.flash_ratio ?? '?'} · 运动幅度 ${m.motion_mean ?? '?'}（采样 ${m.sampled_frames ?? '?'} 帧）</div>`;
+  openModal({ title: `🔍 渲染 #${jobId} 质检`, bodyHTML });
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
+  // v2.5：渲染质检图与指标（关键帧 / 波形 / 流时长对比 / 客观指标）
+  document.querySelectorAll('[data-inspect-render]').forEach((b) => {
+    b.onclick = () => inspectRender(Number(b.dataset.inspectRender));
+  });
   const rbtn = $('#wsRenderBtn');
   if (rbtn) {
     rbtn.onclick = async () => {

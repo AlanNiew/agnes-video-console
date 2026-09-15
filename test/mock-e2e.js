@@ -1474,6 +1474,22 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       err(`渲染未完成: ${renJob?.status} / ${renJob?.error_message}`);
     }
     if (!renJob.output_url || !fs.existsSync(renJob.output_path)) err('渲染产物缺失');
+    // v2.5 渲染质检：关键帧 + 波形 + 音视频流时长对比 + 客观指标（需 ffmpeg；无则跳过）
+    {
+      const insp = await api('GET', `/api/render/jobs/${ren.data.id}/inspect`);
+      if (insp.status === 200) {
+        if (!Array.isArray(insp.data.frames)) err('质检缺 frames');
+        if (insp.data.video_stream_s === undefined || insp.data.audio_stream_s === undefined) {
+          err('质检缺音视频流时长');
+        }
+        if (!insp.data.metrics || insp.data.metrics.luma_mean === undefined) err('质检缺客观指标');
+        ok(
+          `渲染质检（关键帧 ${insp.data.frames.length} 张 · 波形 ${insp.data.wave ? '有' : '无'} · 流差 ${insp.data.audio_gap_s}s · 亮度波动 ${insp.data.metrics.luma_std}）`,
+        );
+      } else {
+        ok('渲染质检跳过（无 ffmpeg 或材质不可用）');
+      }
+    }
     // v1.8：竖屏尺寸 + 封面候选
     const { spawnSync: ss } = require('node:child_process');
     const fp = ss(

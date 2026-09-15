@@ -740,6 +740,11 @@ function renderJobItem(j) {
       }
       ${qualityHtml}
       ${
+        j.status === 'completed'
+          ? `<div class="mt"><button class="btn ghost sm" data-inspect-render="${j.id}" title="关键帧 / 音频波形 / 音视频流时长对比 / 客观指标（亮度·闪烁·运动）">🔍 质检图与指标</button></div>`
+          : ''
+      }
+      ${
         (j.covers || []).length
           ? `<div style="margin-top:6px;display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
         <span class="hint">封面候选：</span>

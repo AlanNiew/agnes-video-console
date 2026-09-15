@@ -4,13 +4,52 @@
  */
 const fs = require('node:fs');
 const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 const { projects, renders } = require('../db');
 const renderer = require('../workers/render');
 const { log } = require('../core/logger');
-const { RENDER_PARAMS_DEFAULTS } = require('../core/config');
+const { RENDER_PARAMS_DEFAULTS, probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
 const { ApiError, ah } = require('../core/errors');
-const { WORKS_DIR } = require('../lib/artifacts');
+const { WORKS_DIR, ARTIFACTS_DIR } = require('../lib/artifacts');
+
+/** v2.5：ffprobe 指定流时长（秒）——用于"音视频流时长对比"（音频短于视频 = 尾部静音） */
+function streamDuration(file, kind) {
+  const r = spawnSync(
+    'ffprobe',
+    ['-v', 'error', '-select_streams', `${kind}:0`, '-show_entries', 'stream=duration', '-of', 'csv=p=0', file],
+    { encoding: 'utf8', timeout: 20_000, windowsHide: true },
+  );
+  const n = Number(String(r.stdout || '').trim());
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
+}
+
+/** v2.5：客观视频指标（供 AI/人工筛查可疑镜头）——亮度均值与波动、单帧亮度跳变占比、帧间差（运动幅度） */
+function computeVideoMetrics(file) {
+  const run = (vf) => {
+    const r = spawnSync(
+      'ffmpeg',
+      ['-hide_banner', '-loglevel', 'error', '-nostdin', '-i', file, '-vf', vf, '-f', 'null', '-'],
+      { encoding: 'utf8', timeout: 240_000, windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
+    );
+    return [...String(r.stdout || '').matchAll(/YAVG=([\d.]+)/g)].map((m) => Number(m[1]));
+  };
+  const y = run('scale=160:-2,signalstats,metadata=print:file=-');
+  const d = run('scale=160:-2,tblend=all_mode=difference,signalstats,metadata=print:file=-');
+  if (!y.length) return null;
+  const mean = y.reduce((a, b) => a + b, 0) / y.length;
+  const std = Math.sqrt(y.reduce((a, b) => a + (b - mean) ** 2, 0) / y.length);
+  const diffs = y.slice(1).map((v, i) => Math.abs(v - y[i]));
+  const flashRatio = diffs.length ? diffs.filter((x) => x > 18).length / diffs.length : 0;
+  const motion = d.length ? d.reduce((a, b) => a + b, 0) / d.length : null;
+  return {
+    luma_mean: +mean.toFixed(1), // 平均亮度（0–255）
+    luma_std: +std.toFixed(1), // 亮度波动（越大越"跳"）
+    flash_ratio: +flashRatio.toFixed(3), // 单帧亮度跳变 >18/255 的占比（闪烁候选）
+    motion_mean: motion === null ? null : +motion.toFixed(1), // 帧间差均值（运动幅度）
+    sampled_frames: y.length,
+  };
+}
 
 module.exports = function registerRenderRoutes(app) {
   /* ---------- v2.2 作品库：data/works 下全部成品（成片/海报/字幕/台词）汇总清单 ---------- */
@@ -198,6 +237,77 @@ module.exports = function registerRenderRoutes(app) {
     if (!job) throw new ApiError(404, '渲染任务不存在');
     res.json(job);
   });
+
+  // v2.5 渲染质检：关键帧 4 张 + 音频波形图（按需生成并缓存）+ 流时长对比 + 客观指标（亮度/闪烁/运动）
+  app.get(
+    '/api/render/jobs/:id/inspect',
+    ah(async (req, res) => {
+      const job = renders.get(req.params.id);
+      if (!job) throw new ApiError(404, '渲染任务不存在');
+      if (job.status !== 'completed' || !job.output_path || !fs.existsSync(job.output_path)) {
+        throw new ApiError(400, '仅已完成的渲染任务可质检');
+      }
+      const src = job.output_path;
+      const mk = (name, args) => {
+        const out = path.join(ARTIFACTS_DIR, name);
+        if (!fs.existsSync(out)) {
+          const r = spawnSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-nostdin', '-y', ...args, out], {
+            timeout: 120_000,
+            windowsHide: true,
+          });
+          if (r.status !== 0 || !fs.existsSync(out)) return null;
+        }
+        return '/artifacts/' + path.basename(out);
+      };
+      const dur = probeDuration(src) || 0;
+      const pts = [0.06, 0.34, 0.64, 0.92].map((r) => Math.max(0.1, +(dur * r).toFixed(2)));
+      const frames = pts
+        .map((t, i) => {
+          const url = mk(`inspect-${job.id}-f${i + 1}.png`, [
+            '-ss',
+            String(t),
+            '-i',
+            src,
+            '-frames:v',
+            '1',
+            '-vf',
+            'scale=640:-2',
+          ]);
+          return url ? { at_s: t, url } : null;
+        })
+        .filter(Boolean);
+      const wave = mk(`inspect-${job.id}-wave.png`, [
+        '-i',
+        src,
+        '-filter_complex',
+        'showwavespic=s=1200x260:colors=0x6EC1FF[wf];color=c=0x0A0E14:s=1200x260[bg];[bg][wf]overlay',
+        '-frames:v',
+        '1',
+      ]);
+      const videoS = streamDuration(src, 'v');
+      const audioS = streamDuration(src, 'a');
+      const metrics = computeVideoMetrics(src);
+      res.json({
+        ok: true,
+        job_id: job.id,
+        duration_s: dur,
+        video_stream_s: videoS,
+        audio_stream_s: audioS,
+        audio_gap_s: videoS !== null && audioS !== null ? Math.round((videoS - audioS) * 100) / 100 : null,
+        frames,
+        wave,
+        metrics,
+        hints: [
+          videoS !== null && audioS !== null && videoS - audioS > 0.5
+            ? `⚠️ 音频流比视频短 ${(videoS - audioS).toFixed(2)}s（尾部可能静音）`
+            : '✅ 音视频流等长',
+          metrics && metrics.flash_ratio > 0.25
+            ? `⚠️ 亮度跳变帧占比 ${(metrics.flash_ratio * 100).toFixed(0)}%（可能闪烁）`
+            : null,
+        ].filter(Boolean),
+      });
+    }),
+  );
 
   // 删除渲染任务（渲染中不可删；artifacts 渲染缓存清理；**作品目录 data/works 保留**——作品是用户劳动成果）
   app.delete('/api/render/jobs/:id', (req, res) => {
