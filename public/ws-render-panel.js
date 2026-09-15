@@ -212,6 +212,58 @@ async function inspectRender(jobId) {
   openModal({ title: `🔍 渲染 #${jobId} 质检`, bodyHTML });
 }
 
+/** v2.5 制作矩阵（P1-2）：镜 × (视频 / 配音 / 时长校验 / 角色引用 / 定稿 take) 一屏就绪度 */
+async function showMatrix(projectId) {
+  let d;
+  try {
+    d = await api(`/api/projects/${projectId}`);
+  } catch (e) {
+    return toast('读取项目失败：' + e.message, 'err');
+  }
+  const { shots = [], tasks = [], tts = [] } = d;
+  const latestTask = (sid) =>
+    tasks.filter((t) => t.shot_id === sid && t.status === 'completed').sort((a, b) => b.id - a.id)[0];
+  const latestTts = (sid) =>
+    tts
+      .filter((t) => t.kind === 'shot' && t.shot_id === sid && t.local_path && !t.error_message)
+      .sort((a, b) => b.id - a.id)[0];
+  const rows = shots
+    .map((s) => {
+      const t = latestTask(s.id);
+      const v = latestTts(s.id);
+      const sec = Number(s.seconds || d.project?.seconds || 5);
+      const off = (v?.offset_ms != null ? v.offset_ms : 500) / 1000;
+      const timingOk = !v?.duration ? null : v.duration + off <= sec * 1.03;
+      const refs =
+        s.use_character_ref === 0
+          ? '空镜'
+          : Array.isArray(s.ref_image_ids) && s.ref_image_ids.length
+            ? s.ref_image_ids.map((x) => '#' + x).join('/')
+            : '全部';
+      const mark = (ok) => (ok === null ? '—' : ok ? '✅' : '❌');
+      return `<tr>
+        <td>${s.seq}</td>
+        <td>${esc((s.title || '').slice(0, 12))}</td>
+        <td>${sec}s</td>
+        <td>${mark(!!t)}${t ? ' #' + t.id : ''}</td>
+        <td>${mark(!!v)}${v && v.duration ? ' ' + v.duration + 's' : ''}</td>
+        <td>${mark(timingOk)}${timingOk === false ? ' 超长' : ''}</td>
+        <td>${esc(refs)}</td>
+        <td>${s.take_task_id ? '#' + s.take_task_id : '自动'}</td>
+      </tr>`;
+    })
+    .join('');
+  const bodyHTML = `
+    <div style="max-height:60vh;overflow:auto">
+      <table class="matrix-table">
+        <thead><tr><th>#</th><th>标题</th><th>秒</th><th>视频</th><th>配音</th><th>时长校验</th><th>角色引用</th><th>定稿 take</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+    <p class="hint mt">「时长校验」= 配音时长 + 偏移 ≤ 镜头时长 ×1.03（❌ 会被渲染截断）；角色引用「全部」= 引用项目全部定稿角色图。</p>`;
+  openModal({ title: `📊 制作矩阵（${shots.length} 镜）`, bodyHTML });
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
   // v2.5：渲染质检图与指标（关键帧 / 波形 / 流时长对比 / 客观指标）
@@ -219,6 +271,8 @@ function bindRenderPanel(projectId, renderJobs = []) {
     b.onclick = () => inspectRender(Number(b.dataset.inspectRender));
   });
   const rbtn = $('#wsRenderBtn');
+  const mbtn = $('#wsMatrix');
+  if (mbtn) mbtn.onclick = () => showMatrix(projectId); // v2.5 制作矩阵（P1-2）
   if (rbtn) {
     rbtn.onclick = async () => {
       rbtn.disabled = true;

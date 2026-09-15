@@ -904,3 +904,22 @@ html[data-theme='light'] .work-dir-row {
 .ch-lib-item span {
   font-size: 13px;
 }
+
+/* v2.5 制作矩阵（P1-2） */
+.matrix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+.matrix-table th,
+.matrix-table td {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  padding: 4px 6px;
+  text-align: left;
+  white-space: nowrap;
+}
+.matrix-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--bg, #161b26);
+}
