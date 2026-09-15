@@ -96,40 +96,45 @@
 
 ## 环境与工程
 
-### ⬜ E-1 `npm run dev`（watch + 优雅重启）
+### ✅ E-1 `npm run dev`（watch 重启）—— 已具备（`node --watch server.js`）
 
-- 改渲染代码后必须手动 kill 进程再启动（本机 PowerShell 下 kill 还会让 AI 终端工具报 `ChildProcess.kill` 错）。
-- 建议：`npm run dev`（node --watch 或 nodemon）+ 优雅退出；或提供本地重启脚本。
+- `package.json` 的 `dev` 脚本即 `node --watch server.js`；改后端代码自动重启。
+- 遗留：**前端（public/\*.js）改动**不在 watch 范围（需 `npm run build` 或直接刷新页面用源码 ESM 调试）；
+  以及 AI 侧仍以"kill + 重启"驱动服务（本机 PowerShell kill 会让 AI 终端工具报 `ChildProcess.kill`，
+  实际生效——已知噪音，不影响功能）。
 
-### ⬜ E-2 `tools/` 目录（让脚本成为可复用资产）
+### ✅ E-2 `tools/` 目录（让脚本成为可复用资产）—— 已落地 v2.5
 
-- AI 的创作/诊断脚本目前只能放系统临时目录，无法沉淀、无法复用（每集重写）。
-- 建议：项目内 `tools/`（或 `scripts/`）承载：分镜批量导入、质检、诊断、一致性校验等脚本。
+- `tools/agnes-api.js`（API 助手）、`tools/series-new-episode.js`（**系列开集脚手架**：
+  一集 JSON → 建项目 + 导角色 + 导分镜 + 提交视频 + 配音）、`tools/episodes/_template.json`、`tools/README.md`。
+- 冒烟：2 角色 + 2 镜脚手架跑通（角色导入与 `ref_image_ids` 映射正确）。
 
-### ⬜ E-3 "运营操作" API 化
+### ✅ E-3 "运营操作" API 化 —— 已落地 v2.5
 
-- 复制角色图（P0-2）、设 `offset_ms`（P3-4）目前在直连 SQLite 操作；建议补 API，避免绕契约。
+- 角色图跨项目复用 → `POST /api/projects/:id/characters/import`（不再直连 SQLite 复制）；
+- 逐镜 `offset_ms` → `PATCH /api/tts/{id}`（不再直改库）。
 
 ---
 
-## 沉淀机制（让"复用"不靠人记）
+## 沉淀机制（让"复用"不靠人记）—— 已落地 v2.5
 
-> 实战做法（每集写"制作记录"）有效，但依赖 AI 自觉。建议机制化：
+> 实战做法（每集写"制作记录"）有效，但依赖 AI 自觉；现已机制化：
 
-### ⬜ S-1 一致性台账（单一来源）
+### ✅ S-1 一致性台账（单一来源）
 
-- 内容：角色图 id ＋ 服色锚文本 ＋ 风格锚 ＋ 用语表（中日）＋ 用过的 BGM/音色 ＋ 各集时长。
-- 现状：散落于 `docs/stories/幻灯屋-系列企划.md` 与 `-制作记录.md`；建议抽成独立文件
-  （或 JSON / settings），所有集数引用同一份，**防跨集漂移**。
+- `docs/stories/幻灯屋-台账.md`：角色（含角色库 id / 服色锚）、风格锚、声音与渲染配方、用语表、
+  各集规格、防漂移 checklist——所有集数引用同一份，改设定先改这里。
+- 数据侧真实资产：角色库（`settings.character_library`）+ 创作模板（`settings.creation_templates`）。
 
-### ⬜ S-2 每集制作档案（自动草稿）
+### ✅ S-2 每集制作档案（自动草稿）
 
-- 渲染完成时自动生成草稿：参数（风格锚/音色/BGM/渲染配方）、规格（镜数/时长/响度/偏差）、
-  质检结果、封面、作品目录。人/AI 只需补"复盘与教训"。
+- 渲染归档时自动生成 `制作档案-N.md`（规格 / 渲染参数 / 镜头清单 + 复盘段留空待补）——
+  落在 `data/works/《名》-id/`，与成片同目录。
 
-### ⬜ S-3 开拍 checklist
+### ✅ S-3 开拍 / 交付 checklist
 
-- 第 N 集开机前自动列出：本集角色（图是否齐）、场景图、备选 BGM、时长预算、上集钩子承接。
+- `GET /api/projects/:id/checklist`：9 项自检（创意 / 风格锚 / 角色定稿 / 分镜 / 旁白 / 镜头视频 /
+  逐镜配音 / 配音时长不超镜长 / BGM）+ `ready_pct`。
 
 ---
 
