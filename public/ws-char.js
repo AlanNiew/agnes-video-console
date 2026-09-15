@@ -188,4 +188,40 @@ async function importFromLibrary(projectId) {
   });
 }
 
-export { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary };
+/** v2.5：从角色库挑选角色（仅选择、不导入；回调所选 id 数组）——供新建项目/后续编排使用 */
+async function pickCharacters(onPicked) {
+  let items;
+  try {
+    items = (await api('/api/characters')).items || [];
+  } catch (e) {
+    return toast(e.message, 'err');
+  }
+  if (!items.length) {
+    return toast('角色库为空：先在任一项目定稿角色图后点 ⭐ 收藏', 'err');
+  }
+  const bodyHTML = `<div class="ch-lib">${items
+    .map(
+      (c) => `<label class="ch-lib-item">
+        <input type="checkbox" value="${esc(c.id)}" />
+        <img src="${esc(c.local_url || c.remote_url)}" alt="${esc(c.name)}" />
+        <span>${esc(c.name)}${c.series ? ` <em class="muted">${esc(c.series)}</em>` : ''}${
+          c.wardrobe ? `<br /><small class="muted">${esc(c.wardrobe)}</small>` : ''
+        }</span>
+      </label>`,
+    )
+    .join('')}</div><p class="hint mt">勾选后点「确定」（最多 5 个）；新建项目时会自动导入为定稿角色图。</p>`;
+  openModal({
+    title: '📚 从角色库选角',
+    bodyHTML,
+    footHTML: '<button class="btn primary sm" data-do-pick>确定</button>',
+    onMount: (el, close) => {
+      el.querySelector('[data-do-pick]').addEventListener('click', () => {
+        const ids = [...el.querySelectorAll('input[type=checkbox]:checked')].map((i) => i.value);
+        close();
+        onPicked?.(ids.slice(0, 5));
+      });
+    },
+  });
+}
+
+export { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary, pickCharacters };

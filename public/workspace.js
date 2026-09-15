@@ -31,7 +31,7 @@ import {
 import { bindTtsEvents, bindVoiceMarket, defaultTtsText, wsDefaultSpeed } from './ws-tts.js';
 import { st } from './ws-state.js';
 import { submitShot, runBatchSubmit, submitVideo } from './ws-video.js';
-import { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary } from './ws-char.js';
+import { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary, pickCharacters } from './ws-char.js';
 import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, SCRIPT_FIELDS } from './ws-story.js';
 import { bindBgmEvents } from './ws-bgm.js';
 import { bindRenderPanel } from './ws-render-panel.js';
@@ -321,6 +321,10 @@ import { bindRenderPanel } from './ws-render-panel.js';
             <select id="npTemplate" style="flex:1;min-width:150px"><option value="">（不使用模板）</option></select>
             <button type="button" class="btn ghost sm" id="npTplDel" disabled title="删除当前选中的模板">🗑 删除</button>
           </div>
+          <div class="field" style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <button type="button" class="btn ghost sm" id="npPickChars" title="从角色库挑选本集出场角色（多角色）">📚 从角色库选角</button>
+            <span class="hint" id="npPickedInfo">未选角色（也可创建后在第③步导入）</span>
+          </div>
           <div class="field"><label>项目名称 *</label><input type="text" id="npName" placeholder="如：夏日麦田少年" /></div>
           <div class="field"><label>一句话创意 *</label><textarea id="npIdea" rows="3" placeholder="例：黄昏麦田，穿黄胶鞋的少年沿着土路走向远方，暖金色逆光"></textarea></div>
           <div class="field"><label>风格偏好 <span class="hint">点选卡片，或在下方自定义</span></label>
@@ -376,10 +380,14 @@ import { bindRenderPanel } from './ws-render-panel.js';
     // P2-7：创作模板（套用 / 删除；保存入口在成片渲染面板「存为创作模板」）
     let templates = [];
     let pickedFilmPreset = '';
+    let pickedCharacters = []; // v2.5 系列模板：待导入的角色库 id
     const tplSel = $('#npTemplate', overlay);
     const tplDel = $('#npTplDel', overlay);
     const applyTemplate = (t) => {
-      if (!t) return;
+      if (!t) {
+        pickedCharacters = [];
+        return;
+      }
       if (t.idea) $('#npIdea', overlay).value = t.idea;
       if (t.style) {
         styleInput.value = t.style;
@@ -392,6 +400,13 @@ import { bindRenderPanel } from './ws-render-panel.js';
       setOpt('#npAspect', t.aspect_ratio);
       setOpt('#npSeconds', t.seconds);
       pickedFilmPreset = t.film_preset || '';
+      // v2.5 系列模板：角色库引用（创建后自动导入）+ 命名规范（回填项目名，可再改集数）
+      pickedCharacters = Array.isArray(t.character_ids) ? t.character_ids : [];
+      const nameEl = $('#npName', overlay);
+      if (t.naming && nameEl && !nameEl.value.trim()) nameEl.value = t.naming;
+      const pickInfo = $('#npPickedInfo', overlay);
+      if (pickInfo && pickedCharacters.length)
+        pickInfo.textContent = `模板携带 ${pickedCharacters.length} 个角色，创建后自动导入`;
     };
     const reloadTemplates = async () => {
       try {
@@ -406,7 +421,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
         templates
           .map(
             (t) =>
-              `<option value="${esc(t.id)}">${esc(t.name)}${t.film_preset ? ` · ${esc(t.film_preset)}` : ''}</option>`,
+              `<option value="${esc(t.id)}">${esc(t.name)}${t.film_preset ? ` · ${esc(t.film_preset)}` : ''}${t.character_ids?.length ? ` · 🧑${t.character_ids.length}` : ''}</option>`,
           )
           .join('');
       tplSel.value = '';
@@ -432,6 +447,17 @@ import { bindRenderPanel } from './ws-render-panel.js';
         }
       };
     reloadTemplates();
+    // v2.5：新建项目时从角色库选角（与模板携带的 character_ids 合并）
+    $('#npPickChars', overlay)?.addEventListener('click', () => {
+      pickCharacters((ids) => {
+        pickedCharacters = ids || [];
+        const info = $('#npPickedInfo', overlay);
+        if (info)
+          info.textContent = ids?.length
+            ? `已选 ${ids.length} 个角色，创建后自动导入`
+            : '未选角色（也可创建后在第③步导入）';
+      });
+    });
     let cancelled = false; // v2.2.2：请求在途时关闭弹窗 = 取消本次创建
     const close = () => {
       cancelled = true;
@@ -493,6 +519,19 @@ import { bindRenderPanel } from './ws-render-panel.js';
           return;
         }
         await renderProject(p.id);
+        // v2.5 系列模板：从角色库导入角色（多角色追加定稿，≤5）
+        if (pickedCharacters.length) {
+          try {
+            const r = await api(`/api/projects/${p.id}/characters/import`, {
+              method: 'POST',
+              body: { character_ids: pickedCharacters.slice(0, 5) },
+            });
+            toast(`已从角色库导入 ${r.imported?.length || 0} 个角色`, 'ok');
+            await renderProject(p.id);
+          } catch (e) {
+            toast('角色导入失败（可在第③步手动「📚 从角色库导入」）：' + e.message, 'err');
+          }
+        }
         // P2-7：套用模板携带的成片预设配方（若所选模板含配方且渲染面板已渲染出对应卡片）
         if (pickedFilmPreset) {
           document.querySelector(`#wsFilmPresets .film-preset[data-preset="${pickedFilmPreset}"]`)?.click();

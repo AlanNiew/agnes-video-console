@@ -139,17 +139,31 @@ async function openRenderCompare(projectId) {
   };
 }
 
-/** P2-7：把当前项目参数（创意/风格/画幅/时长 + 当前成片预设）存成可复用创作模板 */
+/** P2-7 / v2.5：把当前项目参数（创意/风格/画幅/时长 + 成片预设 + 角色库角色）存成可复用系列模板 */
 async function saveProjectTemplate(projectId) {
   let p;
+  let imgs = [];
   try {
-    p = (await api(`/api/projects/${projectId}`)).project;
+    const d = await api(`/api/projects/${projectId}`);
+    p = d.project;
+    imgs = d.images || [];
   } catch (e) {
     toast('读取项目失败：' + e.message, 'err');
     return;
   }
-  const name = prompt('模板名称（创意 + 风格 + 画幅/时长 + 成片预设）', p.name || '');
+  const name = prompt('模板名称（创意 + 风格 + 画幅/时长 + 成片预设 + 角色）', p.name || '');
   if (!name || !name.trim()) return;
+  // v2.5：定稿角色图若能按 remote_url 命中角色库，则模板自动携带其 character_ids（新建项目时自动导入）
+  let character_ids = [];
+  try {
+    const lib = (await api('/api/characters')).items || [];
+    const selUrls = new Set(
+      imgs.filter((x) => x.kind === 'character' && x.selected && x.remote_url).map((x) => x.remote_url),
+    );
+    character_ids = lib.filter((c) => selUrls.has(c.remote_url)).map((c) => c.id);
+  } catch {
+    /* 角色库不可用时忽略 */
+  }
   try {
     await api('/api/templates', {
       method: 'POST',
@@ -160,9 +174,14 @@ async function saveProjectTemplate(projectId) {
         aspect_ratio: p.aspect_ratio,
         seconds: p.seconds,
         film_preset: st.wsFilmPresetId || '',
+        character_ids,
+        naming: p.name || '', // 命名规范：以本项目名作系列命名的起点
       },
     });
-    toast('已存为创作模板，新建项目时可一键套用', 'ok');
+    toast(
+      `已存为创作模板${character_ids.length ? `（含 ${character_ids.length} 个角色）` : ''}，新建项目可一键套用`,
+      'ok',
+    );
   } catch (e) {
     toast('保存模板失败：' + e.message, 'err');
   }
