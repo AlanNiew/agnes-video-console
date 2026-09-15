@@ -13,6 +13,7 @@ const {
   PROJECT_STATUSES,
   MAX_SHOTS,
   MAX_TEXT_LEN,
+  MAX_BULK_SHOTS,
   SHOT_MODES,
 } = require('../core/constants');
 const { ApiError, ah } = require('../core/errors');
@@ -235,6 +236,56 @@ module.exports = function registerProjectRoutes(app) {
       ref_image_ids: b.ref_image_ids, // v2.5 多角色：本镜出场角色图 id 数组（省略 = 引用全部定稿角色图）
     });
     res.status(201).json(projects.shots(p.id).find((s) => s.id === id));
+  });
+
+  // v2.5 分镜批量导入：一次建多个镜头（事务）——{shots:[{title?,video_prompt,seconds?,narration?,use_character_ref?,ref_image_ids?}], mode?(append|replace)}
+  app.post('/api/projects/:id/shots/bulk', (req, res) => {
+    const p = projects.get(req.params.id);
+    if (!p) throw new ApiError(404, '项目不存在');
+    const b = req.body || {};
+    const list = b.shots;
+    if (!Array.isArray(list) || !list.length) throw new ApiError(400, 'shots 需为非空数组');
+    if (list.length > MAX_BULK_SHOTS) throw new ApiError(400, `单次最多导入 ${MAX_BULK_SHOTS} 个镜头`);
+    const mode = b.mode === 'replace' ? 'replace' : 'append';
+    const existing = projects.shots(p.id);
+    if (mode === 'append' && existing.length + list.length > MAX_SHOTS) {
+      throw new ApiError(400, `镜头总数将超过上限（${MAX_SHOTS}）：现有 ${existing.length} + 新增 ${list.length}`);
+    }
+    // 校验（批量导入一次性拦下所有问题，避免"导入一半才发现"）
+    const charIds = new Set(
+      projects
+        .images(p.id)
+        .filter((x) => x.kind === 'character' && x.selected)
+        .map((x) => x.id),
+    );
+    const errs = [];
+    list.forEach((s, i) => {
+      const idx = i + 1;
+      if (!String(s.video_prompt || '').trim()) errs.push(`第 ${idx} 镜：video_prompt 不能为空`);
+      if (s.seconds !== undefined && s.seconds !== null && !SECONDS_OK.includes(String(s.seconds))) {
+        errs.push(`第 ${idx} 镜：seconds 仅支持 4–12`);
+      }
+      const effSec = s.seconds !== undefined && s.seconds !== null ? String(s.seconds) : p.seconds || '5';
+      const nar = s.narration === undefined || s.narration === null ? '' : String(s.narration).trim();
+      if (nar) {
+        const cap = Math.max(8, Math.floor((Number(effSec) || 5) * 4));
+        if (nar.length > cap) errs.push(`第 ${idx} 镜：旁白 ${nar.length} 字超上限 ${cap} 字（${effSec} 秒）`);
+      }
+      if (Array.isArray(s.ref_image_ids)) {
+        for (const id of s.ref_image_ids) {
+          if (!charIds.has(Number(id))) errs.push(`第 ${idx} 镜：ref_image_ids 含非本项目定稿角色图 #${id}`);
+        }
+      }
+    });
+    if (errs.length) {
+      throw new ApiError(
+        400,
+        `分镜校验未通过：${errs.slice(0, 5).join('；')}${errs.length > 5 ? `（等 ${errs.length} 项）` : ''}`,
+      );
+    }
+    const created = projects.bulkAddShots(p.id, list, mode);
+    log('info', `项目 #${p.id} 批量导入 ${created.length} 个镜头（${mode}）`);
+    res.status(201).json({ ok: true, imported: created.length, shots: projects.shots(p.id) });
   });
 
   // 编辑镜头（标题/提示词/时长/旁白/引用开关；归属校验防跨项目越权）

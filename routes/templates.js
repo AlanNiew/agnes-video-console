@@ -53,6 +53,20 @@ module.exports = function registerTemplateRoutes(app) {
         aspect_ratio: ASPECT_RATIOS.includes(String(b.aspect_ratio)) ? String(b.aspect_ratio) : '16:9',
         seconds: SECONDS_OK.includes(String(b.seconds)) ? String(b.seconds) : '5',
         film_preset: String(b.film_preset || '').slice(0, 40),
+        // v2.5 系列模板扩展：角色库引用 + 声音偏好 + 命名规范（新建项目成套复用）
+        character_ids: Array.isArray(b.character_ids) ? b.character_ids.map(String).slice(0, 8) : [],
+        voice:
+          String(b.voice || '')
+            .trim()
+            .slice(0, 80) || null, // 配音音色 id（TTS_VOICES / 声音广场池）
+        bgm_song_id:
+          String(b.bgm_song_id || '')
+            .trim()
+            .slice(0, 30) || null, // BGM 偏好（音乐接口 song_id）
+        naming:
+          String(b.naming || '')
+            .trim()
+            .slice(0, 60) || null, // 命名规范模板（如「幻灯屋 S1EXX」）
         created_at: Date.now(),
       };
       all.unshift(tpl);

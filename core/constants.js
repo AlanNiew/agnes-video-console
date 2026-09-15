@@ -92,6 +92,10 @@ const TTS_MAX_TEXT = 8000;
 /* v1.9 声音广场：浏览社区音色的排序方式 */
 const MARKET_SORTS = ['trending', 'task_count', 'created_at', 'title'];
 
+/* v2.5 角色库（跨项目复用的角色资产）与分镜批量导入 */
+const MAX_CHARACTERS = 50; // 角色库条目上限
+const MAX_BULK_SHOTS = 20; // 单次批量导入镜头数上限（与 MAX_SHOTS 一致）
+
 /* v2.0 一键成片高级配置：转场类型（xfade 白名单）/ 字幕样式 / 字幕位置 */
 const RENDER_TRANSITIONS = ['fade', 'dissolve', 'wipeleft', 'wiperight', 'slideup', 'slidedown', 'circleopen'];
 const SUBTITLE_STYLES = ['white-outline', 'yellow-box', 'bottom-bar'];
@@ -132,6 +136,8 @@ module.exports = {
   TTS_MODELS,
   TTS_MAX_TEXT,
   MARKET_SORTS,
+  MAX_CHARACTERS,
+  MAX_BULK_SHOTS,
   RENDER_TRANSITIONS,
   SUBTITLE_STYLES,
   SUBTITLE_POSITIONS,

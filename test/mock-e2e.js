@@ -1240,6 +1240,67 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (selAfter.length !== 1) err(`取消定稿后应剩 1 张: ${selAfter.length}`);
   ok('多角色引用：多张定稿 / 取消定稿 / 镜头级精确选取 / <Picture 1>、<Picture 2> 前缀');
 
+  // 20.1.2 v2.5 角色库（跨项目复用）+ 分镜批量导入
+  {
+    const ch1 = await api('POST', '/api/characters', {
+      name: 'e2e 角色甲',
+      project_id: pid,
+      image_id: img.data.image.id,
+      wardrobe: '白衬衫+深蓝背带裙',
+      series: 'e2e 系列',
+    });
+    if (ch1.status !== 201 || !ch1.data.id) err(`角色库收藏失败: ${JSON.stringify(ch1.data).slice(0, 200)}`);
+    const chList = await api('GET', '/api/characters');
+    if (!chList.data.items.some((c) => c.id === ch1.data.id)) err('角色库列表未包含新角色');
+    if ((await api('POST', '/api/characters', { name: '' })).status !== 400) err('角色库空名未被 400 拒绝');
+    // 导入到新项目
+    const pNew = await api('POST', '/api/projects', { name: 'e2e 角色库导入', seconds: '5' });
+    const imp = await api('POST', `/api/projects/${pNew.data.id}/characters/import`, {
+      character_ids: [ch1.data.id],
+    });
+    if (imp.status !== 201 || imp.data.imported?.length !== 1) err(`角色导入失败: ${JSON.stringify(imp.data)}`);
+    const pn2 = await api('GET', `/api/projects/${pNew.data.id}`);
+    const selC = pn2.data.images.filter((x) => x.kind === 'character' && x.selected);
+    if (selC.length !== 1) err(`导入后应有 1 张定稿角色图: ${selC.length}`);
+    // 分镜批量导入（append）
+    const bulk = await api('POST', `/api/projects/${pNew.data.id}/shots/bulk`, {
+      shots: [
+        { title: '导入镜1', video_prompt: '场景A', seconds: '5', narration: '旁白一', ref_image_ids: [selC[0].id] },
+        { title: '导入镜2', video_prompt: '场景B', seconds: '5', narration: '', use_character_ref: 0 },
+      ],
+    });
+    if (bulk.status !== 201 || bulk.data.imported !== 2)
+      err(`批量导入失败: ${JSON.stringify(bulk.data).slice(0, 200)}`);
+    if (bulk.data.shots.length !== 2 || bulk.data.shots[0].ref_image_ids?.[0] !== selC[0].id)
+      err('批量导入镜头内容不符');
+    // 校验：旁白超长 / 非法 ref / 空数组
+    if (
+      (
+        await api('POST', `/api/projects/${pNew.data.id}/shots/bulk`, {
+          shots: [{ video_prompt: 'x', seconds: '4', narration: '一二三四五六七八九十一二三四五六七八九十甲乙丙丁' }],
+        })
+      ).status !== 400
+    ) {
+      err('批量导入旁白超长未被 400 拒绝');
+    }
+    if (
+      (
+        await api('POST', `/api/projects/${pNew.data.id}/shots/bulk`, {
+          shots: [{ video_prompt: 'x', ref_image_ids: [999999] }],
+        })
+      ).status !== 400
+    ) {
+      err('批量导入非法 ref_image_ids 未被 400 拒绝');
+    }
+    if ((await api('POST', `/api/projects/${pNew.data.id}/shots/bulk`, { shots: [] })).status !== 400) {
+      err('批量导入空数组未被 400 拒绝');
+    }
+    // 清理与 404
+    await api('DELETE', `/api/characters/${ch1.data.id}`);
+    if ((await api('DELETE', `/api/characters/${ch1.data.id}`)).status !== 404) err('重复删除角色未被 404 拒绝');
+    ok('角色库（收藏/列表/空名400/导入项目/删除404）+ 分镜批量导入（append + 校验拦截）');
+  }
+
   // 20.2 v1.3：镜头旁白/引用开关 —— 纯空镜走 text 模式，恢复后回到 reference
   const pn = await api('PATCH', `/api/projects/${pid}/shots/${shot1.id}`, {
     narration: '旁白测试句子',

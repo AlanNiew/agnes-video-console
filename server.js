@@ -43,6 +43,7 @@ require('./routes/music')(app); // /api/music/* + /api/projects/:id/bgm
 require('./routes/projects')(app); // /api/projects*（文案/图片/镜头/视频任务/重拍/定稿）
 require('./routes/render')(app); // /api/projects/:id/render + /api/render/jobs*
 require('./routes/templates')(app); // /api/templates*
+require('./routes/characters')(app); // v2.5 角色库：/api/characters* + /api/projects/:id/characters/import
 
 /* ---------------- 本地产物静态服务 ---------------- */
 try {

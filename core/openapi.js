@@ -77,6 +77,9 @@ const paths = {
     delete: '删除镜头（任务保留）',
   },
   '/api/projects/{id}/shots/reorder': { post: '镜头排序 {ids[]}' },
+  '/api/projects/{id}/shots/bulk': {
+    post: 'v2.5 分镜批量导入：{shots:[{title?, video_prompt, seconds?, narration?, use_character_ref?, ref_image_ids?}], mode?(append|replace，默认 append)}——一次性事务建全部镜头；服务端校验（video_prompt 非空 / seconds 4–12 / 旁白 ≤ 秒数×4 / ref_image_ids 必须是本项目定稿角色图 / 总数 ≤ 20）',
+  },
   '/api/projects/{id}/shots/{shotId}/videos': {
     post: '单镜头提交视频任务（入队语义）。镜头 use_character_ref=false 或 mode=text → 纯文生模式；否则按 ref_image_ids（省略 = 全部定稿角色图，≤5 张）注入多张参考图并自动注入 <Picture 1>…<Picture N> 前缀',
   },
@@ -97,10 +100,18 @@ const paths = {
       '删除渲染任务（渲染中不可删；artifacts 渲染缓存一并清理；**作品目录 data/works 保留**——作品是用户劳动成果）',
   },
   '/api/templates': {
-    get: 'P2-7 创作模板列表 {items:[{id,name,idea,style,aspect_ratio,seconds,film_preset,created_at}]}（存于 settings.creation_templates）',
-    post: '新建创作模板 {name(必填,≤40), idea?, style?, aspect_ratio?, seconds?, film_preset?} → 201 模板对象；上限 50 条',
+    get: 'P2-7 创作模板列表（v2.5 系列模板含 character_ids/voice/bgm_song_id/naming）',
+    post: '新建模板 {name(必填,≤40), idea?, style?, aspect_ratio?, seconds?, film_preset?, character_ids?(角色库 id ≤8), voice?(音色 id), bgm_song_id?, naming?(命名规范)} → 201；上限 50 条',
   },
   '/api/templates/{id}': { delete: '删除创作模板' },
+  '/api/characters': {
+    get: 'v2.5 角色库列表 {items:[{id,name,remote_url,local_path,prompt,wardrobe,series,created_at}]}（存于 settings.character_library）',
+    post: '收藏角色 {name(必填,≤40), image_id?+project_id?(从项目角色图收藏), remote_url?, local_path?, prompt?, wardrobe?(服色文字锚), series?} → 201；上限 50 条',
+  },
+  '/api/characters/{id}': { delete: '删除角色库条目' },
+  '/api/projects/{id}/characters/import': {
+    post: 'v2.5 从角色库导入角色到项目 {character_ids[](≤5)} → 复制为 project_images（kind=character）并追加定稿，可直接用于视频提交',
+  },
   '/api/music/search': {
     get: 'BGM 在线曲库搜索 ?keyword=&limit= → {items:[{id,name,artist,album,duration_s,cover,levels[]}]}（需设置 music_api_base）',
   },

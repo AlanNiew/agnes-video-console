@@ -314,6 +314,34 @@ const projects = {
     });
   },
 
+  /** v2.5 分镜批量导入（事务）：mode='replace' 先清空原有镜头；seq 续接现有最大序号；返回新镜头 id 列表 */
+  bulkAddShots(projectId, list, mode = 'append') {
+    const pid = Number(projectId);
+    return tx(() => {
+      if (mode === 'replace') stmts.deleteShotsByProject.run(pid);
+      const now = Date.now();
+      let maxSeq = stmts.listShots.all(pid).reduce((m, s) => Math.max(m, Number(s.seq) || 0), 0);
+      return list.map((s) => {
+        maxSeq += 1;
+        return Number(
+          stmts.insertShot.run(
+            pid,
+            maxSeq,
+            s.title ? String(s.title).slice(0, 100) : null,
+            String(s.video_prompt || ''),
+            s.seconds || null,
+            s.mode || 'reference',
+            s.narration ? String(s.narration).trim() : null,
+            s.use_character_ref === undefined || s.use_character_ref === null ? 1 : s.use_character_ref ? 1 : 0,
+            serializeRefIds(s.ref_image_ids),
+            now,
+            now,
+          ).lastInsertRowid,
+        );
+      });
+    });
+  },
+
   /** 按 ids 顺序重排镜头 seq（事务；调用方需先校验 ids 合法性） */
   reorderShots(projectId, ids) {
     const pid = Number(projectId);
