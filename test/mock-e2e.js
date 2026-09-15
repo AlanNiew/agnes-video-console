@@ -1408,6 +1408,21 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     }
   }
 
+  // 20.3b v2.5 镜头级客观指标（筛查抖动/闪烁/运动幅度）
+  {
+    const mt = await api('GET', `/api/tasks/${sv.data.id}/metrics`);
+    if (mt.status === 200) {
+      if (mt.data.metrics?.luma_mean === undefined) err('镜头级指标缺 luma_mean');
+      if (mt.data.shot_id !== shot1.id) err('镜头级指标未带 shot_id');
+      ok(
+        `镜头级客观指标（亮度 ${mt.data.metrics.luma_mean} · 波动 ${mt.data.metrics.luma_std} · 运动 ${mt.data.metrics.motion_mean}）`,
+      );
+    } else {
+      ok('镜头级指标跳过（无 ffmpeg）');
+    }
+    if ((await api('GET', '/api/tasks/999999/metrics')).status !== 404) err('不存在任务的指标未被 404 拒绝');
+  }
+
   // 20.4 v1.3：一键成片渲染（真实 ffmpeg 端到端；无 ffmpeg 环境自动降级为校验断言）
   const shot2 = projDetail.data.shots[1];
   const sv2 = await api('POST', `/api/projects/${pid}/shots/${shot2.id}/videos`, {});

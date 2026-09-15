@@ -9,6 +9,7 @@ const { log } = require('../core/logger');
 const { ApiError, ah } = require('../core/errors');
 const { buildPayload } = require('../services/payloads');
 const { submitTask } = require('../services/task-queue'); // 创建任务仍走入队语义
+const { computeVideoMetrics } = require('../lib/video-metrics'); // v2.5 镜头级客观指标
 
 module.exports = function registerTaskRoutes(app) {
   // 统计
@@ -58,6 +59,20 @@ module.exports = function registerTaskRoutes(app) {
     if (!t) throw new ApiError(404, '任务不存在');
     res.json(t);
   });
+
+  // v2.5 镜头级客观指标（筛查抖动/闪烁/运动幅度；供 AI 与人工优先复核可疑镜头）
+  app.get(
+    '/api/tasks/:id/metrics',
+    ah(async (req, res) => {
+      const t = tasks.get(req.params.id);
+      if (!t) throw new ApiError(404, '任务不存在');
+      const src = t.video_local_path || t.metadata_url;
+      if (t.status !== 'completed' || !src) throw new ApiError(400, '仅已完成且有视频产物的任务可计算指标');
+      const m = computeVideoMetrics(src);
+      if (!m) throw new ApiError(400, '指标计算失败（需本机 ffmpeg，且素材可读）');
+      res.json({ ok: true, task_id: t.id, shot_id: t.shot_id, metrics: m });
+    }),
+  );
 
   // 重试（v2.1：原任务原地重新入队——失败 → 队列中 → 生成中 → 完成/失败，任务 ID 不变，
   // 不再新建记录；输入参数与 project/shot/image 溯源全部保留，retry_count 自增）

@@ -33,6 +33,9 @@ const paths = {
   '/api/tasks/{id}/retry': {
     post: '失败重试（v2.1：原任务原地重新入队——ID 不变，状态重置为 queued 重新流转 队列中→生成中→完成/失败；输入参数与溯源保留，retry_count +1；视频与图片任务均可）',
   },
+  '/api/tasks/{id}/metrics': {
+    get: 'v2.5 镜头级客观指标（luma_mean 亮度 / luma_std 亮度波动 / flash_ratio 闪烁帧占比 / motion_mean 帧间差≈运动幅度）——AI 与人工可据此优先复核可疑镜头',
+  },
   '/api/tasks/{id}/poll': { post: '立即强制轮询一次（需已有 video_id）' },
   '/api/tasks/bulk/clear-completed': { post: '清空已完成' },
   '/api/tasks/bulk/clear-failed': { post: '清空 failed 与 submit_error' },
