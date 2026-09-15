@@ -8,7 +8,7 @@
  *       不要求角色图、不注入 <Picture 1> 前缀。
  * 依赖由 server.js 注入（避免循环 require）。
  */
-const { ensureCharacterRefPrefix } = require('./prompts');
+const { ensureCharacterRefPrefix, ensureStyleAnchor } = require('./prompts');
 
 function createPipelineService(deps) {
   const { projects, buildPayload, submitTask, ApiError, log } = deps;
@@ -31,13 +31,16 @@ function createPipelineService(deps) {
     if (!text) throw new ApiError(400, '缺少视频提示词（请先生成或手动输入）');
     const secondsFinal = String(seconds || p.seconds || '5');
     const ratioFinal = String(aspectRatio || p.aspect_ratio || '16:9');
+    // v2.5.1：风格锚兜底（纯文生/引用角色 两条分支共用）——手工改过的提示词常丢掉它，
+    // 会静默漂移成写实风格（E03 镜8 实测）。与 <Picture N> 前缀同为确定性机械注入。
+    const anchored = ensureStyleAnchor(text, p.style);
 
     // v1.3 引用开关：镜头明确关闭（use_character_ref=0 或 mode=text）→ 纯文生模式
     const useRef = !shot || (shot.use_character_ref !== 0 && shot.mode !== 'text');
     if (!useRef) {
       const { payload, meta } = buildPayload({
         model: 'agnes-video-2.5-flash',
-        prompt: text,
+        prompt: anchored,
         mode: 'text',
         seconds: secondsFinal,
         size: '720P',
@@ -64,7 +67,7 @@ function createPipelineService(deps) {
       throw new ApiError(400, '请先完成「角色设定」并定稿角色图（纯空镜镜头可在镜头中关闭「引用角色图」）');
     }
     // 提示词中必须引用角色图，显式保持外观一致（前缀注入单一来源见 services/prompts.js）
-    const finalPrompt = ensureCharacterRefPrefix(text, refs.length);
+    const finalPrompt = ensureCharacterRefPrefix(anchored, refs.length);
     const { payload, meta } = buildPayload({
       model: 'agnes-video-2.5-flash',
       prompt: finalPrompt,

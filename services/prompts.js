@@ -66,6 +66,17 @@ function ensureCharacterRefPrefix(prompt, count = 1) {
   return `以 ${pics} 中的角色为参考，保持其外观一致。${t}`;
 }
 
+/** v2.5.1：风格锚补齐（幂等）——项目设了 style 而镜头提示词未包含时自动追加。
+ *  动机：返工/审查采纳会整段替换 video_prompt，容易丢掉脚手架追加的风格锚 →
+ *  生成结果静默漂移（E03 镜8 实测：丢了锚后出写实风格的手部特写）。
+ *  与 ensureCharacterRefPrefix 同为确定性机械注入，不做主观改写。 */
+function ensureStyleAnchor(prompt, style) {
+  const t = String(prompt || '').trim();
+  const s = String(style || '').trim();
+  if (!s || !t || t.includes(s)) return t;
+  return t + s;
+}
+
 /** P1-4：判定某条审查建议是否为「机械性」high——仅限确定性缺陷，可安全自动修复。
  *  当前规则：镜头已引用定稿角色图，但当前提示词漏注入 <Picture 1> 前缀，
  *  且审查描述确为「未引用角色」。主观性 high（叙事/节奏/画面取舍）一律返回 false，留人工。 */
@@ -219,6 +230,7 @@ module.exports = {
   clampNarration,
   CHAR_REF_PREFIX,
   ensureCharacterRefPrefix,
+  ensureStyleAnchor,
   isMechanicalPromptFix,
   estimateJaMoras,
   hasKana,

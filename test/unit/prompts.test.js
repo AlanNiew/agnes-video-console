@@ -8,6 +8,7 @@ const {
   normalizeStoryboardShots,
   clampNarration,
   ensureCharacterRefPrefix,
+  ensureStyleAnchor,
   isMechanicalPromptFix,
   estimateJaMoras,
   hasKana,
@@ -157,6 +158,25 @@ describe('ensureCharacterRefPrefix（P1-4 角色引用前缀幂等注入）', ()
   test('v2.5 幂等：已含任意编号 <Picture N>（含 <Picture 2>）原样返回', () => {
     const p = '以 <Picture 2> 中的老人为参考，保持其外观一致。后文';
     expect(ensureCharacterRefPrefix(p, 2)).toBe(p);
+  });
+});
+
+describe('ensureStyleAnchor（v2.5.1 风格锚幂等补齐）', () => {
+  const STYLE = '日本动漫赛璐璐风格，清晰墨线描边，平涂色块与硬边阴影';
+
+  test('未含风格锚 → 追加到末尾（与脚手架拼接方式一致）', () => {
+    expect(ensureStyleAnchor('一只手攥着两串苹果糖', STYLE)).toBe('一只手攥着两串苹果糖' + STYLE);
+  });
+
+  test('已含风格锚 → 原样返回（幂等，不重复追加）', () => {
+    const p = '海港黄昏。' + STYLE;
+    expect(ensureStyleAnchor(p, STYLE)).toBe(p);
+  });
+
+  test('项目未设风格锚 / 提示词为空 → 原样返回', () => {
+    expect(ensureStyleAnchor('一段提示词', '')).toBe('一段提示词');
+    expect(ensureStyleAnchor('一段提示词', null)).toBe('一段提示词');
+    expect(ensureStyleAnchor('', STYLE)).toBe('');
   });
 });
 

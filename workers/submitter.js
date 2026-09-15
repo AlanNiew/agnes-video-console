@@ -37,6 +37,14 @@ function computeBackoffMs(attempts, kind) {
   return Math.min(RATE_LIMIT_BASE_MS * 2 ** (attempts - 1), RATE_LIMIT_CAP_MS);
 }
 
+/** 上游错误详情：优先 detail / error.message；503 无正文时给可读提示（队列繁忙），避免出现「提交失败（503）：」 */
+function serverDetail(r) {
+  const d = r?.data?.detail || r?.data?.error?.message || r?.data?.error || '';
+  const text = String(typeof d === 'string' ? d : d ? JSON.stringify(d) : '').trim();
+  if (text) return text.slice(0, 300);
+  return r?.status === 503 ? '上游队列繁忙（503，生成额度排队），稍后自动重试' : '上游服务异常';
+}
+
 class Submitter {
   constructor() {
     this.timer = null;
@@ -127,6 +135,23 @@ class Submitter {
       log(
         'warn',
         `任务 #${t.id} 触发 429 限流，${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
+      );
+      return;
+    }
+
+    // 5xx（上游队列满 503 / 网关抖动等）属瞬时错误：退避重试，不再秒判死。
+    // 历史缺陷：除 429 外一律 fail，导致 video_queue_full 直接把任务打成 submit_error（E03 重拍实测）
+    if (r.status >= 500) {
+      if (attempts >= MAX_ATTEMPTS) {
+        this.fail(t.id, `提交失败（${r.status}），自动重试 ${attempts - 1} 次后仍失败：${serverDetail(r)}`, r.data);
+        return;
+      }
+      const delay = computeBackoffMs(attempts, 'net');
+      this.backoff(t.id, delay, attempts);
+      log(
+        'warn',
+        `任务 #${t.id} 上游返回 ${r.status}（瞬时错误，${serverDetail(r)}），` +
+          `${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
       );
       return;
     }
