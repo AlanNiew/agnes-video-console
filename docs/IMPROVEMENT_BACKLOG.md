@@ -175,8 +175,14 @@
 
 > 详细任务书见 **`docs/PLATFORM_PUBLISH_PLAN.md`**（含已定设计、验收标准、硬约束、可复用资产与踩坑备忘）。
 
-- **阶段一（待做）**：多平台发布包——各平台规格的成片/封面/文案/字幕自动生成到作品目录 `发布包/`
-  （含 9:16 竖屏切片，B 站 16:9 直用），**零登录态、零风控**；配 UI 按钮与 `POST /api/projects/:id/publish-package`。
+- ✅ **阶段一（v2.6.0 已交付）**：多平台发布包——每集成片归档自动生成作品目录 `发布包/`：
+  `B站/`（成片.mp4 原始画幅直用 · 封面.png 16:9 · 文案.txt：标题≤80/简介/标签/分区合集/置顶评论）
+  ＋ `抖音/`（成片-竖屏.mp4 9:16 模糊背景填充切片，音频流拷贝不改响度 · 封面-竖屏.png · 文案.txt：短标题/话题/一句话）
+  ＋ `README.md`（各平台上传步骤与文件清单）。**零登录态、零风控、零新运行时依赖**；
+  `lib/publish-package.js` 纯函数（文案推导/清单/README）＋ `workers/render.js` 的 `buildPublishPackage`/
+  `fillAspect`（竖屏切片，经 `runFfmpeg`）；`POST /api/projects/:id/publish-package`（幂等整包重建）＋
+  渲染面板「📦 发布包」按钮；`tools/publish/*.json` 新增可选 `short_title`/`short_intro`/`hashtags`（向后兼容）。
+  验证：e2e 覆盖归档自动生成 + 路由 + 真实 ffmpeg 竖屏切片（e2e 用 500ms 节流、渲染约 2–4min）。
 - **阶段二（待做，路线已定）**：B 站自动投递——**封装外部 `biliup` 二进制**（新仓 `github.com/biliup/biliup`；
   旧 `biliup-rs` 已归档），不新增 npm 运行时依赖；检测不到 biliup 时降级为"发布包 + 手动上传指引"。
   参数映射/接口事实/风控（`code 601` 频控）/验收标准见任务书第八章起。

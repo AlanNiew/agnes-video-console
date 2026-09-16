@@ -22,7 +22,8 @@ const { log } = require('../core/logger');
 const { probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
 const { buildSubtitleAss, buildSrt } = require('../services/subtitles');
-const { buildPublishKit } = require('../lib/publish-kit');
+const { buildPublishKit, findPublishMeta } = require('../lib/publish-kit');
+const { PLATFORMS, buildPlatformCopy, renderCopyText, buildPackageReadme } = require('../lib/publish-package');
 
 const TICK_MS = 1500;
 // 单次 ffmpeg 调用的硬超时兜底：正常最慢的大合流约 3-6 分钟，20 分钟足够；
@@ -452,11 +453,144 @@ function buildArchiveDoc({ job, project, segments }) {
   ].join('\n');
 }
 
+/* ---------- v2.6 多平台发布包（阶段一）：本地物料生成，不涉及任何登录态与风控 ---------- */
+
+/** 图片/视频尺寸（ffprobe；失败返回 null） */
+function probeSize(file) {
+  try {
+    const r = spawnSync(
+      'ffprobe',
+      ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width,height', '-of', 'csv=p=0', file],
+      { encoding: 'utf8', timeout: 20_000, windowsHide: true },
+    );
+    const [w, h] = String(r.stdout || '')
+      .trim()
+      .split(',')
+      .map((x) => Number(x));
+    return w > 0 && h > 0 ? { w, h } : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * v2.6 画幅填充（模糊背景填充，保完整构图，**不裁切**）：
+ *   底层 = 原画面放大铺满 + 高斯模糊；上层 = 原画面等比缩放居中（16:9 ↔ 9:16 互转共用）。
+ * 视频分支优先 `-c:a copy` 流拷贝 → **时长/音量/响度与成片完全一致**（只做视频滤镜）；
+ * 音轨非 mp4 兼容编码时降级重编码（响度不受影响，仅损失极少音质）。
+ * @param {{src:string, dest:string, w:number, h:number, isVideo?:boolean, cwd?:string}} o
+ */
+async function fillAspect({ src, dest, w, h, isVideo = true, cwd = undefined }) {
+  const sigma = Math.max(8, Math.round(Math.min(w, h) * 0.03));
+  const vf =
+    `[0:v]scale=${w}:${h}:force_original_aspect_ratio=increase,crop=${w}:${h},` +
+    `gblur=sigma=${sigma},setsar=1[bg];` +
+    `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,setsar=1[fg];` +
+    `[bg][fg]overlay=(W-w)/2:(H-h)/2,format=${isVideo ? 'yuv420p' : 'rgb24'}[v]`;
+  const common = [
+    '-i',
+    src,
+    '-filter_complex',
+    vf,
+    '-map',
+    '[v]',
+    '-c:v',
+    'libx264',
+    '-preset',
+    'medium',
+    '-crf',
+    '18',
+  ];
+  if (!isVideo) return runFfmpeg([...common, '-frames:v', '1', dest], { cwd });
+  const first = await runFfmpeg([...common, '-map', '0:a?', '-c:a', 'copy', '-movflags', '+faststart', dest], {
+    cwd,
+  });
+  if (first.ok) return first;
+  return runFfmpeg([...common, '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', dest], {
+    cwd,
+  });
+}
+
+/**
+ * v2.6 生成多平台发布包（阶段一交付物）：
+ *   作品目录/发布包/{B站,抖音}/ + README.md，平台文案来自 tools/publish/*.json（缺失自动降级）。
+ * **幂等**：整包删除重建，重渲后再生成不堆积。
+ * @param {{project:object, job:object, filmPath:string, coverPath?:string|null, workDir:string}} o
+ * @returns {Promise<{dir:string, files:Array<{platform:string,name:string,path:string,role:string}>, notes:string[]}>}
+ */
+async function buildPublishPackage({ project, job, filmPath, coverPath = null, workDir }) {
+  const pkgDir = path.join(workDir, '发布包');
+  const notes = [];
+  const meta = findPublishMeta(project) || {};
+  const copy = buildPlatformCopy({ project, meta, job });
+  const biliDir = path.join(pkgDir, PLATFORMS[0].dir);
+  const dyDir = path.join(pkgDir, PLATFORMS[1].dir);
+  const BILI = DIMS['16:9'];
+  const DY = DIMS['9:16'];
+
+  fs.rmSync(pkgDir, { recursive: true, force: true }); // 幂等：整包重建，不堆积旧文件
+  fs.mkdirSync(biliDir, { recursive: true });
+  fs.mkdirSync(dyDir, { recursive: true });
+
+  // ---- B 站：成片直接可用（不重编码）----
+  fs.copyFileSync(filmPath, path.join(biliDir, '成片.mp4'));
+  // B 站封面：16:9（源封面画幅不合时用同款模糊填充，满足 ≥1146×717 的画幅要求）
+  const biliCover = path.join(biliDir, '封面.png');
+  if (coverPath && fs.existsSync(coverPath)) {
+    const sz = probeSize(coverPath);
+    if (sz && sz.w === BILI.w && sz.h === BILI.h) fs.copyFileSync(coverPath, biliCover);
+    else {
+      const r = await fillAspect({ src: coverPath, dest: biliCover, w: BILI.w, h: BILI.h, isVideo: false });
+      if (!r.ok) notes.push(`B 站封面转 16:9 失败（原图已跳过）：${r.err.slice(0, 120)}`);
+    }
+  } else {
+    notes.push('未找到封面.png（片头卡抽帧失败或未启用片头卡），B 站封面需自行补图。');
+  }
+
+  // ---- 抖音 / 快手：9:16 竖屏切片（画幅已一致则直接复制，零重编码）----
+  const dyFilm = path.join(dyDir, '成片-竖屏.mp4');
+  const filmSize = probeSize(filmPath);
+  if (filmSize && filmSize.w === DY.w && filmSize.h === DY.h) {
+    fs.copyFileSync(filmPath, dyFilm);
+    notes.push('原成片即 9:16 竖屏，竖屏版本为直接复制（零重编码，音画与成片一致）。');
+  } else {
+    const r = await fillAspect({ src: filmPath, dest: dyFilm, w: DY.w, h: DY.h, isVideo: true });
+    if (!r.ok) throw new Error(`竖屏切片失败：${r.err.slice(0, 160) || 'ffmpeg 未安装或不在 PATH'}`);
+  }
+  const dyCover = path.join(dyDir, '封面-竖屏.png');
+  if (coverPath && fs.existsSync(coverPath)) {
+    const sz = probeSize(coverPath);
+    if (sz && sz.w === DY.w && sz.h === DY.h) fs.copyFileSync(coverPath, dyCover);
+    else {
+      const r = await fillAspect({ src: coverPath, dest: dyCover, w: DY.w, h: DY.h, isVideo: false });
+      if (!r.ok) notes.push(`竖屏封面生成失败（原图已跳过）：${r.err.slice(0, 120)}`);
+    }
+  }
+
+  // ---- 文案.txt（可直接全选复制到发布页）+ README（上传步骤与文件清单）----
+  const files = [];
+  for (const p of PLATFORMS) {
+    const dir = path.join(pkgDir, p.dir);
+    fs.writeFileSync(path.join(dir, '文案.txt'), `\ufeff${renderCopyText(p.key, copy[p.key], p.files)}`, 'utf8');
+    for (const f of p.files) {
+      const abs = path.join(dir, f.name);
+      if (fs.existsSync(abs)) files.push({ platform: p.dir, name: f.name, path: abs, role: f.role });
+    }
+  }
+  fs.writeFileSync(
+    path.join(pkgDir, 'README.md'),
+    `\ufeff${buildPackageReadme({ project, job, copy, notes })}`,
+    'utf8',
+  );
+  return { dir: pkgDir, files, notes };
+}
+
 /** v2.2：作品归档——成片/字幕/台词写入 data/works/《项目名》-id/（与素材目录彻底分开）
  * 成片与字幕按渲染任务版本化（重渲追加），台词/海报为项目最新版覆盖。
  * v2.5：追加「制作档案-N.md」自动草稿。
- * @returns {string|null} 作品目录绝对路径（失败返回 null，不影响成片状态） */
-function archiveWork({ job, project, segments, subLines, outPath, titleCardFile = null }) {
+ * v2.6：追加「发布包/」（B 站 16:9 + 抖音 9:16 竖屏）——失败不影响成片归档。
+ * @returns {Promise<string|null>} 作品目录绝对路径（失败返回 null，不影响成片状态） */
+async function archiveWork({ job, project, segments, subLines, outPath, titleCardFile = null }) {
   try {
     const { dir } = workDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
@@ -500,6 +634,19 @@ function archiveWork({ job, project, segments, subLines, outPath, titleCardFile 
       } catch {
         /* 封面写入失败不影响成片归档 */
       }
+    }
+    // v2.6 多平台发布包（阶段一）：每集成片归档时自动生成 发布包/（B 站 16:9 + 抖音 9:16 竖屏）
+    try {
+      const r = await buildPublishPackage({
+        project,
+        job,
+        filmPath: path.join(dir, `成片-${job.id}.mp4`),
+        coverPath: path.join(dir, '封面.png'),
+        workDir: dir,
+      });
+      if (r.notes.length) log('warn', `渲染任务 #${job.id} 发布包降级项：${r.notes.join('；')}`);
+    } catch (e) {
+      log('warn', `渲染任务 #${job.id} 发布包生成失败（不影响成片与其它归档）：${e.message}`);
     }
     return dir;
   } catch (e) {
@@ -1058,7 +1205,8 @@ class Renderer {
         else log('warn', `渲染任务 #${job.id} 片头卡封面抽取失败（不影响成片）：${rc.err.slice(0, 200)}`);
       }
       // v2.2 作品归档：成片/字幕/台词/制作档案/发布文案/封面 → data/works/《项目名》-id/
-      const workDir = archiveWork({
+      // v2.6：归档段追加「发布包/」（B 站 16:9 + 抖音 9:16 竖屏，整包幂等重建）
+      const workDir = await archiveWork({
         job,
         project,
         segments,
@@ -1210,3 +1358,6 @@ module.exports.findSerifFont = findSerifFont;
 module.exports.stageFont = stageFont;
 module.exports.titleCardFilters = titleCardFilters; // 片头卡/封面预览共用（tools/card-preview.js）
 module.exports.splitEpisodeLabel = splitEpisodeLabel;
+module.exports.buildPublishPackage = buildPublishPackage; // v2.6 多平台发布包（路由手动重生成共用）
+module.exports.fillAspect = fillAspect; // v2.6 画幅模糊填充（竖屏切片/封面互转共用）
+module.exports.probeSize = probeSize;

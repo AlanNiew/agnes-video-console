@@ -746,7 +746,8 @@ function renderJobItem(j) {
       ${qualityHtml}
       ${
         j.status === 'completed'
-          ? `<div class="mt"><button class="btn ghost sm" data-inspect-render="${j.id}" title="关键帧 / 音频波形 / 音视频流时长对比 / 客观指标（亮度·闪烁·运动）">🔍 质检图与指标</button></div>`
+          ? `<div class="mt"><button class="btn ghost sm" data-inspect-render="${j.id}" title="关键帧 / 音频波形 / 音视频流时长对比 / 客观指标（亮度·闪烁·运动）">🔍 质检图与指标</button>
+        <button class="btn ghost sm" data-publish-package="${j.id}" title="生成本地多平台发布包：B站（16:9 成片/封面/文案）+ 抖音（9:16 竖屏切片/竖屏封面/短标题话题）+ 上传步骤清单——选文件即可发布，无需登录态">📦 发布包</button></div>`
           : ''
       }
       ${

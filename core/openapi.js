@@ -70,6 +70,9 @@ const paths = {
   '/api/projects/{id}/publish-kit': {
     post: 'v2.5 生成/刷新发布物料：写「发布文案-N.md」到作品目录（标题候选/简介/标签/置顶评论/看点时间轴），返回 {ok, path, markdown}',
   },
+  '/api/projects/{id}/publish-package': {
+    post: 'v2.6 多平台发布包（阶段一·本地物料）：生成作品目录 `发布包/`——B站/{成片.mp4(原始画幅),封面.png(16:9),文案.txt(标题≤80/简介/标签/分区合集/置顶评论)} + 抖音/{成片-竖屏.mp4(9:16 模糊背景填充，时长与成片一致、音频流拷贝不响度重设),封面-竖屏.png,文案.txt(短标题/话题/一句话)} + README.md(上传步骤与文件清单)；文案来自 tools/publish/*.json（缺失自动降级），**不涉及任何平台登录态与风控**。body：{render_job_id?(省略取最新已完成渲染)}；幂等（整包重建不堆积）→ 201 {ok, path, render_job_id, files:[{platform,name,path,role}], notes}；无已完成成片/找不到成片文件 → 400，项目不存在 → 404',
+  },
   '/api/projects/{id}/checklist': {
     get: 'v2.5 制作 checklist（开拍/交付自检）：{items:[{key,label,ok,detail}], ready, total, ready_pct}——覆盖 创意/风格锚/角色定稿/分镜/旁白/镜头视频/逐镜配音/配音时长不超镜长/BGM',
   },

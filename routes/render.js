@@ -308,6 +308,39 @@ module.exports = function registerRenderRoutes(app) {
     }),
   );
 
+  // v2.6 多平台发布包（阶段一）：本地生成 作品目录/发布包/（B 站 16:9 + 抖音 9:16 竖屏）。
+  // 只做物料，不登录、不调平台接口；渲染归档时已自动生成一次，本路由用于「改完策展文案后手动重生成」。
+  // body: {render_job_id?} 省略时取最新一条已完成渲染。
+  app.post(
+    '/api/projects/:id/publish-package',
+    ah(async (req, res) => {
+      const p = projects.get(req.params.id);
+      if (!p) throw new ApiError(404, '项目不存在');
+      const done = renders.listByProject(p.id).filter((j) => j.status === 'completed');
+      const wantId = Number((req.body || {}).render_job_id) || null;
+      const job = wantId ? done.find((j) => j.id === wantId) : done.sort((a, b) => b.id - a.id)[0];
+      if (!job) throw new ApiError(400, '还没有已完成的成片，无法生成发布包（请先渲染成片）');
+      const { dir } = workDirFor(p);
+      // 作品目录里的版本化成片优先，回退渲染产物路径（工作目录被清理时仍可用）
+      const filmPath = [path.join(dir, `成片-${job.id}.mp4`), job.output_path].find((f) => f && fs.existsSync(f));
+      if (!filmPath) throw new ApiError(400, `找不到渲染 #${job.id} 的成片文件，请重新渲染后再试`);
+      let r;
+      try {
+        r = await renderer.buildPublishPackage({
+          project: p,
+          job,
+          filmPath,
+          coverPath: path.join(dir, '封面.png'),
+          workDir: dir,
+        });
+      } catch (e) {
+        throw new ApiError(400, `发布包生成失败：${e.message}`);
+      }
+      log('info', `项目 #${p.id} 发布包已生成（渲染 #${job.id}）：${r.dir}（${r.files.length} 个文件）`);
+      res.status(201).json({ ok: true, path: r.dir, render_job_id: job.id, files: r.files, notes: r.notes });
+    }),
+  );
+
   // 删除渲染任务（渲染中不可删；artifacts 渲染缓存清理；**作品目录 data/works 保留**——作品是用户劳动成果）
   app.delete('/api/render/jobs/:id', (req, res) => {
     const job = renders.get(req.params.id);

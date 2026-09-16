@@ -1608,6 +1608,86 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       }
       ok(`作品库：${wkLib.total} 部作品，最新《${wkItem?.name}》成片/海报/质检 ✓`);
     }
+
+    // v2.6 多平台发布包（阶段一）：渲染归档时自动生成 发布包/（B站 16:9 + 抖音 9:16 竖屏 + README）
+    {
+      const pkgDir = path.join(renJob.work_dir, '发布包');
+      const probeMeta = (file, show) => {
+        const r = ss('ffprobe', ['-v', 'error', '-of', 'json', ...show, file], { encoding: 'utf8' });
+        try {
+          return JSON.parse(r.stdout || '{}');
+        } catch {
+          return {};
+        }
+      };
+      const streamOf = (file, sel) =>
+        (probeMeta(file, ['-select_streams', sel, '-show_entries', 'stream']).streams || [])[0] || {};
+      const durOf = (file) => Number(probeMeta(file, ['-show_entries', 'format=duration']).format?.duration);
+      if (!fs.existsSync(pkgDir)) err('渲染归档未生成发布包目录 发布包/');
+      else {
+        const need = [
+          'B站/成片.mp4',
+          'B站/封面.png',
+          'B站/文案.txt',
+          '抖音/成片-竖屏.mp4',
+          '抖音/封面-竖屏.png',
+          '抖音/文案.txt',
+          'README.md',
+        ];
+        for (const f of need) if (!fs.existsSync(path.join(pkgDir, f))) err(`发布包缺文件: ${f}`);
+        const biliTxt = fs.readFileSync(path.join(pkgDir, 'B站/文案.txt'), 'utf8');
+        if (!biliTxt.includes('标题') || !biliTxt.includes('标签')) err('B站文案缺章节（标题/标签）');
+        const dyTxt = fs.readFileSync(path.join(pkgDir, '抖音/文案.txt'), 'utf8');
+        if (!dyTxt.includes('短标题') || !dyTxt.includes('话题') || !dyTxt.includes('#')) {
+          err('抖音文案缺短标题/话题标签');
+        }
+        if (!fs.readFileSync(path.join(pkgDir, 'README.md'), 'utf8').includes('上传步骤')) {
+          err('发布包 README 缺上传步骤');
+        }
+        // 竖屏发布片：720×1280 且时长与成片一致（音频流拷贝，只做视频滤镜）
+        const dyFilm = path.join(pkgDir, '抖音/成片-竖屏.mp4');
+        const v = streamOf(dyFilm, 'v:0');
+        if (v.width !== 720 || v.height !== 1280) err(`竖屏发布片画幅异常: ${v.width}x${v.height}`);
+        const dFilm = durOf(path.join(renJob.work_dir, `成片-${renJob.id}.mp4`));
+        const dDy = durOf(dyFilm);
+        if (Number.isFinite(dFilm) && Number.isFinite(dDy) && Math.abs(dFilm - dDy) > 0.2) {
+          err(`竖屏切片时长与成片不一致: ${dFilm}s vs ${dDy}s`);
+        }
+        // 封面：B站 16:9 / 抖音 9:16（源封面画幅不合时由模糊填充换算）
+        const cb = streamOf(path.join(pkgDir, 'B站/封面.png'), 'v:0');
+        const cd = streamOf(path.join(pkgDir, '抖音/封面-竖屏.png'), 'v:0');
+        if (cb.width !== 1280 || cb.height !== 720) err(`B站封面画幅异常: ${cb.width}x${cb.height}`);
+        if (cd.width !== 720 || cd.height !== 1280) err(`竖屏封面画幅异常: ${cd.width}x${cd.height}`);
+        ok(`发布包：B站/抖音 各 3 件 + README（竖屏 ${v.width}x${v.height} · 时长 ${dDy?.toFixed?.(1)}s ≈ 成片）`);
+      }
+      // v2.6 发布包路由：手动重生成（幂等）+ 404 契约
+      const pp = await api('POST', `/api/projects/${pid}/publish-package`, { render_job_id: renJob.id });
+      if (pp.status !== 201 || !pp.data.path) err(`发布包路由返回异常: ${JSON.stringify(pp.data).slice(0, 160)}`);
+      const names = (pp.data.files || []).map((f) => f.name);
+      for (const n of ['成片.mp4', '成片-竖屏.mp4', '文案.txt']) {
+        if (!names.includes(n)) err(`发布包清单缺 ${n}`);
+      }
+      if ((await api('POST', '/api/projects/999999/publish-package')).status !== 404) {
+        err('不存在项目的发布包未被 404 拒绝');
+      }
+      ok(`发布包路由（重生成幂等 · ${pp.data.files.length} 个文件清单）`);
+
+      // v2.6 竖屏切片（模糊背景填充）真实 ffmpeg 验证：4:3 源 → 720×1280，音轨流拷贝、时长不变
+      if (fixtureFile && fs.existsSync(fixtureFile)) {
+        const rendererMod = require('../workers/render');
+        const sliceOut = path.join(TEST_ARTIFACTS, 'e2e-vertical-slice.mp4');
+        const rs = await rendererMod.fillAspect({ src: fixtureFile, dest: sliceOut, w: 720, h: 1280 });
+        if (!rs.ok) err(`竖屏切片生成失败: ${rs.err.slice(0, 160)}`);
+        else {
+          const sv = streamOf(sliceOut, 'v:0');
+          const sa = streamOf(sliceOut, 'a:0');
+          if (sv.width !== 720 || sv.height !== 1280) err(`切片画幅异常: ${sv.width}x${sv.height}`);
+          if (!sa.codec_name) err('竖屏切片丢失音轨（应为 -c:a copy）');
+          if (Math.abs((durOf(sliceOut) || 0) - 2) > 0.3) err(`切片时长异常: ${durOf(sliceOut)}s（源 2s）`);
+          ok(`竖屏切片（模糊背景填充）：320x240 → ${sv.width}x${sv.height} · 音轨 ${sa.codec_name} 流拷贝`);
+        }
+      }
+    }
     const delJob = await api('DELETE', `/api/render/jobs/${ren.data.id}`);
     if (delJob.status !== 200 || fs.existsSync(renJob.output_path)) err('渲染任务删除应连带清理产物文件');
     ok('渲染任务删除并清理产物文件');

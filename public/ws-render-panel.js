@@ -139,6 +139,49 @@ async function openRenderCompare(projectId) {
   };
 }
 
+/** v2.6 多平台发布包（阶段一）：调用后端生成 发布包/（B站 16:9 + 抖音 9:16 竖屏），
+ * 弹窗列出各平台文件、用途与目录路径（含降级提示）。「局部更新」：只弹窗，不整页重绘。 */
+async function generatePublishPackage(jobId, btn) {
+  const projectId = st.currentProjectId;
+  if (!projectId) return;
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '📦 生成中…';
+  }
+  try {
+    const r = await api(`/api/projects/${projectId}/publish-package`, {
+      method: 'POST',
+      body: { render_job_id: jobId },
+    });
+    const rows = (r.files || [])
+      .map((f) => `<tr><td>${esc(f.platform)}</td><td>${esc(f.name)}</td><td class="hint">${esc(f.role)}</td></tr>`)
+      .join('');
+    const notes = r.notes || [];
+    openModal({
+      title: `📦 发布包（渲染 #${jobId}）`,
+      bodyHTML: `
+        <div class="hint">目录：<br><code style="word-break:break-all">${esc(r.path || '')}</code></div>
+        <div style="max-height:46vh;overflow:auto;margin-top:8px">
+          <table class="matrix-table"><thead><tr><th style="width:70px">平台</th><th>文件</th><th>用途</th></tr></thead><tbody>${rows}</tbody></table>
+        </div>
+        ${
+          notes.length
+            ? `<p class="hint mt" style="color:#e0b050">${notes.map((n) => '⚠️ ' + esc(n)).join('<br>')}</p>`
+            : ''
+        }
+        <p class="hint mt">B站：成片/封面直接上传，<code>文案.txt</code> 的标题（≤80 字）与简介可整段粘贴；抖音/快手：用竖屏文件 + 短标题与 <code>#话题</code>。<code>README.md</code> 内含逐步上传指引。全程无需登录态。</p>`,
+    });
+    toast('发布包已生成（含竖屏切片与各平台文案）', 'ok');
+  } catch (e) {
+    toast('生成发布包失败：' + e.message, 'err');
+  } finally {
+    if (btn && btn.isConnected) {
+      btn.disabled = false;
+      btn.textContent = '📦 发布包';
+    }
+  }
+}
+
 /** P2-7 / v2.5：把当前项目参数（创意/风格/画幅/时长 + 成片预设 + 角色库角色）存成可复用系列模板 */
 async function saveProjectTemplate(projectId) {
   let p;
@@ -324,6 +367,14 @@ function bindRenderPanel(projectId, renderJobs = []) {
   document.querySelectorAll('[data-inspect-render]').forEach((b) => {
     b.onclick = () => inspectRender(Number(b.dataset.inspectRender));
   });
+  // v2.6：发布包按钮走容器事件委托——轮询重建 #wsRenderJobs 后仍生效（新按钮无需重新绑定）
+  const jobsBox = $('#wsRenderJobs');
+  if (jobsBox) {
+    jobsBox.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-publish-package]');
+      if (b) generatePublishPackage(Number(b.dataset.publishPackage), b);
+    });
+  }
   const rbtn = $('#wsRenderBtn');
   const mbtn = $('#wsMatrix');
   if (mbtn) mbtn.onclick = () => showMatrix(projectId); // v2.5 制作矩阵（P1-2）
