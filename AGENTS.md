@@ -21,7 +21,8 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 
 - **Node ≥ 22.13**（`node:sqlite`，API Key 存 SQLite，零原生编译）。
 - **e2e 需要本机装 ffmpeg + ffprobe 且在 PATH**：渲染用例跑真实 ffmpeg 合成（含响度补偿与封面）；ffprobe 用于 TTS 时长探测，缺失时该用例静默跳过。
-- **即梦为可选上游**：需本机装官方 `dreamina` CLI 并完成登录（`curl -fsSL https://jimeng.jianying.com/cli | bash`，Windows 落到 `~/bin/dreamina.exe`，可用 `DREAMINA_CLI_PATH` 覆盖）。缺失时即梦任务保留 queued 走 5 分钟退避（`not-installed` / `not-logged-in`），**Agnes 主链路不受任何影响**。登录为 OAuth Device Flow（`login --headless` + `login checklogin --device_code=…`），授权码有效期约 10 分钟。
+- **即梦为可选上游**：需本机装官方 `dreamina` CLI 并完成登录（`curl -fsSL https://jimeng.jianying.com/cli | bash`，Windows 落到 `~/bin/dreamina.exe`，可用 `DREAMINA_CLI_PATH` 覆盖）。缺失时即梦任务保留 queued 走 5 分钟退避（`not-installed` / `not-logged-in` / `need-web-confirm`），**Agnes 主链路不受任何影响**。登录为 OAuth Device Flow（`login --headless` + `login checklogin --device_code=…`），授权码有效期约 10 分钟。
+- **即梦两条运维约束（官方《即梦 CLI 体验指南》）**：① **合规**——视频生成须先在即梦 Web 端用该模型完成一次生成，否则 CLI 返回 `AigcComplianceConfirmationRequired`（本系统归类为 `need-web-confirm`：保留入队等人工处理，**绝不判死**）；② **登录**——官方明确「不要通过 Agent 完成登录」（Agent 启动 CLI 时 `dreamina login` 打印的授权 URL 有误），应先在浏览器登录即梦 Web 端，再手动执行 `dreamina login` 并点授权。
 - **db.js import 即副作用**：require 时就 mkdir 数据目录并打开 SQLite。任何单测须先设 `DATA_DIR`/`DB_PATH` 指向临时目录（见 `test/unit/setup.js`，jest `setupFiles` 已处理，勿改为 `setupFilesAfterEach`）。
 - 429 退避单测加速：设 `SUBMIT_RATE_LIMIT_BASE_MS`（e2e 用 500 代替默认 60s）。
 

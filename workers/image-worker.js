@@ -317,18 +317,20 @@ class ImageWorker {
     }
 
     if (!r.ok) {
-      // 环境未就绪：非任务错误，保留 queued 等人工处理后自动续跑
-      if (r.kind === 'not-installed' || r.kind === 'not-logged-in') {
+      // 环境 / 合规未就绪：非任务错误，保留 queued 等人工处理后自动续跑（绝不判死）。
+      // need-web-confirm = AigcComplianceConfirmationRequired，需先到即梦 Web 端完成首次生成确认。
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
         const prev = this.retryUntil.get(t.id);
         this.retryUntil.set(t.id, {
           until: Date.now() + DREAMINA_ENV_BACKOFF_MS,
           attempts: (prev?.attempts || 0) + 1,
         });
-        tasks.update(t.id, {
-          status: 'queued',
-          error_message: `即梦环境未就绪（${r.kind}）：请确认已安装 dreamina CLI 并完成登录`,
-        });
-        log('warn', `图片任务 #${t.id} 即梦环境未就绪（${r.kind}），保留入队等待处理`);
+        const hint =
+          r.kind === 'need-web-confirm'
+            ? '即梦要求先到 Web 端用该模型完成一次生成（合规确认）'
+            : `即梦环境未就绪（${r.kind}）：请确认已安装 dreamina CLI 并完成登录`;
+        tasks.update(t.id, { status: 'queued', error_message: hint });
+        log('warn', `图片任务 #${t.id} ${hint}，保留入队等待处理`);
         return;
       }
       if (r.kind === 'timeout' || r.kind === 'spawn-error') {

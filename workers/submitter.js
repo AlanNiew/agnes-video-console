@@ -218,12 +218,19 @@ class Submitter {
     }
 
     if (!r.ok) {
-      // 环境未就绪：非任务自身错误，保留 queued 等人工处理（安装 CLI / 完成登录）后自动续跑
-      if (r.kind === 'not-installed' || r.kind === 'not-logged-in') {
+      // 环境 / 合规未就绪：非任务自身错误，保留 queued 等人工处理（安装 CLI、完成登录、
+      // 去 Web 端做首次生成确认）后自动续跑，绝不直接判死。
+      // need-web-confirm 对应 AigcComplianceConfirmationRequired —— 官方文档明确：
+      // 为满足合规要求，视频必须先到即梦 Web 端用该模型完成一次生成，CLI 才允许提交。
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
         this.backoff(t.id, DREAMINA_ENV_BACKOFF_MS, attempts);
+        const reason =
+          r.kind === 'need-web-confirm'
+            ? '即梦要求先到 Web 端用该模型完成一次生成（合规确认）'
+            : `即梦环境未就绪（${r.kind}）`;
         log(
           'warn',
-          `任务 #${t.id} 即梦环境未就绪（${r.kind}），保留入队，` +
+          `任务 #${t.id} ${reason}，保留入队，` +
             `${Math.round(DREAMINA_ENV_BACKOFF_MS / 60000)} 分钟后重试：${r.error}`,
         );
         return;

@@ -188,6 +188,8 @@ function buildVideoArgs(params = {}) {
     first,
     last,
     images,
+    video,
+    audio,
   } = params;
   if (!VIDEO_SUBCOMMANDS.includes(subcommand)) throw new Error(`不支持的即梦视频子命令：${subcommand}`);
 
@@ -204,8 +206,14 @@ function buildVideoArgs(params = {}) {
   if (first) args.push(`--first=${first}`);
   if (last) args.push(`--last=${last}`);
   if (images) args.push(`--images=${Array.isArray(images) ? images.join(',') : images}`);
+  // multimodal2video（全能参考）：可同时传入参考视频与参考音频
+  if (video) args.push(`--video=${Array.isArray(video) ? video.join(',') : video}`);
+  if (audio) args.push(`--audio=${Array.isArray(audio) ? audio.join(',') : audio}`);
   return args;
 }
+
+/** 即梦图片子命令：text2image（文生图）/ image2image（图生图，参考图经 --images 传入） */
+const IMAGE_SUBCOMMANDS = ['text2image', 'image2image'];
 
 /** 组装图片生成参数 → argv（--resolution_type 为 CLI 必填；--width/--height 与 --ratio 互斥） */
 function buildImageArgs(params = {}) {
@@ -218,10 +226,13 @@ function buildImageArgs(params = {}) {
     generateNum,
     width,
     height,
+    images,
     session,
     poll,
   } = params;
-  if (subcommand !== 'text2image') throw new Error(`不支持的即梦图片子命令：${subcommand}`);
+  if (!IMAGE_SUBCOMMANDS.includes(subcommand)) {
+    throw new Error(`不支持的即梦图片子命令：${subcommand}`);
+  }
 
   const args = [subcommand];
   if (resolutionType) args.push(`--resolution_type=${resolutionType}`);
@@ -231,6 +242,8 @@ function buildImageArgs(params = {}) {
   if (generateNum) args.push(`--generate_num=${generateNum}`);
   // CLI 规定 width/height 必须成对出现（单给会被拒）
   if (width && height) args.push(`--width=${width}`, `--height=${height}`);
+  // image2image 的参考图（本地路径或 URL，多张用逗号连接）
+  if (images) args.push(`--images=${Array.isArray(images) ? images.join(',') : images}`);
   if (session !== undefined && session !== null) args.push(`--session=${session}`);
   if (poll) args.push(`--poll=${poll}`);
   return args;
@@ -267,6 +280,7 @@ const dreamina = {
   buildImageArgs,
   extractImageUrls,
   VIDEO_SUBCOMMANDS,
+  IMAGE_SUBCOMMANDS,
 
   /** 提交视频生成任务（异步）：返回 { submit_id, gen_status, credit_count, queue_info, ... } */
   async submitVideo(params) {

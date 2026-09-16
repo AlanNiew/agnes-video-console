@@ -185,6 +185,20 @@ describe('buildVideoArgs（CLI argv 组装）', () => {
     expect(args.some((a) => a.startsWith('--ratio='))).toBe(false);
   });
 
+  test('multimodal2video（全能参考）：reference 视频与音频映射为 --video / --audio', () => {
+    const args = buildVideoArgs({
+      subcommand: 'multimodal2video',
+      prompt: '电影感短片',
+      videoResolution: '720p',
+      video: './ref.mp4',
+      audio: './music.mp3',
+      modelVersion: 'seedance2.0fast',
+    });
+    expect(args[0]).toBe('multimodal2video');
+    expect(args).toContain('--video=./ref.mp4');
+    expect(args).toContain('--audio=./music.mp3');
+  });
+
   test('不支持的子命令直接抛错（防止参数白名单被绕过）', () => {
     expect(() => buildVideoArgs({ subcommand: 'rm-rf', prompt: 'x' })).toThrow();
   });
@@ -267,6 +281,17 @@ describe('buildImageArgs（即梦图片 argv 组装）', () => {
     const pair = buildImageArgs({ prompt: 'x', resolutionType: '1k', width: 1024, height: 768 });
     expect(pair).toContain('--width=1024');
     expect(pair).toContain('--height=768');
+  });
+
+  test('image2image（图生图）：参考图映射为 --images，多张逗号连接', () => {
+    const args = buildImageArgs({
+      subcommand: 'image2image',
+      images: ['./a.png', './b.png'],
+      resolutionType: '2k',
+      prompt: '改成水彩风格',
+    });
+    expect(args[0]).toBe('image2image');
+    expect(args).toContain('--images=./a.png,./b.png');
   });
 });
 
