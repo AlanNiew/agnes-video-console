@@ -135,6 +135,15 @@ const stmts = {
   selectProjectImage: db.prepare('UPDATE project_images SET selected = 1 WHERE id = ?'),
   deselectProjectImage: db.prepare('UPDATE project_images SET selected = 0 WHERE id = ?'),
   deleteProjectImage: db.prepare('DELETE FROM project_images WHERE id = ?'),
+  // v2.5.2 归档补扫：回填图片本地备份路径（图片侧此前无兜底）
+  updateProjectImageLocal: db.prepare('UPDATE project_images SET local_path = ? WHERE id = ?'),
+  // v2.5.2 缺本地备份的项目图片（渲染片头卡背景优先取本地文件，缺则弱网死等远端——E03 事故根因）
+  imagesMissingLocal: db.prepare(`
+    SELECT * FROM project_images
+    WHERE remote_url IS NOT NULL AND remote_url != ''
+      AND (local_path IS NULL OR local_path = '')
+    ORDER BY id DESC
+  `),
   getSelectedProjectImage: db.prepare(
     'SELECT * FROM project_images WHERE project_id = ? AND kind = ? AND selected = 1 ORDER BY id DESC LIMIT 1',
   ),

@@ -842,6 +842,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
             <button class="btn ghost" id="wsSaveTemplate" title="把本项目的创意/风格/画幅/时长与当前成片预设存成可复用模板（新建项目时套用）">💾 存为创作模板</button>
             <button class="btn ghost" id="wsRenderCompare" title="并排播放对比同项目的多版成片（需 ≥2 版已完成）">⚖️ 多版本对比</button>
             <button class="btn ghost" id="wsMatrix" title="一屏查看每镜的 视频/配音/时长校验/角色引用/定稿 take">📊 制作矩阵</button>
+            <button class="btn ghost" id="wsChecklist" title="交付自检：创意/风格锚/角色/分镜/旁白/视频/配音/时长/BGM 九项就绪度">✅ 交付自检</button>
             <button class="btn primary" id="wsRenderBtn" ${completedShots >= 2 ? '' : 'disabled'} title="${completedShots >= 2 ? '创建后台渲染任务' : '至少需要 2 个已完成镜头'}">🎞️ 渲染成片（${completedShots} 镜就绪）</button>
           </div>
           <!-- P2：高级配置（分组折叠，默认收起；选中预设后可展开微调） -->

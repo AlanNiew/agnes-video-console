@@ -2,6 +2,32 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.5.2] - 2026-09-16
+
+### Added
+
+- **开工预检 `npm run preflight`**：服务健康 / 设置完整性（含**服务进程 FISH_PROXY**，此前只有逐条配音
+  502 才能发现的盲区）/ ffmpeg+ffprobe / 中文字体 / 数据目录可写 / 磁盘剩余 / **CDN 实测速率**
+  （8MB、20s 预算；<200KB/s 判致命并提示开 TUN）。退出码区分致命项。
+- **渲染阶段化进度**：`lib/render-stage.js` 把进度翻译成人话（准备素材 / 逐镜归一化 N/M /
+  合流与混音 x% / 收尾 / 完成），API 列表与详情返回 `stage_label`，前端渲染卡展示——
+  消除 E03 事故里"停在 40% 不知道在干嘛"。
+- **归一化缓存**：渲染的逐镜归一化结果按「源文件身份 + 目标规格 + 配方版本」缓存到
+  `data/artifacts/normcache`（12 天 TTL），重渲时未变动镜头直接复用（实测 13/13 命中）。
+- **最终提交提示词可见**：`GET /api/projects/{id}/shots/{shotId}/final-prompt` 返回
+  `{mode, prompt, prompt_raw, style_anchor, warnings[], refs[]}`（提交与预览共用同一组装来源），
+  前端「📊 制作矩阵」新增「📋 提词」列——E03 风格漂移那类"库里的值 ≠ 发出的值"现在提交前可见。
+- **图片归档补扫**：`image-worker.sweepArchives()` 为缺本地备份的项目图片补下载并回填
+  `project_images.local_path`（片头卡背景与照片墙的取值来源，正是弱网死锁的根因）。
+- **交付自检前端**：渲染面板「✅ 交付自检」→ 9 项 checklist 一屏（S-3 落地）。
+
+### Fixed
+
+- **前端 `api()` 取值 bug（3 处）**：`ws-render-panel.js` 与 `workspace.js` 误用 `.data.items`
+  （`api()` 直接返回响应体）→ 渲染任务列表与多版本对比此前取不到数据。
+- **片头/片尾卡署名需显式传参**：`POST /api/projects/:id/render` 未传 `creator` 时卡片无署名；
+  已在制作流程固定传入，并补渲 E03（`成片-104`）。
+
 ## [2.5.0] - 2026-09-15
 
 ### Fixed

@@ -39,6 +39,7 @@ class ImageWorker {
   constructor() {
     this.timer = null;
     this.running = false;
+    this.sweepDone = false; // v2.5.2 归档补扫每进程仅跑一次
     this.retryUntil = new Map(); // taskId -> { until, attempts }（内存态：进程重启即重来，可接受）
   }
 
@@ -47,6 +48,40 @@ class ImageWorker {
     this.timer = setInterval(() => this.tick().catch((e) => log('error', `图片任务循环异常: ${e.message}`)), TICK_MS);
     this.timer.unref?.();
     log('info', '图片任务工作器已启动（串行生成，产物统一进任务中心）');
+    // v2.5.2：启动时补扫历史图片任务缺失的本地备份（图片侧此前无兜底，失败即永久缺失）
+    this.sweepArchives().catch((e) => log('warn', `图片归档补扫异常：${e.message}`));
+  }
+
+  /** v2.5.2 归档补扫：为已完成但缺本地备份的图片任务重新下载（逐张重试），
+   *  靶子选 project_images.local_path 而不是任务行 —— 后者已被 poller 的视频补扫顺带覆盖（不区分 kind），
+   *  而渲染的片头/片尾卡背景与照片墙取的是 project_images.local_path，
+   *  正是 E03"卡片背景读远端 URL、每帧重下整图"死锁的根因。每进程仅跑一次，最多 SWEEP_MAX 张。 */
+  async sweepArchives() {
+    if (this.sweepDone) return;
+    this.sweepDone = true;
+    const SWEEP_MAX = 40;
+    let all;
+    try {
+      all = projects.imagesMissingLocal();
+    } catch (e) {
+      log('warn', `图片归档补扫：查询失败（${e.message}）`);
+      return;
+    }
+    if (!all.length) return;
+    const pending = all.slice(0, SWEEP_MAX);
+    log('info', `图片归档补扫：发现 ${all.length} 张项目图片缺本地备份，本轮补齐 ${pending.length} 张`);
+    let ok = 0;
+    for (const img of pending) {
+      const art = await downloadWithRetry(img.remote_url, 2); // 2 次尝试，避免启动时长阻塞
+      if (!art) continue;
+      projects.setImageLocal(img.id, art.local_path);
+      ok += 1;
+    }
+    log(
+      'info',
+      `图片归档补扫完成：补齐 ${ok}/${pending.length} 张` +
+        (all.length > pending.length ? `（剩余 ${all.length - pending.length} 张下次启动继续）` : ''),
+    );
   }
 
   stop() {

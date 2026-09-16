@@ -228,6 +228,23 @@ const projects = {
     return stmts.deleteProjectImage.run(Number(id)).changes > 0;
   },
 
+  /** v2.5.2：回填图片本地备份路径（归档补扫用；渲染的卡片背景优先取本地文件，避免弱网死等远端） */
+  setImageLocal(id, localPath) {
+    stmts.updateProjectImageLocal.run(localPath || null, Number(id));
+    return true;
+  },
+
+  /** v2.5.2：缺本地备份的项目图片（按 id 倒序，最新优先）——归档补扫的输入 */
+  imagesMissingLocal() {
+    return stmts.imagesMissingLocal.all().map((row) => ({
+      id: row.id,
+      project_id: row.project_id,
+      kind: row.kind,
+      remote_url: row.remote_url,
+      local_path: row.local_path,
+    }));
+  },
+
   updateText(id, content) {
     return stmts.updateProjectText.run(content, Number(id)).changes > 0;
   },

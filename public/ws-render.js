@@ -726,6 +726,11 @@ function renderJobItem(j) {
   return `
     <div class="ver-item" data-render-job="${j.id}">
       <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%${j.stage_label ? ` · ${esc(j.stage_label)}` : ''}` : ''} · ${fmtTime(j.created_at)}
+      ${
+        active && j.updated_at && Date.now() - j.updated_at > 180000
+          ? `<div class="hint" style="color:#e0b050;margin-top:6px">⚠️ 已 ${Math.round((Date.now() - j.updated_at) / 60000)} 分钟无进度更新——可能在读取远端素材；超过 20 分钟会自动失败并给出原因</div>`
+          : ''
+      }
       ${active ? `<div style="height:6px;background:var(--bg,#1a1f2b);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${j.progress || 0}%;background:#4f7cff;transition:width .5s"></div></div>` : ''}
       ${
         j.status === 'completed' && j.output_url

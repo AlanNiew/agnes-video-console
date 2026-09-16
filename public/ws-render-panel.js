@@ -297,6 +297,27 @@ async function showMatrix(projectId) {
   });
 }
 
+/** v2.5.2 交付自检（checklist API 的前端呈现）：9 项就绪度一屏，全绿再渲染归档 */
+async function showChecklist(projectId) {
+  let ck;
+  try {
+    ck = await api(`/api/projects/${projectId}/checklist`);
+  } catch (e) {
+    return toast('读取自检失败：' + e.message, 'err');
+  }
+  const rows = (ck.items || [])
+    .map(
+      (it) =>
+        `<tr><td>${it.ok ? '✅' : '❌'}</td><td>${esc(it.label || '')}</td><td class="hint">${esc(it.detail || '')}</td></tr>`,
+    )
+    .join('');
+  openModal({
+    title: `✅ 交付自检（${ck.ready}/${ck.total} · ${ck.ready_pct}%）`,
+    bodyHTML: `<table class="matrix-table"><thead><tr><th style="width:36px"></th><th>检查项</th><th>说明</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="hint mt">全绿后再渲染归档；缺项可在上方步骤中补齐（分镜/配音/BGM 等）。</p>`,
+  });
+}
+
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */
 function bindRenderPanel(projectId, renderJobs = []) {
   // v2.5：渲染质检图与指标（关键帧 / 波形 / 流时长对比 / 客观指标）
@@ -306,6 +327,8 @@ function bindRenderPanel(projectId, renderJobs = []) {
   const rbtn = $('#wsRenderBtn');
   const mbtn = $('#wsMatrix');
   if (mbtn) mbtn.onclick = () => showMatrix(projectId); // v2.5 制作矩阵（P1-2）
+  const cbtn = $('#wsChecklist');
+  if (cbtn) cbtn.onclick = () => showChecklist(projectId); // v2.5.2 交付自检（S-3 前端呈现）
   if (rbtn) {
     rbtn.onclick = async () => {
       rbtn.disabled = true;
