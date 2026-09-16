@@ -29,6 +29,9 @@ module.exports = function registerSettingsRoutes(app) {
       // TTS（Fish Audio）
       fish_api_key_set: Boolean(fish),
       fish_api_key_masked: fish ? `${fish.slice(0, 6)}****${fish.slice(-4)}` : '',
+      // 服务进程是否带 Fish 代理（CONNECT 隧道）。缺失时 TTS 会整体 502——
+      // 此前只能靠逐条配音失败才发现（E03 实测），故暴露给预检脚本判断。
+      fish_proxy_set: Boolean(process.env.FISH_PROXY),
       fish_voice: settings.get('fish_voice', DEFAULT_SETTINGS.fish_voice),
       fish_speed: Number(settings.get('fish_speed', DEFAULT_SETTINGS.fish_speed)),
       // BGM（v1.4 音乐接口）

@@ -28,6 +28,7 @@
   ],
   "scripts": {
     "start": "node server.js",
+    "preflight": "node --no-warnings tools/preflight.js",
     "dev": "node --watch server.js",
     "build": "vite build",
     "test": "npm run test:unit && npm run test:mock",

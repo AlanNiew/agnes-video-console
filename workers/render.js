@@ -964,3 +964,4 @@ module.exports = new Renderer();
 module.exports.collectSegments = collectSegments;
 module.exports.hasFfmpeg = hasFfmpeg;
 module.exports.escDrawtext = escDrawtext;
+module.exports.findFont = findFont; // 预检脚本复用同一字体来源（避免两处候选表漂移）
