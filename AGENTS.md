@@ -57,6 +57,7 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
 - 74 条 API 路由（路径 × 方法）的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
 - 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload / buildDreaminaPayload / buildDreaminaImagePayload）。
 - **多上游 provider 分发（零 schema 变更）**：模型 → 上游由 `core/constants.js` 的 `providerOf(model)` 推导（查 `DREAMINA_MODELS` / `DREAMINA_IMAGE_MODELS`，未命中即 Agnes）。submitter / poller / task-queue / image-worker / routes 均据此分流。即梦 `submit_id` 复用 `tasks.video_id` 列承载（poller 的 `active()` 靠它判定「已提交」，故 `activeTasks` 已加 `kind` 过滤，避免抢走即梦图片任务）。
+- **即梦实测标定（成本护栏依据）**：图片 `jimeng-image-3.1` / 1k = **1 积分**，且一次请求返回 **4 张候选**（即便传 `generate_num:1`）；视频 5s/720p = **25 积分**。成功响应结构统一为 `result_json.images[].image_url` / `result_json.videos[].video_url`（提取器：`clients/dreamina.js` 的 `extractImageUrls` / `extractVideoUrls`，含多层兜底）。standard 会员 `priority:3` 偏低，实测视频排队超过 1 小时。
 - **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（角色图 / 封面；关键镜头可手动升级）。即梦模型**刻意不进** `/api/meta` 模型清单，故前端下拉不变，仅可经 API 直接指定调用。
 - **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
 - 全自动成片编排在 `workers/auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。

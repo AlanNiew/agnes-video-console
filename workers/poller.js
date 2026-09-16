@@ -372,9 +372,10 @@ class Poller {
       finalStatus = 'queued';
     }
 
-    // 产物地址字段尚未实测确认（CLI 亦支持 --download_dir 直接落盘），故兼容常见字段名
-    const rawUrl = j.video_url || j.url || j.metadata?.url || j.data?.video_url || null;
-    const metadataUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : null;
+    // 产物地址：即梦与图片同源（实测 result_json.images[].image_url；视频预期 result_json.videos[].video_url），
+    // 故复用 clients/dreamina 的统一提取器（含多层兜底），避免字段名再漂移时静默取不到
+    const [dreaminaVideoUrl] = dreamina.extractVideoUrls(j);
+    const metadataUrl = dreaminaVideoUrl || null;
 
     this.retryUntil.delete(t.id);
     tasks.touchPoll(t.id);

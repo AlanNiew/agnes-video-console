@@ -11,7 +11,7 @@ const {
   buildImagePayload,
   buildDreaminaImagePayload,
 } = require('../../services/payloads');
-const { buildVideoArgs, buildImageArgs, extractImageUrls } = require('../../clients/dreamina');
+const { buildVideoArgs, buildImageArgs, extractImageUrls, extractVideoUrls } = require('../../clients/dreamina');
 const { ApiError } = require('../../core/errors');
 
 /** 断言给定调用抛出指定状态的 ApiError */
@@ -55,10 +55,10 @@ describe('buildDreaminaPayload（即梦参数校验与组装）', () => {
     });
     expect(payload.provider).toBe('dreamina');
     expect(payload.subcommand).toBe('text2video');
-    expect(payload.model_version).toBe('seedance2.0fast');
+    expect(payload.modelVersion).toBe('seedance2.0fast');
     expect(payload.prompt).toBe('一只红球在木桌上缓慢滚动');
     expect(payload.duration).toBe(5);
-    expect(payload.video_resolution).toBe('720p');
+    expect(payload.videoResolution).toBe('720p');
     expect(payload.ratio).toBe('16:9');
 
     // meta 字段名刻意对齐 tasks 既有列，保证前端任务列表零改动即可显示
@@ -75,7 +75,7 @@ describe('buildDreaminaPayload（即梦参数校验与组装）', () => {
 
     const { payload: dflt } = buildDreaminaPayload({ model: 'seedance2.0fast', prompt: 'x' });
     expect(dflt.duration).toBe(5);
-    expect(dflt.video_resolution).toBe('720p');
+    expect(dflt.videoResolution).toBe('720p');
     expect(dflt.ratio).toBeNull();
   });
 
@@ -110,9 +110,9 @@ describe('buildDreaminaPayload（即梦参数校验与组装）', () => {
       duration: 30,
       video_resolution: '1080p',
     });
-    expect(p25.model_version).toBe('seedance2.5');
+    expect(p25.modelVersion).toBe('seedance2.5');
     expect(p25.duration).toBe(30);
-    expect(p25.video_resolution).toBe('1080p');
+    expect(p25.videoResolution).toBe('1080p');
 
     const { payload: vip } = buildDreaminaPayload({
       model: 'seedance2.0_vip',
@@ -120,7 +120,7 @@ describe('buildDreaminaPayload（即梦参数校验与组装）', () => {
       duration: 15,
       video_resolution: '1080p',
     });
-    expect(vip.video_resolution).toBe('1080p');
+    expect(vip.videoResolution).toBe('1080p');
 
     // 反向：2.5 不允许 4k、2.0fast_vip 按 CLI 说明仅 720p
     expectApiError(400, () => buildDreaminaPayload({ model: 'seedance2.5', prompt: 'x', video_resolution: '4k' }));
@@ -132,7 +132,7 @@ describe('buildDreaminaPayload（即梦参数校验与组装）', () => {
   test('画幅不在白名单 → 400；大小写不敏感的分辨率归一化', () => {
     expectApiError(400, () => buildDreaminaPayload({ model: 'seedance2.0fast', prompt: 'x', ratio: '2:1' }));
     const { payload } = buildDreaminaPayload({ model: 'seedance2.0fast', prompt: 'x', size: '720P' });
-    expect(payload.video_resolution).toBe('720p');
+    expect(payload.videoResolution).toBe('720p');
   });
 });
 
@@ -215,17 +215,17 @@ describe('buildDreaminaImagePayload（即梦图片参数校验）', () => {
     });
     expect(r.payload.provider).toBe('dreamina');
     expect(r.payload.subcommand).toBe('text2image');
-    expect(r.payload.model_version).toBe('5.0');
-    expect(r.payload.resolution_type).toBe('2k');
-    expect(r.payload.generate_num).toBe(2);
+    expect(r.payload.modelVersion).toBe('5.0');
+    expect(r.payload.resolutionType).toBe('2k');
+    expect(r.payload.generateNum).toBe(2);
     expect(r.model).toBe('jimeng-image-5.0');
     expect(r.size).toBe('2k');
   });
 
   test('缺省：分辨率取模型首项、count 默认 1、ratio 交给 CLI 默认', () => {
     const r = buildDreaminaImagePayload({ model: 'jimeng-image-3.1', prompt: 'x' });
-    expect(r.payload.resolution_type).toBe('1k');
-    expect(r.payload.generate_num).toBe(1);
+    expect(r.payload.resolutionType).toBe('1k');
+    expect(r.payload.generateNum).toBe(1);
     expect(r.payload.ratio).toBeNull();
   });
 
@@ -239,9 +239,9 @@ describe('buildDreaminaImagePayload（即梦图片参数校验）', () => {
 
   test('5.0Pro 支持 1.5k，5.0 支持 4k', () => {
     const pro = buildDreaminaImagePayload({ model: 'jimeng-image-5.0pro', prompt: 'x', size: '1.5k' });
-    expect(pro.payload.resolution_type).toBe('1.5k');
+    expect(pro.payload.resolutionType).toBe('1.5k');
     const v50 = buildDreaminaImagePayload({ model: 'jimeng-image-5.0', prompt: 'x', size: '4k' });
-    expect(v50.payload.resolution_type).toBe('4k');
+    expect(v50.payload.resolutionType).toBe('4k');
   });
 });
 
@@ -295,8 +295,33 @@ describe('buildImageArgs（即梦图片 argv 组装）', () => {
   });
 });
 
-describe('extractImageUrls（即梦响应解析；字段名待实测固化故兼容多形态）', () => {
-  test('支持数组字段 / 对象数组 / data 内嵌 / 单字段', () => {
+describe('extractImageUrls / extractVideoUrls（即梦响应解析）', () => {
+  test('实测主路径：result_json.images[].image_url（CLI v1.4.18 真实样本）', () => {
+    const real = {
+      submit_id: 'f3ba28da-a857-4557-aab9-59ee9b31e3cb',
+      gen_status: 'success',
+      credit_count: 1,
+      result_json: {
+        images: [
+          { image_url: 'https://p11-dreamina-sign.byteimg.com/a.png', width: 1328, height: 1328 },
+          { image_url: 'https://p11-dreamina-sign.byteimg.com/b.png', width: 1328, height: 1328 },
+        ],
+        videos: [],
+      },
+      queue_info: { queue_status: 'Finish' },
+    };
+    expect(extractImageUrls(real)).toEqual([
+      'https://p11-dreamina-sign.byteimg.com/a.png',
+      'https://p11-dreamina-sign.byteimg.com/b.png',
+    ]);
+  });
+
+  test('extractVideoUrls 走同源约定（result_json.videos[].video_url）', () => {
+    const real = { gen_status: 'success', result_json: { images: [], videos: [{ video_url: 'https://x.com/v.mp4' }] } };
+    expect(extractVideoUrls(real)).toEqual(['https://x.com/v.mp4']);
+  });
+
+  test('兜底形态：数组字段 / 对象数组 / data 内嵌 / 顶层 / metadata', () => {
     expect(extractImageUrls({ image_urls: ['https://a.com/1.png'] })).toEqual(['https://a.com/1.png']);
     expect(extractImageUrls({ images: [{ url: 'https://a.com/2.png' }] })).toEqual(['https://a.com/2.png']);
     expect(extractImageUrls({ data: { images: ['https://a.com/3.png'] } })).toEqual(['https://a.com/3.png']);
@@ -314,5 +339,48 @@ describe('extractImageUrls（即梦响应解析；字段名待实测固化故兼
     expect(extractImageUrls({})).toEqual([]);
     expect(extractImageUrls(null)).toEqual([]);
     expect(extractImageUrls({ gen_status: 'success' })).toEqual([]);
+    expect(extractVideoUrls({ result_json: {} })).toEqual([]);
+  });
+});
+
+/**
+ * 衔接测试：payload（存 tasks.request_json）→ argv。
+ * 教训：早期 snake_case 的 payload 喂给 camelCase 的 buildXxxArgs，字段静默丢失，
+ * CLI 直接报 `required flag(s) "video_resolution"/"resolution_type" not set`，
+ * 而「分开测两端」的单测无法发现——故必须测这一层衔接。
+ */
+describe('payload → argv 衔接（防字段名 snake_case / camelCase 不匹配）', () => {
+  test('即梦视频：buildDreaminaPayload 的输出可直接喂给 buildVideoArgs', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.0fast',
+      prompt: '一只橘猫从沙发跳下',
+      duration: 5,
+      video_resolution: '720p',
+      ratio: '16:9',
+    });
+    const args = buildVideoArgs(payload);
+    expect(args[0]).toBe('text2video');
+    // CLI 必填项：漏了会直接 bad-args 失败
+    expect(args).toContain('--video_resolution=720p');
+    expect(args).toContain('--model_version=seedance2.0fast');
+    expect(args).toContain('--duration=5');
+    expect(args).toContain('--prompt=一只橘猫从沙发跳下');
+    expect(args).toContain('--ratio=16:9');
+  });
+
+  test('即梦图片：buildDreaminaImagePayload 的输出可直接喂给 buildImageArgs', () => {
+    const { payload } = buildDreaminaImagePayload({
+      model: 'jimeng-image-5.0',
+      prompt: '少女站在麦田里',
+      size: '2k',
+      ratio: '1:1',
+      count: 2,
+    });
+    const args = buildImageArgs(payload);
+    expect(args[0]).toBe('text2image');
+    expect(args).toContain('--resolution_type=2k'); // CLI 必填项，最易漏
+    expect(args).toContain('--model_version=5.0');
+    expect(args).toContain('--generate_num=2');
+    expect(args).toContain('--prompt=少女站在麦田里');
   });
 });

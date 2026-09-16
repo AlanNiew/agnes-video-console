@@ -135,16 +135,20 @@ class ImageWorker {
     if (instanceLockHeldByOther()) return; // 单实例工作锁
     this.running = true;
     try {
-      const apiKey = settings.get('api_key', '');
-      if (!apiKey) return; // 未配置 Key：保留入队状态
       const list = tasks.pendingImages();
       if (!list.length) return;
-      // 跳过退避中的任务，取队首执行（串行：上游同步生成 30–180s，逐个执行避免限流）
+      const apiKey = settings.get('api_key', '');
+      // 跳过退避中的任务，取队首执行（串行：Agnes 同步生成 30–180s，逐个执行避免限流）。
+      // 注意：即梦走本地 CLI（凭证由 CLI 保管），**不依赖 api_key** —— 未配置 Key 时也必须
+      // 让它参与调度，否则即梦图片任务会被「无 Key」永久堵在队列里（沙箱实测踩到）。
       const t = list.find((x) => {
         const bo = this.retryUntil.get(x.id);
-        return !bo || bo.until <= Date.now();
+        if (bo && bo.until > Date.now()) return false;
+        if (!apiKey && providerOf(x.model) !== 'dreamina') return false;
+        return true;
       });
-      if (t) await this.runOne(t, apiKey);
+      if (!t) return;
+      await this.runOne(t, apiKey);
     } finally {
       this.running = false;
     }
@@ -415,7 +419,9 @@ class ImageWorker {
         log('warn', `图片任务 #${t.id} 即梦成功但未解析到图片 URL，原始响应已存入 last_poll_response`);
         return;
       }
-      const count = Number(req.generate_num) > 0 ? Number(req.generate_num) : urls.length;
+      // 即梦可能一次返回多张候选（实测请求 generate_num=1 却回 4 张），故取两者较大值，
+      // 避免 failed = count - images.length 算出负数。字段名为 camelCase（与 payload 对齐）。
+      const count = Math.max(Number(req.generateNum) || Number(req.count) || 1, urls.length);
       try {
         await this.finalizeImages(t, req, urls, { model: t.model, size: t.size, ratio: t.aspect_ratio, count });
       } catch (e) {

@@ -309,15 +309,17 @@ function buildDreaminaPayload(b) {
   }
 
   return {
-    // 存入 tasks.request_json：submitter 直接交给 clients/dreamina.buildVideoArgs 生成 argv
+    // 存入 tasks.request_json：submitter 直接交给 clients/dreamina.buildVideoArgs 生成 argv。
+    // 字段名必须与 buildVideoArgs 的入参（camelCase）严格一致——早期用 snake_case 导致
+    // --video_resolution/--model_version 根本没生成，CLI 直接报 required flag not set。
     payload: {
       provider: 'dreamina',
       subcommand: info.subcommand,
-      model_version: info.model_version,
+      modelVersion: info.model_version,
       model,
       prompt,
       duration,
-      video_resolution: resolution,
+      videoResolution: resolution,
       ratio, // null 表示交给 CLI 用默认画幅（16:9）
     },
     // 存入 tasks 表列：字段名刻意对齐既有列（seconds / size / aspect_ratio），
@@ -420,15 +422,17 @@ function buildDreaminaImagePayload(b) {
   const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
 
   return {
+    // 字段名必须与 clients/dreamina.buildImageArgs 的入参（camelCase）严格一致，
+    // 否则 --resolution_type / --model_version 等 flag 不会生成（见 buildDreaminaPayload 同名注释）
     payload: {
       provider: 'dreamina',
       subcommand: info.subcommand,
-      model_version: info.model_version,
+      modelVersion: info.model_version,
       model,
       prompt,
-      resolution_type: resolutionType,
+      resolutionType,
       ratio, // null 表示交给 CLI 默认（16:9）
-      generate_num: count,
+      generateNum: count,
     },
     prompt,
     // 对齐 Agnes 的返回结构（路由用解构取值），size 承载分辨率、ratio 供 tasks 列显示

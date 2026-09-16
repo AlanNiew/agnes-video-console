@@ -250,26 +250,51 @@ function buildImageArgs(params = {}) {
 }
 
 /**
- * 从 query_result 响应中提取图片地址。
- * 即梦成功响应的确切字段名尚未实测固化，故兼容多种可能形态（数组字段 / 单字段 / data 内嵌）；
- * 解析失败时由调用方保留原始响应（last_poll_response），便于按真实字段名补充。
+ * 收集 bucket 内的媒体地址（数组元素可能是字符串或 {image_url|url} 对象）
  */
-function extractImageUrls(j) {
-  const urls = [];
+function collectUrls(bucket, urls) {
+  if (!bucket || typeof bucket !== 'object') return;
   const push = (u) => {
     const s = typeof u === 'string' ? u.trim() : '';
     if (/^https?:\/\//i.test(s)) urls.push(s);
   };
-  for (const key of ['image_urls', 'images', 'urls']) {
-    if (Array.isArray(j?.[key])) j[key].forEach((x) => push(typeof x === 'string' ? x : x?.url));
-  }
-  push(j?.image_url || j?.url || j?.metadata?.url);
-  if (j?.data) {
-    if (Array.isArray(j.data.images)) {
-      j.data.images.forEach((x) => push(typeof x === 'string' ? x : x?.url));
+  for (const key of ['images', 'videos', 'image_urls', 'urls']) {
+    if (Array.isArray(bucket[key])) {
+      bucket[key].forEach((x) => {
+        if (typeof x === 'string') push(x);
+        else push(x?.image_url || x?.video_url || x?.url);
+      });
     }
-    push(j.data.image_url || j.data.url);
   }
+  push(bucket.image_url || bucket.video_url || bucket.url || bucket.metadata?.url);
+}
+
+/**
+ * 从 query_result 响应中提取图片地址。
+ * 实测（CLI v1.4.18 / 即梦图片 3.1）成功响应形如：
+ *   { submit_id, gen_status:'success', credit_count:1,
+ *     result_json: { images: [{ image_url, width, height }, ...], videos: [] } }
+ * 故地址位于 result_json.images[].image_url；data / 顶层为兼容兜底
+ * （字段名可能随模型或版本变化，兜底可降低再次失效的概率）。
+ */
+function extractImageUrls(j) {
+  const urls = [];
+  collectUrls(j?.result_json, urls); // 实测主路径
+  collectUrls(j?.data, urls); // 兜底
+  collectUrls(j, urls); // 兜底
+  return [...new Set(urls)];
+}
+
+/**
+ * 从 query_result 响应中提取视频地址。
+ * 结构与图片同源（result_json.videos[].video_url）；视频成功样本尚未实测到
+ * （即梦队列过长），故沿用同一响应约定并保留多层兜底。
+ */
+function extractVideoUrls(j) {
+  const urls = [];
+  collectUrls(j?.result_json, urls); // 预期主路径
+  collectUrls(j?.data, urls); // 兜底
+  collectUrls(j, urls); // 兜底
   return [...new Set(urls)];
 }
 
@@ -279,6 +304,7 @@ const dreamina = {
   buildVideoArgs,
   buildImageArgs,
   extractImageUrls,
+  extractVideoUrls,
   VIDEO_SUBCOMMANDS,
   IMAGE_SUBCOMMANDS,
 
