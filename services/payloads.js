@@ -7,6 +7,11 @@
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const {
   MODELS,
+  DREAMINA_MODELS,
+  DREAMINA_IMAGE_MODELS,
+  DREAMINA_VIDEO_RATIOS,
+  DREAMINA_IMAGE_RATIOS,
+  providerOf,
   MODES,
   SECONDS_OK,
   ASPECT_RATIOS,
@@ -255,9 +260,12 @@ function buildV25Payload(b) {
   };
 }
 
-/** 校验并构建提交给 API 的请求体（按模型家族分发） */
+/** 校验并构建提交给 API 的请求体（按上游 provider / 模型家族分发） */
 function buildPayload(body) {
   const b = body || {};
+  // 即梦（官方 CLI）与 Agnes 的参数体系完全不同，先按 provider 分流。
+  // 注意：必须在 MODELS 兜底之前判断，否则即梦模型会被当作「未知模型」而静默降级为默认 Agnes 模型。
+  if (providerOf(b.model) === 'dreamina') return buildDreaminaPayload(b);
   const model = MODELS[b.model] ? b.model : settings.get('model', DEFAULT_SETTINGS.model);
   const info = MODELS[model];
   if (!info) throw new ApiError(400, `不支持的模型：${model}`);
@@ -265,10 +273,74 @@ function buildPayload(body) {
   return buildV25Payload(b);
 }
 
+/* ---------------- 即梦（dreamina CLI）payload ---------------- */
+
+/**
+ * 校验即梦视频请求并构建「语义参数」对象（存入 tasks.request_json，由 submitter 转 argv）。
+ * 与 Agnes payload 的区别：这里不组装 HTTP body——argv 由 clients/dreamina.js 的 buildVideoArgs
+ * 从此对象生成，字段名与 CLI 的 --kebab 参数一一对应。
+ * 当前仅开放 text2video（文生视频）；image2video / frames2video 等子命令的参数形态尚未实测，
+ * 待验证后再扩展（DREAMINA_MODELS[*].subcommand 已预留该扩展点）。
+ */
+function buildDreaminaPayload(b) {
+  const model = String(b.model || '').trim();
+  const info = DREAMINA_MODELS[model];
+  if (!info) throw new ApiError(400, `不支持的即梦模型：${model}`);
+
+  const prompt = String(b.prompt || '').trim();
+  if (!prompt) throw new ApiError(400, '即梦视频生成 prompt 不能为空');
+  if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
+
+  // 时长：兼容 seconds 别名（与前端/Agnes 的字段习惯保持一致）
+  const duration = Number(b.duration ?? b.seconds ?? 5);
+  if (!Number.isInteger(duration) || duration < info.minDuration || duration > info.maxDuration) {
+    throw new ApiError(400, `时长须为 ${info.minDuration}-${info.maxDuration} 的整数秒（${model}）`);
+  }
+
+  // 分辨率：CLI 侧 --video_resolution 为必填项，故此处必须落到合法值
+  const resolution = String(b.video_resolution || b.size || info.resolutions[0]).toLowerCase();
+  if (!info.resolutions.includes(resolution)) {
+    throw new ApiError(400, `分辨率须为 ${info.resolutions.join(' / ')}（${model}）`);
+  }
+
+  const ratio = b.ratio ? String(b.ratio) : null;
+  if (ratio && !DREAMINA_VIDEO_RATIOS.includes(ratio)) {
+    throw new ApiError(400, `画幅须为 ${DREAMINA_VIDEO_RATIOS.join(' / ')}`);
+  }
+
+  return {
+    // 存入 tasks.request_json：submitter 直接交给 clients/dreamina.buildVideoArgs 生成 argv。
+    // 字段名必须与 buildVideoArgs 的入参（camelCase）严格一致——早期用 snake_case 导致
+    // --video_resolution/--model_version 根本没生成，CLI 直接报 required flag not set。
+    payload: {
+      provider: 'dreamina',
+      subcommand: info.subcommand,
+      modelVersion: info.model_version,
+      model,
+      prompt,
+      duration,
+      videoResolution: resolution,
+      ratio, // null 表示交给 CLI 用默认画幅（16:9）
+    },
+    // 存入 tasks 表列：字段名刻意对齐既有列（seconds / size / aspect_ratio），
+    // 使前端任务列表无需任何改动即可正常显示时长与规格
+    meta: {
+      model,
+      mode: 'text', // 即梦当前仅开放文生视频，对应本系统的 text 模式
+      prompt,
+      seconds: duration,
+      size: resolution,
+      aspect_ratio: ratio,
+    },
+  };
+}
+
 /* ---------------- 图片 payload ---------------- */
 
-/** 校验图片请求并构建 payload（文生图 / 图生图 / 多图合成） */
+/** 校验图片请求并构建 payload（即梦异步任务 / Agnes 同步生成；文生图 / 图生图 / 多图合成） */
 function buildImagePayload(b) {
+  // 即梦图片为异步任务（submit_id + query_result），参数体系与 Agnes 完全不同，先按模型分流
+  if (DREAMINA_IMAGE_MODELS[String(b.model || '')]) return buildDreaminaImagePayload(b);
   const prompt = String(b.prompt || '').trim();
   if (!prompt) throw new ApiError(400, '图片描述 prompt 不能为空');
   if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
@@ -309,7 +381,65 @@ function buildImagePayload(b) {
   };
   if (b.ratio !== undefined) payload.ratio = ratio;
   if (inputImages.length) payload.extra_body.image = inputImages;
-  return { payload, prompt, size, ratio: b.ratio !== undefined ? ratio : null, inputImages };
+  return {
+    payload,
+    prompt,
+    size,
+    ratio: b.ratio !== undefined ? ratio : null,
+    inputImages,
+    // model 一并返回：路由需据此决定入队模型（此前路由硬编码 IMAGE_MODEL，会覆盖即梦模型）
+    model: IMAGE_MODEL,
+  };
+}
+
+/* ---------------- 即梦图片 payload（异步） ---------------- */
+
+/**
+ * 校验即梦图片请求并构建语义参数（存 tasks.request_json，由 image-worker 转 argv）。
+ * 与 Agnes 图片的本质差异：即梦为**异步任务**（submit_id + query_result 轮询），
+ * 而 Agnes 是同步生成（image-worker 阻塞等待返回）。故 image-worker 对即梦走两阶段状态机。
+ */
+function buildDreaminaImagePayload(b) {
+  const model = String(b.model || '').trim();
+  const info = DREAMINA_IMAGE_MODELS[model];
+  if (!info) throw new ApiError(400, `不支持的即梦图片模型：${model}`);
+
+  const prompt = String(b.prompt || '').trim();
+  if (!prompt) throw new ApiError(400, '即梦图片生成 prompt 不能为空');
+  if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
+
+  // 分辨率：CLI 侧 --resolution_type 为必填项，故必须落到合法值
+  const resolutionType = String(b.resolution_type || b.size || info.resolutions[0]).toLowerCase();
+  if (!info.resolutions.includes(resolutionType)) {
+    throw new ApiError(400, `分辨率须为 ${info.resolutions.join(' / ')}（${model}）`);
+  }
+
+  const ratio = b.ratio ? String(b.ratio) : null;
+  if (ratio && !DREAMINA_IMAGE_RATIOS.includes(ratio)) {
+    throw new ApiError(400, `画幅须为 ${DREAMINA_IMAGE_RATIOS.join(' / ')}`);
+  }
+
+  const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
+
+  return {
+    // 字段名必须与 clients/dreamina.buildImageArgs 的入参（camelCase）严格一致，
+    // 否则 --resolution_type / --model_version 等 flag 不会生成（见 buildDreaminaPayload 同名注释）
+    payload: {
+      provider: 'dreamina',
+      subcommand: info.subcommand,
+      modelVersion: info.model_version,
+      model,
+      prompt,
+      resolutionType,
+      ratio, // null 表示交给 CLI 默认（16:9）
+      generateNum: count,
+    },
+    prompt,
+    // 对齐 Agnes 的返回结构（路由用解构取值），size 承载分辨率、ratio 供 tasks 列显示
+    size: resolutionType,
+    ratio,
+    model,
+  };
 }
 
 module.exports = {
@@ -321,5 +451,7 @@ module.exports = {
   buildV2Payload,
   buildV25Payload,
   buildPayload,
+  buildDreaminaPayload,
   buildImagePayload,
+  buildDreaminaImagePayload,
 };

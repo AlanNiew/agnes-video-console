@@ -1,0 +1,10 @@
+# 统一换行符为 LF（根治 Windows 下的格式检查假阳性）
+#
+# 背景：.prettierrc 配置 endOfLine=lf，但 Windows 默认 core.autocrlf=true 会在 checkout 时
+# 把文本文件写成 CRLF，导致本地 `npm run format:check` 对「仓库内实为 LF」的文件误报失败，
+# 而 CI 在 Linux 上（autocrlf 默认 false）却能通过 —— 本地与 CI 结论不一致，会产生误导。
+# 本文件生效后 checkout 亦保持 LF，两端结果一致。
+#
+# 参见 docs/BRANCHING.md 第五条（触摸平台代码后的必跑检查）。
+# 注：全仓无 .bat/.cmd/.ps1 等依赖 CRLF 的文件，故可安全地对全部文本强制 LF。
+* text=auto eol=lf

@@ -10,8 +10,10 @@
 const { settings, tasks } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const dreamina = require('../clients/dreamina');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
+const { providerOf } = require('../core/constants');
 
 const TICK_MS = 1000;
 const MAX_ATTEMPTS = 5;
@@ -26,6 +28,9 @@ const NET_CAP_MS = 60_000;
 // 等于对着同一堵墙反复撞（E05 实测：503 持续数分钟，秒级退避 4 次全废）
 const QUEUE_BASE_MS = 90_000;
 const QUEUE_CAP_MS = 15 * 60_000;
+// 即梦（CLI）环境未就绪（未安装 / 未登录）时的退避：属环境问题而非任务自身错误，
+// 保留 queued 待人工处理后自动续跑，避免每 tick 反复 spawn 探测
+const DREAMINA_ENV_BACKOFF_MS = 5 * 60_000;
 
 function safeUrl(u) {
   return typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null;
@@ -84,8 +89,10 @@ class Submitter {
     try {
       const interval = Math.max(Number(settings.get('submit_interval_ms', 60_000)) || 0, 0);
       for (const t of tasks.pendingSubmit()) {
+        const isDreamina = providerOf(t.model) === 'dreamina';
         const last = this.lastSubmitAt.get(t.model) || 0;
-        if (interval > 0 && Date.now() - last < interval) continue; // 模型间隔未到
+        // 即梦为队列制作业（提交即排队，无 429 限流），不套用 Agnes 免费档的「提交间隔」节流
+        if (!isDreamina && interval > 0 && Date.now() - last < interval) continue; // 模型间隔未到
         const bo = this.retryUntil.get(t.id);
         if (bo && bo.until > Date.now()) continue; // 任务退避中
         await this.submitOne(t);
@@ -106,6 +113,11 @@ class Submitter {
   }
 
   async submitOne(t) {
+    // provider 分流：即梦走本地 CLI（无 apiKey 概念，登录态由 CLI 保管），Agnes 走 HTTP
+    if (providerOf(t.model) === 'dreamina') {
+      await this.submitDreamina(t);
+      return;
+    }
     const apiKey = settings.get('api_key', '');
     if (!apiKey) return; // 未配置 Key：保留入队状态，配置后下一轮自动提交
     const payload = t.request_json;
@@ -181,6 +193,91 @@ class Submitter {
       submitted_at: Date.now(),
     });
     log('info', `任务 #${t.id} 提交成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
+  }
+
+  /**
+   * 即梦（官方 dreamina CLI）提交。
+   * 与 Agnes 的差异：无 apiKey（登录态由 CLI 本地保管，本层不感知凭证）；
+   * 返回 submit_id（UUID）而非 video_id；状态语义为 gen_status（querying/success/fail）而非 status。
+   * submit_id 存入 video_id 字段：poller 的 active() 靠 video_id 非空判定「已提交」，复用即零 schema 变更。
+   */
+  async submitDreamina(t) {
+    const payload = t.request_json;
+    if (!payload) {
+      this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
+      return;
+    }
+    const prev = this.retryUntil.get(t.id);
+    const attempts = prev ? prev.attempts + 1 : 1;
+
+    let r;
+    try {
+      r = await dreamina.submitVideo(payload);
+    } catch (e) {
+      if (attempts >= MAX_ATTEMPTS) {
+        this.fail(t.id, `即梦提交异常（自动重试 ${attempts - 1} 次）：${e.message}`);
+        return;
+      }
+      this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
+      log('warn', `任务 #${t.id} 即梦提交异常（第 ${attempts} 次）：${e.message}`);
+      return;
+    }
+
+    if (!r.ok) {
+      // 环境 / 合规未就绪：非任务自身错误，保留 queued 等人工处理（安装 CLI、完成登录、
+      // 去 Web 端做首次生成确认）后自动续跑，绝不直接判死。
+      // need-web-confirm 对应 AigcComplianceConfirmationRequired —— 官方文档明确：
+      // 为满足合规要求，视频必须先到即梦 Web 端用该模型完成一次生成，CLI 才允许提交。
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
+        this.backoff(t.id, DREAMINA_ENV_BACKOFF_MS, attempts);
+        const reason =
+          r.kind === 'need-web-confirm'
+            ? '即梦要求先到 Web 端用该模型完成一次生成（合规确认）'
+            : `即梦环境未就绪（${r.kind}）`;
+        log(
+          'warn',
+          `任务 #${t.id} ${reason}，保留入队，` +
+            `${Math.round(DREAMINA_ENV_BACKOFF_MS / 60000)} 分钟后重试：${r.error}`,
+        );
+        return;
+      }
+      // 超时 / 进程异常：瞬时错误，退避重试
+      if (r.kind === 'timeout' || r.kind === 'spawn-error') {
+        if (attempts >= MAX_ATTEMPTS) {
+          this.fail(t.id, `即梦提交超时或进程异常（重试 ${attempts - 1} 次）：${r.error}`);
+          return;
+        }
+        this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
+        log('warn', `任务 #${t.id} 即梦提交异常（第 ${attempts} 次，${r.kind}）：${r.error}`);
+        return;
+      }
+      // 参数错误 / CLI 业务错误：不可恢复
+      this.fail(t.id, `即梦提交失败：${r.error || r.kind}`, r.data);
+      return;
+    }
+
+    const j = r.data || {};
+    const submitId = j.submit_id || null;
+    if (!submitId) {
+      this.fail(t.id, '即梦提交未返回 submit_id，无法追踪任务', j);
+      return;
+    }
+    this.lastSubmitAt.set(t.model, Date.now());
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      task_id: submitId,
+      video_id: submitId, // 复用 video_id 字段承载 submit_id（poller 依赖它判定「已提交」）
+      submit_response: j,
+      status: 'queued', // gen_status=querying 表示已受理，后续由 poller 轮询推进
+      progress: 0,
+      submitted_at: Date.now(),
+    });
+    const q = j.queue_info || {};
+    log(
+      'info',
+      `任务 #${t.id} 即梦提交成功 submit_id=${submitId} ` +
+        `队列=${q.queue_idx ?? '?'}/${q.queue_length ?? '?'} 扣积分=${j.credit_count ?? '?'}`,
+    );
   }
 }
 

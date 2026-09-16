@@ -10,15 +10,18 @@
 const { settings, tasks, projects, DEFAULT_SETTINGS } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const dreamina = require('../clients/dreamina');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
-const { IMAGE_MODEL } = require('../core/constants');
+const { IMAGE_MODEL, providerOf } = require('../core/constants');
 const { safeUrl } = require('../services/payloads');
 
 const TICK_MS = 5000;
 const MAX_ATTEMPTS = 5;
 const RETRY_BASE_MS = 30_000; // 429/网络错误首次退避基数
 const RETRY_CAP_MS = 5 * 60_000;
+// 即梦环境未就绪（未安装 CLI / 未登录）时的退避：属环境问题而非任务错误，保留 queued 等人工处理
+const DREAMINA_ENV_BACKOFF_MS = 5 * 60_000;
 
 function computeBackoffMs(attempts) {
   return Math.min(RETRY_BASE_MS * 2 ** (attempts - 1), RETRY_CAP_MS);
@@ -132,22 +135,29 @@ class ImageWorker {
     if (instanceLockHeldByOther()) return; // 单实例工作锁
     this.running = true;
     try {
-      const apiKey = settings.get('api_key', '');
-      if (!apiKey) return; // 未配置 Key：保留入队状态
       const list = tasks.pendingImages();
       if (!list.length) return;
-      // 跳过退避中的任务，取队首执行（串行：上游同步生成 30–180s，逐个执行避免限流）
+      const apiKey = settings.get('api_key', '');
+      // 跳过退避中的任务，取队首执行（串行：Agnes 同步生成 30–180s，逐个执行避免限流）。
+      // 注意：即梦走本地 CLI（凭证由 CLI 保管），**不依赖 api_key** —— 未配置 Key 时也必须
+      // 让它参与调度，否则即梦图片任务会被「无 Key」永久堵在队列里（沙箱实测踩到）。
       const t = list.find((x) => {
         const bo = this.retryUntil.get(x.id);
-        return !bo || bo.until <= Date.now();
+        if (bo && bo.until > Date.now()) return false;
+        if (!apiKey && providerOf(x.model) !== 'dreamina') return false;
+        return true;
       });
-      if (t) await this.runOne(t, apiKey);
+      if (!t) return;
+      await this.runOne(t, apiKey);
     } finally {
       this.running = false;
     }
   }
 
   async runOne(t, apiKey) {
+    // 即梦图片为异步任务（submit_id + query_result 两阶段），与 Agnes 的同步生成语义不同，走独立分支。
+    // 注意必须在置 in_progress 之前分流：pendingImages() 只捞 status='queued'，置了 in_progress 就再也捞不回来。
+    if (providerOf(t.model) === 'dreamina') return this.runDreaminaImage(t);
     // 置 in_progress 给前端即时反馈（同步上游无进度概念，起步即 10%）
     tasks.update(t.id, { status: 'in_progress', progress: 10 });
     const req = t.request_json || {};
@@ -218,54 +228,12 @@ class ImageWorker {
 
     // 成功路径：逐张归档；挂项目时落 project_images 并首张自动定稿（对齐同步接口行为）
     try {
-      const imageKind = ['character', 'scene'].includes(req.image_kind) ? req.image_kind : 'character';
-      const images = [];
-      for (let i = 0; i < remoteUrls.length; i++) {
-        const remoteUrl = remoteUrls[i];
-        const backup = await downloadWithRetry(remoteUrl);
-        let imageId = null;
-        if (t.project_id) {
-          imageId = projects.addImage({
-            project_id: t.project_id,
-            kind: imageKind,
-            prompt: t.prompt,
-            remote_url: remoteUrl,
-            local_path: backup?.local_path || null,
-            size: t.size || '1K',
-            ratio: t.aspect_ratio || '1:1',
-            model: IMAGE_MODEL,
-          });
-          if (i === 0) {
-            // v2.5 多角色：仅在"尚无定稿图"时自动定稿首张；后续角色图需手动定稿（否则历史定稿图会在提交时累积注入）
-            if (!projects.selectedImage(t.project_id, imageKind)) {
-              projects.selectImage(imageId, imageKind, t.project_id);
-            }
-            if (imageKind === 'character') projects.update(t.project_id, { status: 'character_done' });
-          }
-        }
-        images.push({
-          remote_url: remoteUrl,
-          local_path: backup?.local_path || null,
-          local_url: backup?.local_url || null,
-          image_id: imageId,
-        });
-      }
-      this.retryUntil.delete(t.id);
-      tasks.update(t.id, {
-        status: 'completed',
-        progress: 100,
-        completed_at: Date.now(),
-        images,
-        metadata_url: images[0].remote_url,
-        video_local_path: images[0].local_path, // 复用本地归档列：下载/展示优先本地（远端 URL 会过期）
-        image_id: images[0].image_id || null, // v2.1 溯源首张产物（任务中心来源徽章：角色图/场景图）
-        error_message: null,
+      await this.finalizeImages(t, req, remoteUrls, {
+        model: IMAGE_MODEL,
+        size: t.size || '1K',
+        ratio: t.aspect_ratio || '1:1',
+        count,
       });
-      const failed = count - images.length;
-      log(
-        'info',
-        `图片任务 #${t.id} 完成：${images.length}/${count} 张${t.project_id ? `（项目 #${t.project_id}）` : ''}${failed ? `，失败 ${failed} 张` : ''}`,
-      );
     } catch (e) {
       // 归档/落库阶段异常（磁盘满等）：置 failed，产物 URL 保留在 error 上下文里
       tasks.update(t.id, {
@@ -275,6 +243,212 @@ class ImageWorker {
       });
       log('error', `图片任务 #${t.id} 产物处理失败：${e.message}`);
     }
+  }
+
+  /**
+   * 产物归档 + 项目落库（成功路径）：Agnes 同步与即梦异步两条链路共用，确保行为完全一致。
+   * @param {object} opts {model, size, ratio, count}
+   */
+  async finalizeImages(t, req, remoteUrls, { model, size, ratio, count }) {
+    const imageKind = ['character', 'scene'].includes(req.image_kind) ? req.image_kind : 'character';
+    const images = [];
+    for (let i = 0; i < remoteUrls.length; i++) {
+      const remoteUrl = remoteUrls[i];
+      const backup = await downloadWithRetry(remoteUrl);
+      let imageId = null;
+      if (t.project_id) {
+        imageId = projects.addImage({
+          project_id: t.project_id,
+          kind: imageKind,
+          prompt: t.prompt,
+          remote_url: remoteUrl,
+          local_path: backup?.local_path || null,
+          size: size || '1K',
+          ratio: ratio || '1:1',
+          model: model || IMAGE_MODEL,
+        });
+        if (i === 0) {
+          // v2.5 多角色：仅在「尚无定稿图」时自动定稿首张；后续角色图需手动定稿
+          // （否则历史定稿图会在提交时累积注入）
+          if (!projects.selectedImage(t.project_id, imageKind)) {
+            projects.selectImage(imageId, imageKind, t.project_id);
+          }
+          if (imageKind === 'character') projects.update(t.project_id, { status: 'character_done' });
+        }
+      }
+      images.push({
+        remote_url: remoteUrl,
+        local_path: backup?.local_path || null,
+        local_url: backup?.local_url || null,
+        image_id: imageId,
+      });
+    }
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      status: 'completed',
+      progress: 100,
+      completed_at: Date.now(),
+      images,
+      metadata_url: images[0].remote_url,
+      video_local_path: images[0].local_path, // 复用本地归档列：下载/展示优先本地（远端 URL 会过期）
+      image_id: images[0].image_id || null, // v2.1 溯源首张产物（任务中心来源徽章：角色图/场景图）
+      error_message: null,
+    });
+    const failed = count - images.length;
+    log(
+      'info',
+      `图片任务 #${t.id} 完成：${images.length}/${count} 张${t.project_id ? `（项目 #${t.project_id}）` : ''}${failed ? `，失败 ${failed} 张` : ''}`,
+    );
+  }
+
+  /**
+   * 即梦图片两阶段状态机（复用 tasks 的 queued 状态承载「已提交待查询」）：
+   *   阶段一（video_id 为空）：提交 → 把 submit_id 存进 video_id，状态**保持 queued**，
+   *     等下一轮 tick 由 pendingImages() 捞回来查询。之所以不置 in_progress，是因为
+   *     pendingImages() 只认 status='queued'，置了 in_progress 就永远捞不回来。
+   *   阶段二（video_id 非空）：query_result 轮询，成功则归档落库、失败则落终态。
+   * 该设计天然支持即梦的长排队：每轮 tick 只做一次短查询，不阻塞事件循环（不同于 Agnes 的同步阻塞）。
+   */
+  async runDreaminaImage(t) {
+    const req = t.request_json || {};
+    if (t.video_id) return this.queryDreaminaImage(t, req);
+
+    let r;
+    try {
+      r = await dreamina.submitImage(req);
+    } catch (e) {
+      return this.backoffOrGiveUp(t, `即梦提交异常：${e.message}`);
+    }
+
+    if (!r.ok) {
+      // 环境 / 合规未就绪：非任务错误，保留 queued 等人工处理后自动续跑（绝不判死）。
+      // need-web-confirm = AigcComplianceConfirmationRequired，需先到即梦 Web 端完成首次生成确认。
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
+        const prev = this.retryUntil.get(t.id);
+        this.retryUntil.set(t.id, {
+          until: Date.now() + DREAMINA_ENV_BACKOFF_MS,
+          attempts: (prev?.attempts || 0) + 1,
+        });
+        const hint =
+          r.kind === 'need-web-confirm'
+            ? '即梦要求先到 Web 端用该模型完成一次生成（合规确认）'
+            : `即梦环境未就绪（${r.kind}）：请确认已安装 dreamina CLI 并完成登录`;
+        tasks.update(t.id, { status: 'queued', error_message: hint });
+        log('warn', `图片任务 #${t.id} ${hint}，保留入队等待处理`);
+        return;
+      }
+      if (r.kind === 'timeout' || r.kind === 'spawn-error') {
+        return this.backoffOrGiveUp(t, `即梦提交异常（${r.kind}）：${r.error}`);
+      }
+      // 参数 / 业务错误：不可恢复
+      this.retryUntil.delete(t.id);
+      tasks.update(t.id, {
+        status: 'failed',
+        error_message: `即梦提交失败：${String(r.error || r.kind).slice(0, 400)}`,
+        completed_at: Date.now(),
+      });
+      log('error', `图片任务 #${t.id} 即梦提交失败：${r.error}`);
+      return;
+    }
+
+    const j = r.data || {};
+    const submitId = j.submit_id || null;
+    if (!submitId) {
+      this.retryUntil.delete(t.id);
+      tasks.update(t.id, {
+        status: 'failed',
+        error_message: '即梦提交未返回 submit_id，无法追踪任务',
+        completed_at: Date.now(),
+      });
+      return;
+    }
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      video_id: submitId, // 复用 video_id 承载 submit_id，同时充当「已提交」标记
+      task_id: submitId,
+      submit_response: j,
+      status: 'queued', // 保持 queued：下一轮 tick 才会被 pendingImages 捞回来查询
+      progress: 20,
+    });
+    log('info', `图片任务 #${t.id} 即梦已提交 submit_id=${submitId}（扣积分 ${j.credit_count ?? '?'}），等待生成`);
+  }
+
+  /** 阶段二：查询即梦图片任务结果并落库 */
+  async queryDreaminaImage(t, req) {
+    let r;
+    try {
+      r = await dreamina.queryResult({ submitId: t.video_id });
+    } catch (e) {
+      return this.backoffOrGiveUp(t, `即梦查询异常：${e.message}`);
+    }
+
+    if (!r.ok) {
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in') {
+        this.retryUntil.set(t.id, { until: Date.now() + DREAMINA_ENV_BACKOFF_MS, attempts: 1 });
+        log('warn', `图片任务 #${t.id} 即梦环境未就绪，暂停查询`);
+        return;
+      }
+      if (r.kind === 'timeout' || r.kind === 'spawn-error') {
+        return this.backoffOrGiveUp(t, `即梦查询异常（${r.kind}）：${r.error}`);
+      }
+      this.retryUntil.delete(t.id);
+      tasks.update(t.id, {
+        status: 'failed',
+        last_poll_response: r.data,
+        error_message: `即梦查询失败：${String(r.error || r.kind).slice(0, 400)}`,
+        completed_at: Date.now(),
+      });
+      log('error', `图片任务 #${t.id} 即梦查询失败（${r.kind}）：${r.error}`);
+      return;
+    }
+
+    const j = r.data || {};
+    const genStatus = String(j.gen_status || '');
+    tasks.update(t.id, { last_poll_response: j });
+
+    if (genStatus === 'success') {
+      const urls = dreamina.extractImageUrls(j);
+      if (!urls.length) {
+        // 成功却解析不到地址：落 failed 并保留原始响应，便于按真实字段名补充解析
+        this.retryUntil.delete(t.id);
+        tasks.update(t.id, {
+          status: 'failed',
+          error_message: '即梦返回成功但未解析到图片地址（原始响应见 last_poll_response，需按实际字段名补充解析）',
+          completed_at: Date.now(),
+        });
+        log('warn', `图片任务 #${t.id} 即梦成功但未解析到图片 URL，原始响应已存入 last_poll_response`);
+        return;
+      }
+      // 即梦可能一次返回多张候选（实测请求 generate_num=1 却回 4 张），故取两者较大值，
+      // 避免 failed = count - images.length 算出负数。字段名为 camelCase（与 payload 对齐）。
+      const count = Math.max(Number(req.generateNum) || Number(req.count) || 1, urls.length);
+      try {
+        await this.finalizeImages(t, req, urls, { model: t.model, size: t.size, ratio: t.aspect_ratio, count });
+      } catch (e) {
+        tasks.update(t.id, {
+          status: 'failed',
+          error_message: `产物处理失败：${String(e.message).slice(0, 400)}`,
+          completed_at: Date.now(),
+        });
+        log('error', `图片任务 #${t.id} 产物处理失败：${e.message}`);
+      }
+      return;
+    }
+
+    if (genStatus === 'fail' || genStatus === 'failed') {
+      this.retryUntil.delete(t.id);
+      tasks.update(t.id, {
+        status: 'failed',
+        error_message: String(j.fail_reason || j.error || '即梦图片生成失败').slice(0, 400),
+        completed_at: Date.now(),
+      });
+      log('error', `图片任务 #${t.id} 即梦生成失败：${j.fail_reason || j.error || '未知原因'}`);
+      return;
+    }
+
+    // querying：保持 queued 等下一轮；progress 仅作视觉反馈（封顶 95，避免假完成）
+    const p = Math.min((Number(t.progress) || 20) + 5, 95);
+    tasks.update(t.id, { status: 'queued', progress: p });
   }
 }
 
