@@ -6,7 +6,7 @@ const { settings, DEFAULT_SETTINGS, projects, tasks } = require('../db');
 const agnes = require('../clients/agnes');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
-const { IMAGE_MODEL } = require('../core/constants');
+const { IMAGE_MODEL, providerOf } = require('../core/constants');
 const { ApiError, ah, upstreamError } = require('../core/errors');
 const { buildImagePayload, safeUrl } = require('../services/payloads');
 
@@ -16,7 +16,7 @@ module.exports = function registerImageRoutes(app) {
   app.post(
     '/api/images/tasks',
     ah(async (req, res) => {
-      const { payload, prompt, size, ratio } = buildImagePayload(req.body);
+      const { payload, prompt, size, ratio, model } = buildImagePayload(req.body);
       const b = req.body || {};
       const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
       const imageKind = ['character', 'scene'].includes(b.kind) ? b.kind : 'character';
@@ -25,13 +25,17 @@ module.exports = function registerImageRoutes(app) {
         projectId = Number(b.project_id);
         if (!projects.get(projectId)) throw new ApiError(404, '项目不存在');
       }
-      const apiKey = settings.get('api_key', '');
-      if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+      // 即梦图片走本地 CLI（凭证为 OAuth 登录态，由 CLI 保管），故不要求配置 api_key
+      const isDreamina = providerOf(model) === 'dreamina';
+      if (!isDreamina) {
+        const apiKey = settings.get('api_key', '');
+        if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+      }
       const id = tasks.insert({
         kind: 'image',
         status: 'queued',
         mode: 'text',
-        model: IMAGE_MODEL,
+        model, // 必须原样入队：即梦模型若被硬编码的 IMAGE_MODEL 覆盖，provider 分流即失效
         prompt,
         size,
         aspect_ratio: ratio || '1:1',
@@ -50,11 +54,15 @@ module.exports = function registerImageRoutes(app) {
   app.post(
     '/api/images/generate',
     ah(async (req, res) => {
-      const { payload, prompt, size, ratio } = buildImagePayload(req.body);
+      const { payload, prompt, size, ratio, model } = buildImagePayload(req.body);
       const b = req.body || {};
       const kind = ['character', 'scene'].includes(b.kind) ? b.kind : 'character';
       const count = [1, 2, 3, 4].includes(Number(b.count)) ? Number(b.count) : 1;
       if (b.project_id !== undefined && !projects.get(b.project_id)) throw new ApiError(404, '项目不存在');
+      // 即梦图片是异步任务（submit_id + query_result 轮询），本接口为同步等待语义，不适用
+      if (providerOf(model) === 'dreamina') {
+        throw new ApiError(400, '即梦图片为异步任务，请改用 POST /api/images/tasks（本同步接口仅支持 Agnes）');
+      }
       const apiKey = settings.get('api_key', '');
       if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
       // 并行生成 count 张；多张时部分失败不阻塞成功者

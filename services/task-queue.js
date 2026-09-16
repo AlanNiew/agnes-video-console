@@ -10,13 +10,19 @@ const { settings, tasks } = require('../db');
 const submitter = require('../workers/submitter');
 const { log } = require('../core/logger');
 const { ApiError } = require('../core/errors');
+const { providerOf } = require('../core/constants');
 
 /** 创建任务记录并进入提交队列（v1.3）：
  * 不再同步调用上游 —— 由后台提交器（workers/submitter.js）按 submit_interval_ms 节流提交，
  * 429 / 网络错误自动退避重试，把「限流撞墙」变成「排队等待」。 */
 async function submitTask(payload, meta, opts = {}) {
-  const apiKey = settings.get('api_key', '');
-  if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  // 即梦走本地 CLI：凭证为 OAuth 登录态（由 CLI 自行保管），故不要求配置 api_key。
+  // 但登录态是否有效只有到提交时才由 CLI 反馈，届时 submitter 会保留入队并退避等待人工处理。
+  const isDreamina = providerOf(meta.model) === 'dreamina';
+  if (!isDreamina) {
+    const apiKey = settings.get('api_key', '');
+    if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
+  }
 
   const id = tasks.insert({
     status: 'queued',
@@ -28,7 +34,12 @@ async function submitTask(payload, meta, opts = {}) {
     image_id: opts.image_id || null,
   });
   submitter.kick(id); // 立即唤醒提交器尝试首次提交（是否放行仍受最小间隔约束）
-  log('info', `任务 #${id} 已入队（${meta.model}，后台提交器按间隔提交，429 自动重试）`);
+  log(
+    'info',
+    `任务 #${id} 已入队（${meta.model}，${
+      isDreamina ? '即梦 CLI 队列，排队时间取决于上游' : '后台提交器按间隔提交，429 自动重试'
+    }）`,
+  );
   return tasks.get(id);
 }
 

@@ -21,6 +21,7 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 
 - **Node ≥ 22.13**（`node:sqlite`，API Key 存 SQLite，零原生编译）。
 - **e2e 需要本机装 ffmpeg + ffprobe 且在 PATH**：渲染用例跑真实 ffmpeg 合成（含响度补偿与封面）；ffprobe 用于 TTS 时长探测，缺失时该用例静默跳过。
+- **即梦为可选上游**：需本机装官方 `dreamina` CLI 并完成登录（`curl -fsSL https://jimeng.jianying.com/cli | bash`，Windows 落到 `~/bin/dreamina.exe`，可用 `DREAMINA_CLI_PATH` 覆盖）。缺失时即梦任务保留 queued 走 5 分钟退避（`not-installed` / `not-logged-in`），**Agnes 主链路不受任何影响**。登录为 OAuth Device Flow（`login --headless` + `login checklogin --device_code=…`），授权码有效期约 10 分钟。
 - **db.js import 即副作用**：require 时就 mkdir 数据目录并打开 SQLite。任何单测须先设 `DATA_DIR`/`DB_PATH` 指向临时目录（见 `test/unit/setup.js`，jest `setupFiles` 已处理，勿改为 `setupFilesAfterEach`）。
 - 429 退避单测加速：设 `SUBMIT_RATE_LIMIT_BASE_MS`（e2e 用 500 代替默认 60s）。
 
@@ -28,10 +29,11 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 
 ```
 server.js     装配层：require 路由 + 错误中间件 + 启动编排（5 个后台 worker）。不写业务。
-core/         零/低依赖基元：constants（模型清单/白名单/上限/TTS/转场字幕预设，勿 require 其他模块）
+core/         零/低依赖基元：constants（模型清单/白名单/上限/TTS/转场字幕预设 + providerOf 多上游推导，勿 require 其他模块）
               · config（跨模块单源常量）· errors（ApiError/ah，勿再造裸 Error+expose）
               · logger（内存环形日志）· openapi（API 自描述，读 package.json）
 clients/      上游客户端：agnes（视频/chat/图片 API）· fish-tts（TTS，CONNECT 隧道）· netmusic（BGM）
+              · dreamina（即梦官方 CLI 子进程；视频/图片均为异步任务，扣会员积分，spawn 必须防 stdin 阻塞）
 services/     业务层：payloads（上游请求体校验/组装，不接触提交器）· task-queue（任务入队，
               建 queued 记录并唤醒 submitter）· prompts（提示词/LLM 输出解析）
               · subtitles（ASS/SRT 字幕纯函数）· voice-pool；pipeline 为依赖注入编排
@@ -52,7 +54,9 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
 ```
 
 - 74 条 API 路由（路径 × 方法）的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
-- 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload）。
+- 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload / buildDreaminaPayload / buildDreaminaImagePayload）。
+- **多上游 provider 分发（零 schema 变更）**：模型 → 上游由 `core/constants.js` 的 `providerOf(model)` 推导（查 `DREAMINA_MODELS` / `DREAMINA_IMAGE_MODELS`，未命中即 Agnes）。submitter / poller / task-queue / image-worker / routes 均据此分流。即梦 `submit_id` 复用 `tasks.video_id` 列承载（poller 的 `active()` 靠它判定「已提交」，故 `activeTasks` 已加 `kind` 过滤，避免抢走即梦图片任务）。
+- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（角色图 / 封面；关键镜头可手动升级）。即梦模型**刻意不进** `/api/meta` 模型清单，故前端下拉不变，仅可经 API 直接指定调用。
 - **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
 - 全自动成片编排在 `workers/auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
 

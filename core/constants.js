@@ -39,6 +39,128 @@ const MODELS = {
   },
 };
 
+/**
+ * 即梦（官方 dreamina CLI）视频模型 —— 与 Agnes 的 MODELS **分离维护**：
+ * 故意不进 /api/meta 的模型清单，故前端下拉/默认模型不受影响；
+ * 仅可经 /api/tasks 直接指定 model 调用（provider 由 providerOf 推导）。
+ * 参数矩阵取自 `dreamina text2video -h`（CLI v1.4.18 实测）；CLI 侧对取值做严格校验，
+ * 不支持或旧版取值会被拒绝而非静默调整，故此处白名单需与 CLI 保持同步。
+ */
+const DREAMINA_VIDEO_RATIOS = ['1:1', '3:4', '16:9', '4:3', '9:16', '21:9'];
+const DREAMINA_RESOLUTIONS = ['480p', '720p', '1080p', '4k']; // 全局并集；各模型实际支持见 resolutions
+const DREAMINA_MODELS = {
+  'seedance2.0fast': {
+    provider: 'dreamina',
+    model_version: 'seedance2.0fast',
+    subcommand: 'text2video',
+    resolutions: ['720p'],
+    minDuration: 4,
+    maxDuration: 15,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: false,
+    label: 'Seedance 2.0 Fast（即梦 · 720p · 4-15s）',
+  },
+  'seedance2.0': {
+    provider: 'dreamina',
+    model_version: 'seedance2.0',
+    subcommand: 'text2video',
+    resolutions: ['720p'],
+    minDuration: 4,
+    maxDuration: 15,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: false,
+    label: 'Seedance 2.0（即梦 · 720p · 4-15s）',
+  },
+  'seedance2.0mini': {
+    provider: 'dreamina',
+    model_version: 'seedance2.0mini',
+    subcommand: 'text2video',
+    resolutions: ['720p'],
+    minDuration: 4,
+    maxDuration: 15,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: false,
+    label: 'Seedance 2.0 Mini（即梦 · 720p · 4-15s）',
+  },
+  'seedance2.0_vip': {
+    provider: 'dreamina',
+    model_version: 'seedance2.0_vip',
+    subcommand: 'text2video',
+    resolutions: ['720p', '1080p', '4k'],
+    minDuration: 4,
+    maxDuration: 15,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: true,
+    label: 'Seedance 2.0 VIP（即梦 · 720p/1080p/4k · 4-15s）',
+  },
+  'seedance2.0fast_vip': {
+    provider: 'dreamina',
+    model_version: 'seedance2.0fast_vip',
+    subcommand: 'text2video',
+    resolutions: ['720p'],
+    minDuration: 4,
+    maxDuration: 15,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: true,
+    label: 'Seedance 2.0 Fast VIP（即梦 · 720p · 4-15s）',
+  },
+  'seedance2.5': {
+    provider: 'dreamina',
+    model_version: 'seedance2.5',
+    subcommand: 'text2video',
+    resolutions: ['480p', '720p', '1080p'],
+    minDuration: 4,
+    maxDuration: 30,
+    ratios: DREAMINA_VIDEO_RATIOS,
+    vipOnly: true,
+    label: 'Seedance 2.5（即梦 · 480p/720p/1080p · 4-30s · 需高级会员）',
+  },
+};
+
+/**
+ * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
+ * （resolution_type / generate_num，且为异步任务）。参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测）。
+ * 按积分成本梯度提供三档，贯彻「Agnes 免费打主力、即梦只砸关键处」的均衡策略：
+ * 角色图 / 封面这类「量少但决定成败」的资产生成走这里，分镜视频仍以免费 Agnes 为主。
+ */
+const DREAMINA_IMAGE_RATIOS = ['21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'];
+const DREAMINA_IMAGE_MODELS = {
+  'jimeng-image-3.1': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '3.1',
+    resolutions: ['1k', '2k'],
+    label: '即梦图片 3.1（1k/2k · 最省积分）',
+  },
+  'jimeng-image-5.0': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '5.0',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 5.0（2k/4k · 性价比主力）',
+  },
+  'jimeng-image-5.0pro': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '5.0Pro',
+    resolutions: ['1.5k', '2k', '4k'],
+    label: '即梦图片 5.0 Pro（1.5k/2k/4k · 最强）',
+  },
+};
+
+/**
+ * 由模型名推导上游 provider。
+ * 未知模型一律按 'agnes' 处理，保证历史数据与既有调用向后兼容。
+ * @param {string} model
+ * @returns {'agnes'|'dreamina'}
+ */
+function providerOf(model) {
+  const isDreamina =
+    Object.prototype.hasOwnProperty.call(DREAMINA_MODELS, model) ||
+    Object.prototype.hasOwnProperty.call(DREAMINA_IMAGE_MODELS, model);
+  return isDreamina ? 'dreamina' : 'agnes';
+}
+
 /* 2.5 家族 / V2.0 家族模式 */
 const MODES = ['text', 'keyframe', 'reference'];
 const V2_MODES = ['text', 'image', 'keyframes'];
@@ -116,6 +238,12 @@ const STYLE_BGM_DEFAULT_KEYWORD = '轻音乐';
 
 module.exports = {
   MODELS,
+  DREAMINA_MODELS,
+  DREAMINA_IMAGE_MODELS,
+  DREAMINA_RESOLUTIONS,
+  DREAMINA_VIDEO_RATIOS,
+  DREAMINA_IMAGE_RATIOS,
+  providerOf,
   MODES,
   V2_MODES,
   ASPECT_RATIOS,

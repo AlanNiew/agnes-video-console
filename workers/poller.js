@@ -8,9 +8,11 @@
 const { settings, tasks } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const dreamina = require('../clients/dreamina');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
+const { providerOf } = require('../core/constants');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
 // v2.3 视频归档下载失败后的自动重试节奏（30s / 2min / 10min，共 3 次）
@@ -170,6 +172,13 @@ class Poller {
     }
     if (['failed', 'submit_error'].includes(fresh.status)) return;
     t = fresh;
+
+    // provider 分流：即梦的鉴权、状态语义与超时策略都与 Agnes 不同，走独立分支
+    if (providerOf(t.model) === 'dreamina') {
+      await this.pollDreamina(t);
+      return;
+    }
+
     const apiKey = settings.get('api_key', '');
     const baseUrl = settings.get('base_url', DEFAULT_BASE_URL);
     const maxActiveMs = Math.max((Number(settings.get('max_active_minutes', 20)) || 20) * 60_000, 30_000);
@@ -294,6 +303,102 @@ class Poller {
       }
     } else if (status === 'failed') {
       log('error', `任务 #${t.id} 失败: ${errorMessage || '未知错误'}`);
+    }
+  }
+
+  /**
+   * 即梦（官方 dreamina CLI）轮询：query_result --submit_id=<uuid>。
+   * 与 Agnes 的差异：
+   *   - 无 apiKey：登录态由 CLI 本地保管，未登录/未安装时保留状态等人工处理，绝不误判为任务失败
+   *   - 状态语义为 gen_status（querying / success / fail），需映射到本系统的四态枚举
+   *   - 队列排队极长（实测 queue_length 达数十万），超时阈值改用独立的 dreamina_max_active_minutes
+   */
+  async pollDreamina(t) {
+    const maxActiveMs = Math.max((Number(settings.get('dreamina_max_active_minutes', 720)) || 720) * 60_000, 60_000);
+    const activeBase = t.submitted_at || t.created_at;
+    if (Date.now() - activeBase > maxActiveMs) {
+      this.retryUntil.delete(t.id);
+      tasks.setPollResult(t.id, {
+        status: 'failed',
+        progress: t.progress,
+        last_poll_response: t.last_poll_response,
+        error_message: `即梦轮询超时（超过 ${Math.round(maxActiveMs / 60000)} 分钟未完成；即梦队列排队可能极长）`,
+      });
+      log('warn', `任务 #${t.id} (${t.video_id}) 即梦轮询超时 → failed`);
+      return;
+    }
+
+    let r;
+    try {
+      r = await dreamina.queryResult({ submitId: t.video_id });
+    } catch (e) {
+      this.backoff(t.id, 5000);
+      log('error', `任务 #${t.id} (${t.video_id}) 即梦查询异常: ${e.message}`);
+      return;
+    }
+
+    if (!r.ok) {
+      // 环境未就绪：非任务自身错误，保留状态等人工处理后自动续跑
+      if (r.kind === 'not-installed' || r.kind === 'not-logged-in') {
+        this.backoff(t.id, 5 * 60_000);
+        log('warn', `任务 #${t.id} 即梦环境未就绪（${r.kind}），暂停轮询：${r.error}`);
+        return;
+      }
+      // 瞬时错误：退避重试
+      if (r.kind === 'timeout' || r.kind === 'spawn-error') {
+        this.backoff(t.id, 3000);
+        log('warn', `任务 #${t.id} 即梦查询异常（${r.kind}），稍后重试：${r.error}`);
+        return;
+      }
+      // 其余（submit_id 不存在 / 任务已过期等）：不可恢复，标记失败
+      tasks.setPollResult(t.id, {
+        status: 'failed',
+        last_poll_response: r.data,
+        error_message: `即梦查询失败：${String(r.error || r.kind).slice(0, 300)}`,
+      });
+      log('error', `任务 #${t.id} 即梦查询失败（${r.kind}）→ failed: ${r.error}`);
+      return;
+    }
+
+    const j = r.data || {};
+    const genStatus = String(j.gen_status || '');
+    // gen_status: querying（排队 / 生成中）/ success / fail
+    let finalStatus;
+    if (genStatus === 'success') finalStatus = 'completed';
+    else if (genStatus === 'fail' || genStatus === 'failed') finalStatus = 'failed';
+    else if (genStatus === 'querying') finalStatus = 'in_progress';
+    else {
+      log('warn', `任务 #${t.id} 返回未知 gen_status "${genStatus}"，按 queued 继续轮询`);
+      finalStatus = 'queued';
+    }
+
+    // 产物地址字段尚未实测确认（CLI 亦支持 --download_dir 直接落盘），故兼容常见字段名
+    const rawUrl = j.video_url || j.url || j.metadata?.url || j.data?.video_url || null;
+    const metadataUrl = typeof rawUrl === 'string' && /^https?:\/\//i.test(rawUrl.trim()) ? rawUrl.trim() : null;
+
+    this.retryUntil.delete(t.id);
+    tasks.touchPoll(t.id);
+    tasks.setPollResult(t.id, {
+      status: finalStatus,
+      progress: finalStatus === 'completed' ? 100 : t.progress,
+      last_poll_response: j,
+      metadata_url: metadataUrl,
+      error_message: finalStatus === 'failed' ? String(j.fail_reason || j.error || '即梦生成失败').slice(0, 300) : null,
+    });
+
+    if (finalStatus === 'completed') {
+      const hint = metadataUrl ? metadataUrl : '(上游未返回 url，可能需改用 --download_dir 模式)';
+      log('info', `任务 #${t.id} 即梦生成完成，视频地址: ${hint}`);
+      if (metadataUrl && !t.video_local_path) {
+        if (this.autoArchive()) {
+          const ok = await this.downloadAndArchive(t, metadataUrl);
+          if (!ok) this.scheduleArchiveRetry(t.id);
+        } else {
+          log('info', `任务 #${t.id} 完成（自动下载已关闭，仅保留平台链接）`);
+        }
+      }
+    } else if (finalStatus === 'failed') {
+      log('error', `任务 #${t.id} 即梦生成失败: ${j.fail_reason || j.error || '未知原因'}`);
     }
   }
 

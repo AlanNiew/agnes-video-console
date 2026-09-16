@@ -46,6 +46,7 @@ const stmts = {
   activeTasks: db.prepare(`
     SELECT * FROM tasks
     WHERE status IN ('queued','in_progress') AND video_id IS NOT NULL AND video_id != ''
+      AND (kind IS NULL OR kind = 'video')
     ORDER BY created_at ASC
   `),
   // v1.3 提交队列：待提交任务（提交器接管后不再按 created_at 年龄过滤）；
