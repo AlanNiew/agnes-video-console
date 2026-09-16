@@ -18,7 +18,6 @@ const { instanceLockHeldByOther } = require('../instance-lock');
 const { ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
 const { createNetmusicClient } = require('../clients/netmusic');
 const netmusic = createNetmusicClient(settings);
-const { generatePoster } = require('../lib/poster');
 const { log } = require('../core/logger');
 const { probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
@@ -289,7 +288,7 @@ function buildArchiveDoc({ job, project, segments }) {
  * 成片与字幕按渲染任务版本化（重渲追加），台词/海报为项目最新版覆盖。
  * v2.5：追加「制作档案-N.md」自动草稿。
  * @returns {string|null} 作品目录绝对路径（失败返回 null，不影响成片状态） */
-function archiveWork({ job, project, segments, subLines, outPath }) {
+function archiveWork({ job, project, segments, subLines, outPath, titleCardFile = null }) {
   try {
     const { dir } = workDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
@@ -325,6 +324,14 @@ function archiveWork({ job, project, segments, subLines, outPath }) {
       );
     } catch {
       /* 发布文案生成失败不影响成片归档 */
+    }
+    // v2.5.3 交付封面：片头卡帧（主/副标题与署名已成图）——作品库缩略图与发布封面同源
+    if (titleCardFile && fs.existsSync(titleCardFile)) {
+      try {
+        fs.copyFileSync(titleCardFile, path.join(dir, '封面.png'));
+      } catch {
+        /* 封面写入失败不影响成片归档 */
+      }
     }
     return dir;
   } catch (e) {
@@ -864,12 +871,33 @@ class Renderer {
         transition_type: transitionType,
         subtitle_style: subStyle,
       };
-      // v2.2 作品归档：成片/字幕/台词 → data/works/《项目名》-id/（用户找成品直接翻作品目录）
-      const workDir = archiveWork({ job, project, segments, subLines, outPath });
-      // v2.2 社交海报：LLM 提示词 → 文生图 → 叠标题（fire-and-forget，不阻塞渲染器下一个任务）
-      if (workDir) {
-        generatePoster(project, workDir, dims.aspect).catch(() => {}); // poster 内部已 best-effort，双保险
+      // v2.5.3 交付封面：从片头卡抽一帧（主/副标题与署名已成图，比"关键帧 + 绘字"更精致；
+      // 同时省掉一次 LLM + 文生图调用）
+      let titleCardCover = null;
+      const headCard = cards.find((c) => c.kind === 'head');
+      if (headCard && headCard.file) {
+        const coverPath = path.join(tmpDir, 'cover-title.png');
+        const rc = await runFfmpeg([
+          '-i',
+          headCard.file,
+          '-ss',
+          (TITLE_DUR - 1.2).toFixed(2), // 淡入完成(0.9s)之后、淡出(3.2s)之前
+          '-frames:v',
+          '1',
+          coverPath,
+        ]);
+        if (rc.ok && fs.existsSync(coverPath)) titleCardCover = coverPath;
+        else log('warn', `渲染任务 #${job.id} 片头卡封面抽取失败（不影响成片）：${rc.err.slice(0, 200)}`);
       }
+      // v2.2 作品归档：成片/字幕/台词/制作档案/发布文案/封面 → data/works/《项目名》-id/
+      const workDir = archiveWork({
+        job,
+        project,
+        segments,
+        subLines,
+        outPath,
+        titleCardFile: titleCardCover,
+      });
       renders.update(job.id, {
         status: 'completed',
         progress: 100,

@@ -31,8 +31,8 @@ function workCardHTML(w) {
   const dur = q.duration_s ? `${q.duration_s}s` : '';
   const date = fmtTime(w.latest_at);
   const cover = w.poster
-    ? `<img src="${esc(w.poster.url)}" loading="lazy" alt="${esc(w.name)} 海报" />`
-    : `<div class="wk-cover-fallback"><span>🎬</span><span>暂无海报</span></div>`;
+    ? `<img src="${esc(w.poster.url)}" loading="lazy" alt="${esc(w.name)} 封面" />`
+    : `<div class="wk-cover-fallback"><span>🎬</span><span>暂无封面</span></div>`;
   return `
       <article class="work-card" data-pid="${w.project_id ?? ''}" data-name="${esc(w.name)}" title="查看《${esc(w.name)}》详情">
         <div class="wk-cover">${cover}
@@ -44,7 +44,7 @@ function workCardHTML(w) {
             ${w.films.length > 1 ? `<span class="meta-tag">${w.films.length} 版成片</span>` : ''}
             ${q.shots ? `<span class="meta-tag">${q.shots} 镜</span>` : ''}
             ${q.narrated_shots ? `<span class="meta-tag">旁白 ${q.narrated_shots}/${q.shots}</span>` : ''}
-            ${w.poster ? '<span class="meta-tag">有海报</span>' : ''}
+            ${w.poster ? '<span class="meta-tag">有封面</span>' : ''}
           </div>
           <div class="wk-foot">${esc(date)}</div>
         </div>
@@ -72,7 +72,7 @@ function openWork(w) {
       <div class="wk-player"><video controls preload="metadata" id="wkVideo" src="${esc(latest.url)}"></video></div>
       <div class="wk-actions-row">
         ${filmDls}
-        ${dlRowHtml('下载海报', w.poster, '🖼️')}
+        ${dlRowHtml('下载封面', w.poster, '🖼️')}
         ${w.subtitles.length ? `<a class="btn ghost sm" href="${esc(w.subtitles[0].url)}" download title="SRT 字幕">💬 字幕</a>` : ''}
         ${dlRowHtml('旁白台词', w.script, '📝')}
         <button class="btn ghost sm" id="wkCopyDir" title="复制作品目录路径，到资源管理器中打开">📁 复制目录路径</button>

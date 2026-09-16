@@ -35,7 +35,7 @@ clients/      上游客户端：agnes（视频/chat/图片 API）· fish-tts（T
 services/     业务层：payloads（上游请求体校验/组装，不接触提交器）· task-queue（任务入队，
               建 queued 记录并唤醒 submitter）· prompts（提示词/LLM 输出解析）
               · subtitles（ASS/SRT 字幕纯函数）· voice-pool；pipeline 为依赖注入编排
-lib/          本地文件/产物支撑：artifacts（素材备份 + works 作品目录定位）· poster（社交海报）
+lib/          本地文件/产物支撑：artifacts（素材备份 + works 作品目录定位）· publish-kit（发布文案）· render-stage（渲染阶段文案）
 db/           数据层（require('./db') 由目录解析指向 db/index.js 组合出口，导出契约不变）：
               ├ kernel.js   连接/PRAGMA/schema DDL/自动迁移/parseJson/tx —— import 即副作用，
               │             （require 即开库），单测前先设 DATA_DIR/DB_PATH

@@ -107,7 +107,7 @@ const paths = {
   },
   '/api/projects/{id}/render/jobs': { get: '项目渲染任务列表' },
   '/api/render/jobs/{id}': {
-    get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), output_path, output_url, quality(质检报告: duration_s/expected_duration_s/loudness_lufs/shots/narrated_shots/sub_lines), work_dir(作品归档目录 data/works/《名》-id: 成片/SRT字幕/旁白台词/海报), work_url}',
+    get: '渲染任务详情 {status(queued|rendering|completed|failed), progress(0-100), stage_label(进行中任务的阶段文案), output_path, output_url, quality(质检报告: duration_s/expected_duration_s/loudness_lufs/shots/narrated_shots/sub_lines), work_dir(作品归档目录 data/works/《名》-id: 成片/SRT字幕/旁白台词/制作档案/发布文案/封面), work_url}',
     delete:
       '删除渲染任务（渲染中不可删；artifacts 渲染缓存一并清理；**作品目录 data/works 保留**——作品是用户劳动成果）',
   },

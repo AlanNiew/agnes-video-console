@@ -48,7 +48,7 @@ module.exports = function registerRenderRoutes(app) {
         .map((f) => fileEntry(dir, dirName, f))
         .sort((a, b) => b.mtime - a.mtime);
       if (!films.length) continue; // 无成片的半成品目录不入库
-      const posters = files.filter((f) => /^海报.*\.png$/.test(f)).map((f) => fileEntry(dir, dirName, f));
+      const posters = files.filter((f) => /^封面.*\.png$/.test(f)).map((f) => fileEntry(dir, dirName, f));
       const subtitles = files
         .filter((f) => /^字幕-.*\.srt$/.test(f))
         .map((f) => fileEntry(dir, dirName, f))
