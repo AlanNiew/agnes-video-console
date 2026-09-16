@@ -44,6 +44,7 @@ require('./routes/projects')(app); // /api/projects*（文案/图片/镜头/视�
 require('./routes/render')(app); // /api/projects/:id/render + /api/render/jobs*
 require('./routes/templates')(app); // /api/templates*
 require('./routes/characters')(app); // v2.5 角色库：/api/characters* + /api/projects/:id/characters/import
+require('./routes/dreamina')(app); // 即梦 CLI 管理：/api/dreamina/*（状态/无头登录/成本护栏）
 
 /* ---------------- 本地产物静态服务 ---------------- */
 try {

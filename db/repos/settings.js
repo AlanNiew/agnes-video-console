@@ -34,5 +34,6 @@ const DEFAULT_SETTINGS = {
   video_auto_download: '0', // v2.3 视频完成后自动下载到本地（'1'开/'0'关；默认关——本地产物很占磁盘，关时仅保留平台链接）
   creation_templates: '[]', // P2-7 创作模板（JSON 数组：创意写法 + 风格 + 画幅/时长 + 成片预设配方）
   character_library: '[]', // v2.5 角色库（JSON 数组：跨项目复用的角色资产——名/图/服色锚/提示词/所属系列）
+  dreamina_confirm_threshold: '10', // 即梦成本护栏：预估积分 > 此阈值时前端需弹窗确认（0 = 每次即梦调用都确认）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

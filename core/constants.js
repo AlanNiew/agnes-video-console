@@ -149,6 +149,36 @@ const DREAMINA_IMAGE_MODELS = {
 };
 
 /**
+ * 即梦积分单价表（成本护栏的数据基础）。
+ *
+ * source 语义：
+ *   'measured'  —— 实测标定，可信
+ *   'estimated' —— 推断值，UI 必须提示「实际以扣费为准」
+ *
+ * 计费模式差异（实测确认）：
+ *   视频按**秒**计费；图片按**次**计费 —— 一次请求返回 4 张候选，故图片成本与 count 无关。
+ *
+ * 已知实测：图片 3.1/1k = 1 积分；视频 720p = 5 积分/秒（5s 共 25 积分）。
+ * 其余为推断，待用最低规格各跑一次后升级为 measured（见 docs/DREAMINA_CLI_PLAN.md 4.1）。
+ */
+const DREAMINA_CREDIT_COST = {
+  video: {
+    '480p': { perSecond: 3, source: 'estimated' },
+    '720p': { perSecond: 5, source: 'measured' },
+    '1080p': { perSecond: 15, source: 'estimated' },
+    '4k': { perSecond: 40, source: 'estimated' },
+  },
+  image: {
+    'jimeng-image-3.1': { perRequest: { '1k': 1, '2k': 2 }, source: 'measured' },
+    'jimeng-image-5.0': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
+    'jimeng-image-5.0pro': { perRequest: { '1.5k': 4, '2k': 6, '4k': 10 }, source: 'estimated' },
+  },
+};
+
+/** 成本确认阈值默认值（积分）：预估 ≤ 阈值静默提交，> 阈值需前端弹窗确认 */
+const DREAMINA_DEFAULT_THRESHOLD = 10;
+
+/**
  * 由模型名推导上游 provider。
  * 未知模型一律按 'agnes' 处理，保证历史数据与既有调用向后兼容。
  * @param {string} model
@@ -243,6 +273,8 @@ module.exports = {
   DREAMINA_RESOLUTIONS,
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_IMAGE_RATIOS,
+  DREAMINA_CREDIT_COST,
+  DREAMINA_DEFAULT_THRESHOLD,
   providerOf,
   MODES,
   V2_MODES,

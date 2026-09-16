@@ -158,6 +158,17 @@ const paths = {
     delete: '删除配音记录（本地文件一并清理）',
     patch: 'v2.5 设置逐镜配音偏移 {offset_ms(0–3000，或 null = 用渲染全局偏移)} —— 对白镜贴开口时点用',
   },
+  '/api/dreamina/status': {
+    get: '即梦 CLI 状态 ?refresh=1 → {installed, bin, logged_in, user_id, vip_level, total_credit, cached, stale}（60s 缓存；未安装/未登录亦返回结构化结果，不报错）',
+  },
+  '/api/dreamina/login': {
+    post: '发起即梦无头登录（OAuth Device Flow）→ {ok, verification_uri, user_code, device_code, poll_interval, expires_at}；授权码约 10 分钟过期',
+  },
+  '/api/dreamina/login/check': { post: '完成即梦登录 {device_code, poll?} → {ok, user_id, vip_level, total_credit}' },
+  '/api/dreamina/logout': { post: '清除即梦本地登录态' },
+  '/api/dreamina/cost': {
+    get: '即梦成本预估与护栏判定 ?model=&duration=&video_resolution=|size=&count= → {level(pass|confirm|block), points, confidence(measured|estimated), breakdown, threshold, remaining}',
+  },
   '/artifacts/*': { get: '本地产物静态服务（图片/视频/音频/成片）' },
 };
 

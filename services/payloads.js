@@ -11,6 +11,8 @@ const {
   DREAMINA_IMAGE_MODELS,
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_IMAGE_RATIOS,
+  DREAMINA_CREDIT_COST,
+  DREAMINA_DEFAULT_THRESHOLD,
   providerOf,
   MODES,
   SECONDS_OK,
@@ -442,6 +444,81 @@ function buildDreaminaImagePayload(b) {
   };
 }
 
+/* ---------------- 即梦成本预估与护栏 ---------------- */
+
+/**
+ * 预估即梦任务的积分消耗（纯函数，供 /api/dreamina/cost 与前端护栏使用）。
+ *
+ * 计费模式差异（实测确认）：视频按**秒**计费；图片按**次**计费 —— 一次请求返回 4 张候选，
+ * 故图片成本与 `count` 无关（传 generate_num:1 也回 4 张、也只扣 1 次）。
+ *
+ * @param {string} model 即梦模型 id
+ * @param {object} params 与 buildDreamina*Payload 相同的入参（duration / video_resolution / size / count）
+ * @returns {{points:number|null, confidence:'measured'|'estimated', breakdown:string}|null}
+ *          非即梦模型返回 null；无法预估（未知规格）返回 points: null
+ */
+function estimateDreaminaCost(model, params = {}) {
+  const b = params || {};
+
+  // —— 视频：按秒计费 ——
+  const vInfo = DREAMINA_MODELS[model];
+  if (vInfo) {
+    const resolution = String(b.video_resolution || b.size || vInfo.resolutions[0]).toLowerCase();
+    const duration = Number(b.duration ?? b.seconds ?? 5);
+    const row = DREAMINA_CREDIT_COST.video[resolution];
+    if (!row) return { points: null, confidence: 'estimated', breakdown: `未知分辨率 ${resolution}` };
+    return {
+      points: row.perSecond * duration,
+      confidence: row.source,
+      breakdown: `${resolution} · ${duration}s × ${row.perSecond} 积分/秒`,
+    };
+  }
+
+  // —— 图片：按次计费（与 count 无关） ——
+  const iInfo = DREAMINA_IMAGE_MODELS[model];
+  if (iInfo) {
+    const resolution = String(b.resolution_type || b.size || iInfo.resolutions[0]).toLowerCase();
+    const row = DREAMINA_CREDIT_COST.image[model];
+    const per = row?.perRequest?.[resolution];
+    if (!per) return { points: null, confidence: 'estimated', breakdown: `未知规格 ${resolution}` };
+    return {
+      points: per,
+      confidence: row.source,
+      breakdown: `${resolution} · 按次计费（1 次约 4 张候选）`,
+    };
+  }
+
+  return null; // 非即梦模型：不参与成本护栏
+}
+
+/**
+ * 成本护栏判定：按预估积分分三档（见 docs/DREAMINA_CLI_PLAN.md 2.2）。
+ *   pass    —— 预估 ≤ 阈值，直接提交（无打扰）
+ *   confirm —— 预估 > 阈值，前端需弹窗确认
+ *   block   —— 预估 > 剩余积分，禁止提交
+ *
+ * 无法预估（未知规格）时按最保守处理，返回 confirm。
+ *
+ * @param {string} model
+ * @param {object} params
+ * @param {{threshold?:number, remainingCredit?:number|null}} [opts]
+ */
+function checkDreaminaGuard(model, params = {}, opts = {}) {
+  const threshold = Number.isFinite(Number(opts.threshold)) ? Number(opts.threshold) : DREAMINA_DEFAULT_THRESHOLD;
+  const remaining = opts.remainingCredit === undefined ? null : opts.remainingCredit;
+  const est = estimateDreaminaCost(model, params);
+
+  if (!est) return null; // 非即梦模型：不套护栏
+  const base = { points: est.points, confidence: est.confidence, breakdown: est.breakdown, threshold, remaining };
+
+  if (est.points === null) return { ...base, level: 'confirm' }; // 无法预估 → 保守确认
+  if (remaining !== null && Number.isFinite(Number(remaining)) && est.points > Number(remaining)) {
+    return { ...base, level: 'block' };
+  }
+  if (est.points > threshold) return { ...base, level: 'confirm' };
+  return { ...base, level: 'pass' };
+}
+
 module.exports = {
   isHttpUrl,
   safeUrl,
@@ -454,4 +531,6 @@ module.exports = {
   buildDreaminaPayload,
   buildImagePayload,
   buildDreaminaImagePayload,
+  estimateDreaminaCost,
+  checkDreaminaGuard,
 };

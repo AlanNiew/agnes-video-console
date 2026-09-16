@@ -43,6 +43,10 @@ module.exports = function registerSettingsRoutes(app) {
       voice_pool_count: getVoicePool().length,
       // v2.3 视频完成后自动下载本地开关（默认关：省磁盘，仅保留平台链接）
       video_auto_download: settings.get('video_auto_download', DEFAULT_SETTINGS.video_auto_download) === '1',
+      // 即梦成本护栏：预估积分 > 阈值时前端需弹窗确认（默认 10；0 = 每次即梦调用都确认）
+      dreamina_confirm_threshold: Number(
+        settings.get('dreamina_confirm_threshold', DEFAULT_SETTINGS.dreamina_confirm_threshold),
+      ),
     });
   });
 
@@ -161,6 +165,15 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.video_auto_download !== undefined) {
       settings.set('video_auto_download', b.video_auto_download ? '1' : '0');
       changed.push('video_auto_download');
+    }
+    // 即梦成本护栏阈值（积分）：0 = 每次即梦调用都需确认；极大值 = 从不确认
+    if (b.dreamina_confirm_threshold !== undefined) {
+      const n = Number(b.dreamina_confirm_threshold);
+      if (!Number.isFinite(n) || n < 0 || n > 100000) {
+        throw new ApiError(400, 'dreamina_confirm_threshold 须为 0–100000 的数值');
+      }
+      settings.set('dreamina_confirm_threshold', String(Math.round(n)));
+      changed.push('dreamina_confirm_threshold');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

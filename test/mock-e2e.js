@@ -512,7 +512,38 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err('openapi.json 缺少关键端点描述');
   }
   if (!String(oas.data.info?.description || '').includes('入队')) err('openapi 描述未说明入队语义');
-  ok('/api/openapi.json 自描述：任务入队/成片渲染/配音端点齐全');
+  if (!oas.data.paths?.['/api/dreamina/status']?.get || !oas.data.paths?.['/api/dreamina/cost']?.get) {
+    err('openapi.json 缺少即梦端点描述');
+  }
+  ok('/api/openapi.json 自描述：任务入队/成片渲染/配音/即梦端点齐全');
+
+  // 3.3b 即梦 CLI 管理端点（docs/DREAMINA_CLI_PLAN.md 阶段 1）
+  // 硬要求：CI / 无 CLI 环境必须 graceful（结构化返回，绝不 5xx）。
+  // 注意：只测只读端点（status / cost）—— login / logout 会改动真实登录态，e2e 不碰。
+  const dmStatus = await api('GET', '/api/dreamina/status');
+  if (dmStatus.status !== 200) err(`/api/dreamina/status 应 200（graceful），实际 ${dmStatus.status}`);
+  if (typeof dmStatus.data?.installed !== 'boolean') err('即梦 status 缺少 installed 布尔字段');
+  if (typeof dmStatus.data?.logged_in !== 'boolean') err('即梦 status 缺少 logged_in 布尔字段');
+  ok(`即梦状态端点正常（installed=${dmStatus.data.installed}, logged_in=${dmStatus.data.logged_in}）`);
+
+  // 成本护栏三档：视频 25 积分 → confirm；图片 1 积分 → pass；Agnes → 不参与
+  const dmVideo = await api(
+    'GET',
+    '/api/dreamina/cost?model=seedance2.0fast&duration=5&video_resolution=720p&remaining=100',
+  );
+  if (dmVideo.data?.level !== 'confirm') err(`视频 25 积分应判 confirm，实际 ${dmVideo.data?.level}`);
+  if (dmVideo.data?.points !== 25) err(`视频成本预估应为 25，实际 ${dmVideo.data?.points}`);
+  ok(`即梦成本护栏：视频 25 积分 → ${dmVideo.data.level}（阈值 ${dmVideo.data.threshold}）`);
+
+  const dmImage = await api('GET', '/api/dreamina/cost?model=jimeng-image-3.1&size=1k&remaining=100');
+  if (dmImage.data?.level !== 'pass') err(`图片 1 积分应判 pass（额度少默认通过），实际 ${dmImage.data?.level}`);
+  ok('即梦成本护栏：图片 1 积分 → pass（静默通过，无打扰）');
+
+  const dmAgnes = await api('GET', '/api/dreamina/cost?model=agnes-video-2.5-flash');
+  if (dmAgnes.data?.ok !== false || dmAgnes.data?.reason !== 'not-dreamina') {
+    err('非即梦模型的成本查询应返回 not-dreamina');
+  }
+  ok('即梦成本护栏：Agnes 模型不参与（零打扰）');
 
   // 4. 创建 text 任务
   const created = await api('POST', '/api/tasks', {

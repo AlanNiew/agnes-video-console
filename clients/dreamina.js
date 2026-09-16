@@ -250,6 +250,15 @@ function buildImageArgs(params = {}) {
 }
 
 /**
+ * 从文本输出中提取 `key: value` 形式的字段。
+ * 用于 login 系列命令——它们输出纯文本（如 `device_code: 315613ca...`）而非 JSON。
+ */
+function pickField(text, key) {
+  const m = new RegExp(`^\\s*${key}:\\s*(.+?)\\s*$`, 'm').exec(String(text || ''));
+  return m ? m[1] : null;
+}
+
+/**
  * 收集 bucket 内的媒体地址（数组元素可能是字符串或 {image_url|url} 对象）
  */
 function collectUrls(bucket, urls) {
@@ -305,6 +314,7 @@ const dreamina = {
   buildImageArgs,
   extractImageUrls,
   extractVideoUrls,
+  pickField,
   VIDEO_SUBCOMMANDS,
   IMAGE_SUBCOMMANDS,
 
@@ -343,22 +353,50 @@ const dreamina = {
   /**
    * 发起无头登录：打印 verification_uri / user_code / device_code 后立即退出（不等待授权）。
    * 配合 checkLogin 收尾，可避免阻塞事件循环。
+   *
+   * ⚠️ 与生成类命令不同，login 系列输出的是 **`key: value` 纯文本**（非 JSON），
+   * 故不能沿用 run() 的「JSON 解析成功才算 ok」判定，需自行解析授权材料。
    */
   async loginHeadless() {
-    return run(['login', '--headless'], { timeoutMs: LOGIN_TIMEOUT_MS });
+    const r = await run(['login', '--headless'], { timeoutMs: LOGIN_TIMEOUT_MS });
+    const text = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const material = {
+      verification_uri: pickField(text, 'verification_uri'),
+      user_code: pickField(text, 'user_code'),
+      device_code: pickField(text, 'device_code'),
+      poll_interval: pickField(text, 'poll_interval'),
+      expires_at: pickField(text, 'expires_at'),
+    };
+    const ok = Boolean(material.device_code);
+    return { ...r, ok, data: ok ? material : null, kind: ok ? null : r.kind || 'login-failed' };
   },
 
-  /** 收尾登录：轮询至授权完成（poll 为最长等待秒数） */
+  /**
+   * 收尾登录：轮询至授权完成（poll 为最长等待秒数）。
+   * 输出同为文本，故以 **exit code** 判定成败（成功 = 0），并尽力解析账户信息。
+   */
   async checkLogin({ deviceCode, poll = 30 }) {
     const args = ['login', 'checklogin', `--device_code=${deviceCode}`];
     if (poll) args.push(`--poll=${poll}`);
     // 等待时间由 poll 决定，超时留出余量
-    return run(args, { timeoutMs: (Number(poll) || 30) * 1000 + 20_000 });
+    const r = await run(args, { timeoutMs: (Number(poll) || 30) * 1000 + 20_000 });
+    const ok = r.code === 0;
+    const text = `${r.stdout || ''}\n${r.stderr || ''}`;
+    const credit = Number(pickField(text, 'total_credit'));
+    const data = ok
+      ? {
+          user_id: pickField(text, 'user_id'),
+          vip_level: pickField(text, 'vip_level'),
+          total_credit: Number.isFinite(credit) ? credit : null,
+        }
+      : null;
+    return { ...r, ok, data, kind: ok ? null : r.kind || 'login-failed' };
   },
 
-  /** 清除本地 OAuth 登录态 */
+  /** 清除本地 OAuth 登录态（输出为文本，故以 exit code 判定成败） */
   async logout() {
-    return run(['logout'], { timeoutMs: 30_000 });
+    const r = await run(['logout'], { timeoutMs: 30_000 });
+    return { ...r, ok: r.code === 0, data: null };
   },
 
   /** CLI 版本信息（JSON） */
