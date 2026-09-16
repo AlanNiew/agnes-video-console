@@ -13,6 +13,7 @@ const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../
 const { ApiError, ah } = require('../core/errors');
 const { WORKS_DIR, ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
 const { buildPublishKit } = require('../lib/publish-kit'); // v2.5 发布物料（B站一键复制文案）
+const { decorateRenderJob } = require('../lib/render-stage'); // v2.5.1 渲染阶段文案（进度 → 人话）
 const { streamDuration, computeVideoMetrics } = require('../lib/video-metrics'); // v2.5 客观指标（与镜头级筛查共用）
 
 /** v2.5：ffprobe 指定流时长 / 客观指标 统一由 lib/video-metrics.js 提供（渲染质检与镜头级筛查共用） */
@@ -194,14 +195,16 @@ module.exports = function registerRenderRoutes(app) {
   app.get('/api/projects/:id/render/jobs', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) throw new ApiError(404, '项目不存在');
-    res.json({ items: renders.listByProject(p.id) });
+    const total = projects.shots(p.id).length;
+    res.json({ items: renders.listByProject(p.id).map((j) => decorateRenderJob(j, total)) });
   });
 
   // 渲染任务详情
   app.get('/api/render/jobs/:id', (req, res) => {
     const job = renders.get(req.params.id);
     if (!job) throw new ApiError(404, '渲染任务不存在');
-    res.json(job);
+    const p = projects.get(job.project_id);
+    res.json(decorateRenderJob(job, p ? projects.shots(p.id).length : 0));
   });
 
   // v2.5 渲染质检：关键帧 4 张 + 音频波形图（按需生成并缓存）+ 流时长对比 + 客观指标（亮度/闪烁/运动）

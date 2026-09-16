@@ -9,6 +9,7 @@
  * 进度经 ffmpeg -progress 回写 render_jobs.progress。
  */
 const { spawn, spawnSync } = require('node:child_process');
+const crypto = require('node:crypto');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
@@ -168,6 +169,40 @@ async function resolveCardScene(sceneImage, tmpDir, jobId) {
   } catch (e) {
     log('warn', `渲染任务 #${jobId} 片头/片尾卡背景图不可用（${e.message}），改用程序生成背景`);
     return null;
+  }
+}
+
+/* ---------- v2.5.1 归一化缓存：重渲时未变动的镜头段直接复用 ---------- */
+const NORM_CACHE_DIR = path.join(ARTIFACTS_DIR, 'normcache');
+const NORM_CACHE_TTL_MS = 12 * 24 * 3600 * 1000; // 12 天未使用即清理
+
+/** 缓存键：源文件身份（本地=mtime+size，远端=URL）+ 目标规格 + 配方版本；任一变化即失效 */
+function normCachePath(src, dims) {
+  try {
+    const s = String(src || '');
+    if (!s) return null;
+    let id = s;
+    if (!/^https?:\/\//i.test(s)) {
+      const st = fs.statSync(s);
+      id = `${s}|${st.size}|${Math.round(st.mtimeMs)}`;
+    }
+    const h = crypto.createHash('sha1').update(`${id}|${dims.w}x${dims.h}|${OUT_FPS}|v1`).digest('hex').slice(0, 16);
+    return path.join(NORM_CACHE_DIR, `${h}.mp4`);
+  } catch {
+    return null; // 源文件不存在（远端链接已过期等）→ 不缓存，走正常路径
+  }
+}
+
+/** 清理过期归一化缓存（尽力而为，失败忽略） */
+function pruneNormCache() {
+  try {
+    const now = Date.now();
+    for (const f of fs.readdirSync(NORM_CACHE_DIR)) {
+      const p = path.join(NORM_CACHE_DIR, f);
+      if (now - fs.statSync(p).mtimeMs > NORM_CACHE_TTL_MS) fs.rmSync(p, { force: true });
+    }
+  } catch {
+    /* 目录不存在或不可读 */
   }
 }
 
@@ -442,46 +477,62 @@ class Renderer {
     try {
       /* ---- 1) 归一化各镜头段（0-40%） ---- */
       const norm = [];
+      pruneNormCache();
       for (let i = 0; i < segments.length; i++) {
         const seg = segments[i];
         const dest = path.join(tmpDir, `seg-${String(i + 1).padStart(2, '0')}.mp4`);
-        const r = await runFfmpeg([
-          '-i',
-          seg.src,
-          // v2.5：保留镜头原声（AI 环境声）供低音量混入；无音轨的素材不报错
-          '-map',
-          '0:v:0',
-          '-map',
-          '0:a:0?',
-          '-vf',
-          `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},setsar=1,fps=${OUT_FPS},format=yuv420p`,
-          '-c:v',
-          'libx264',
-          '-preset',
-          'veryfast',
-          '-crf',
-          '18',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '128k',
-          '-ar',
-          '44100',
-          '-ac',
-          '2',
-          dest,
-        ]);
-        if (!r.ok) {
-          // 详情页不给用户贴 ffmpeg 原文（看不懂也修不了），原文进日志供排查
-          log('error', `渲染任务 #${job.id} 镜头 ${seg.shot.seq} 归一化失败（stderr）：${r.err.slice(0, 1200)}`);
-          return this.fail(
-            job.id,
-            `镜头 ${seg.shot.seq} 的视频素材无法处理（可能已损坏或编码不被支持），请重拍该镜头后再渲染`,
-          );
+        const cached = normCachePath(seg.src, { w: OUT_W, h: OUT_H });
+        let file = dest;
+        if (cached && fs.existsSync(cached) && fs.statSync(cached).size > 0) {
+          file = cached; // 命中缓存：跳过转码（重渲时省下未变动镜头的时间）
+          log('info', `渲染任务 #${job.id} 镜头 ${seg.shot.seq} 复用归一化缓存`);
+        } else {
+          const r = await runFfmpeg([
+            '-i',
+            seg.src,
+            // v2.5：保留镜头原声（AI 环境声）供低音量混入；无音轨的素材不报错
+            '-map',
+            '0:v:0',
+            '-map',
+            '0:a:0?',
+            '-vf',
+            `scale=${OUT_W}:${OUT_H}:force_original_aspect_ratio=increase,crop=${OUT_W}:${OUT_H},setsar=1,fps=${OUT_FPS},format=yuv420p`,
+            '-c:v',
+            'libx264',
+            '-preset',
+            'veryfast',
+            '-crf',
+            '18',
+            '-c:a',
+            'aac',
+            '-b:a',
+            '128k',
+            '-ar',
+            '44100',
+            '-ac',
+            '2',
+            dest,
+          ]);
+          if (!r.ok) {
+            // 详情页不给用户贴 ffmpeg 原文（看不懂也修不了），原文进日志供排查
+            log('error', `渲染任务 #${job.id} 镜头 ${seg.shot.seq} 归一化失败（stderr）：${r.err.slice(0, 1200)}`);
+            return this.fail(
+              job.id,
+              `镜头 ${seg.shot.seq} 的视频素材无法处理（可能已损坏或编码不被支持），请重拍该镜头后再渲染`,
+            );
+          }
+          if (cached) {
+            try {
+              fs.mkdirSync(NORM_CACHE_DIR, { recursive: true });
+              fs.copyFileSync(dest, cached);
+            } catch {
+              /* 缓存写入失败不影响本次渲染 */
+            }
+          }
         }
-        const dur = probeDuration(dest) || seg.nominalSeconds;
+        const dur = probeDuration(file) || seg.nominalSeconds;
         norm.push({
-          file: dest,
+          file,
           duration: dur,
           narrationPath: seg.narrationPath,
           narrationText: seg.narrationText,

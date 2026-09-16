@@ -725,7 +725,7 @@ function renderJobItem(j) {
   }
   return `
     <div class="ver-item" data-render-job="${j.id}">
-      <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%` : ''} · ${fmtTime(j.created_at)}
+      <b>渲染 #${j.id}</b> · ${esc(RENDER_STATUS[j.status] || j.status)}${active ? ` · ${j.progress || 0}%${j.stage_label ? ` · ${esc(j.stage_label)}` : ''}` : ''} · ${fmtTime(j.created_at)}
       ${active ? `<div style="height:6px;background:var(--bg,#1a1f2b);border-radius:3px;overflow:hidden;margin-top:6px"><div style="height:100%;width:${j.progress || 0}%;background:#4f7cff;transition:width .5s"></div></div>` : ''}
       ${
         j.status === 'completed' && j.output_url
