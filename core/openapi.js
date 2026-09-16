@@ -64,6 +64,9 @@ const paths = {
   '/api/projects/{id}/storyboard/review': {
     post: 'P3 L1 分镜 AI 自审：审查分镜与文案一致性/节奏/提示词质量 → {issues:[{shot_seq,severity,field,issue,revised}], overall}（revised 可直接采纳写入镜头）',
   },
+  '/api/projects/{id}/shots/{shotId}/final-prompt': {
+    get: 'v2.5.1 预览本镜实际会发给上游的提示词（含自动注入的风格锚/角色前缀）：{mode, prompt, prompt_raw, style_anchor, warnings[], refs[]}——排查风格漂移',
+  },
   '/api/projects/{id}/publish-kit': {
     post: 'v2.5 生成/刷新发布物料：写「发布文案-N.md」到作品目录（标题候选/简介/标签/置顶评论/看点时间轴），返回 {ok, path, markdown}',
   },

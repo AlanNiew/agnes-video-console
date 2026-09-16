@@ -23,7 +23,7 @@ function startRenderPoll(projectId) {
     let jobs;
     try {
       const r = await api(`/api/projects/${projectId}/render/jobs`);
-      jobs = (r && r.data && r.data.items) || [];
+      jobs = (r && r.items) || [];
     } catch {
       return;
     }
@@ -68,7 +68,7 @@ async function openRenderCompare(projectId) {
   let jobs;
   try {
     const r = await api(`/api/projects/${projectId}/render/jobs`);
-    jobs = ((r && r.data && r.data.items) || []).filter((j) => j.status === 'completed' && j.output_url);
+    jobs = ((r && r.items) || []).filter((j) => j.status === 'completed' && j.output_url);
   } catch (e) {
     toast('加载渲染版本失败：' + e.message, 'err');
     return;
@@ -250,18 +250,51 @@ async function showMatrix(projectId) {
         <td>${mark(timingOk)}${timingOk === false ? ' 超长' : ''}</td>
         <td>${esc(refs)}</td>
         <td>${s.take_task_id ? '#' + s.take_task_id : '自动'}</td>
+        <td><button class="btn ghost sm" data-final-prompt="${s.id}" title="查看实际会发给上游的提示词（含自动注入的风格锚/角色前缀）">📋</button></td>
       </tr>`;
     })
     .join('');
   const bodyHTML = `
     <div style="max-height:60vh;overflow:auto">
       <table class="matrix-table">
-        <thead><tr><th>#</th><th>标题</th><th>秒</th><th>视频</th><th>配音</th><th>时长校验</th><th>角色引用</th><th>定稿 take</th></tr></thead>
+        <thead><tr><th>#</th><th>标题</th><th>秒</th><th>视频</th><th>配音</th><th>时长校验</th><th>角色引用</th><th>定稿 take</th><th>提词</th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
-    <p class="hint mt">「时长校验」= 配音时长 + 偏移 ≤ 镜头时长 ×1.03（❌ 会被渲染截断）；角色引用「全部」= 引用项目全部定稿角色图。</p>`;
-  openModal({ title: `📊 制作矩阵（${shots.length} 镜）`, bodyHTML });
+    <p class="hint mt">「时长校验」= 配音时长 + 偏移 ≤ 镜头时长 ×1.03（❌ 会被渲染截断）；角色引用「全部」= 引用项目全部定稿角色图；「📋 提词」= 实际提交文本（含自动补的风格锚与角色前缀）。</p>`;
+  openModal({
+    title: `📊 制作矩阵（${shots.length} 镜）`,
+    bodyHTML,
+    onMount: (overlay) => {
+      // v2.5.1：查看"库里的提示词 ≠ 实际发出的提示词"——风格漂移的排查入口
+      overlay.addEventListener('click', async (e) => {
+        const btn = e.target.closest('[data-final-prompt]');
+        if (!btn) return;
+        const sid = Number(btn.dataset.finalPrompt);
+        try {
+          const fp = await api(`/api/projects/${projectId}/shots/${sid}/final-prompt`);
+          const head =
+            fp.warnings && fp.warnings.length
+              ? `<div class="hint mb" style="color:#e0b050">${fp.warnings.map((w) => '⚠️ ' + esc(w)).join('<br>')}</div>`
+              : '<div class="hint mb">✅ 库内提示词已含风格锚与角色前缀</div>';
+          const meta = `<div class="hint mb">模式：${esc(fp.mode)}${fp.blocked_reason ? '（' + esc(fp.blocked_reason) + '）' : ''}${
+            fp.refs && fp.refs.length
+              ? ` · 参考图 ${fp.refs.length} 张（${fp.refs.map((r) => '#' + r.id).join(' ')}）`
+              : ''
+          }</div>`;
+          openModal({
+            title: `📋 镜 ${sid} 实际提交提示词`,
+            bodyHTML:
+              head +
+              meta +
+              `<pre style="white-space:pre-wrap;word-break:break-word;background:var(--bg,#161b26);padding:10px;border-radius:6px;max-height:50vh;overflow:auto">${esc(fp.prompt || '')}</pre>`,
+          });
+        } catch (err) {
+          toast('读取失败：' + err.message, 'err');
+        }
+      });
+    },
+  });
 }
 
 /** 第⑦步成片渲染面板绑定。renderJobs 用于进入时判断是否已在渲染中（需续轮询）。 */

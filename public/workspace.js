@@ -601,7 +601,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
     const stepState = (n) => (stepsDone[n] ? 'done' : '');
     let renderJobs = [];
     try {
-      renderJobs = (await api(`/api/projects/${id}/render/jobs`)).data.items || [];
+      renderJobs = (await api(`/api/projects/${id}/render/jobs`)).items || [];
     } catch {
       /* 旧后端兼容 */
     }

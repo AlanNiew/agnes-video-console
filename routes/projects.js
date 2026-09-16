@@ -406,6 +406,11 @@ module.exports = function registerProjectRoutes(app) {
   });
 
   // 删除镜头（关联视频任务保留，shot_id 成为历史引用）
+  // v2.5.1 预览本镜「实际会发给上游」的提示词（含自动注入的风格锚/角色前缀）——排查风格漂移
+  app.get('/api/projects/:id/shots/:shotId/final-prompt', (req, res) => {
+    res.json(pipeline.previewVideoPrompt({ projectId: req.params.id, shotId: req.params.shotId }));
+  });
+
   app.delete('/api/projects/:id/shots/:shotId', (req, res) => {
     const p = projects.get(req.params.id);
     if (!p) throw new ApiError(404, '项目不存在');
