@@ -546,3 +546,57 @@ body {
   color: #fff;
   font-weight: 600;
 }
+
+/* ---------------- 即梦 CLI 面板（设置弹窗内；docs/DREAMINA_CLI_PLAN.md 阶段 2） ---------------- */
+.dm-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: var(--bg-3);
+}
+.dm-info {
+  font-size: 13px;
+  line-height: 1.7;
+  margin-bottom: 8px;
+}
+.dm-badge {
+  display: inline-block;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+.dm-badge.on {
+  background: rgba(34, 197, 94, 0.16);
+  color: var(--green);
+}
+.dm-badge.off {
+  background: rgba(245, 158, 11, 0.16);
+  color: var(--amber);
+}
+.dm-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.dm-login {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--border);
+}
+.dm-code {
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-all;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  border-radius: 6px;
+  margin: 6px 0 0;
+  color: var(--text-dim);
+}
+.dm-code:empty {
+  display: none; /* 未取到授权材料时不显示空框 */
+}
