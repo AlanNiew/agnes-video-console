@@ -2,7 +2,7 @@
  * GET /api/meta 单一事实来源：模块级 META + 查询函数 + 新建任务/设置弹窗下拉填充。
  * 依赖：common.js（$、esc）。被 new-task / settings-panel / task-center 显式 import。
  */
-import { $, esc, api } from './common.js';
+import { $, esc, toast, api } from './common.js';
 
 /* ---------------- 模型元数据（GET /api/meta，单一事实来源；加载完成前的静态兜底） ---------------- */
 let META = null;
@@ -50,18 +50,22 @@ function videoModelOptions() {
   return groups.join('');
 }
 
-/** 图片模型下拉（Agnes 单档 + 即梦分组） */
+/** 图片模型下拉（默认即梦——「图走即梦」是既定策略；未安装 CLI 时回退 Agnes） */
 function imageModelOptions() {
   const agnesId = META?.image?.model || 'agnes-image-2.5-flash';
-  const groups = [
-    `<optgroup label="Agnes（免费 / 自有配额）"><option value="${esc(agnesId)}">Agnes 图片（含免费额度）</option></optgroup>`,
-  ];
-  if (dreaminaAvailable()) {
+  const dmAvail = dreaminaAvailable();
+  const groups = [];
+  if (dmAvail) {
     const items = (dreaminaMeta().image || [])
-      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .map((m, i) => `<option value="${esc(m.id)}" ${i === 0 ? 'selected' : ''}>${esc(m.label)}</option>`)
       .join('');
-    groups.push(`<optgroup label="即梦（收费 · 会员积分）">${items}</optgroup>`);
+    groups.push(`<optgroup label="即梦（收费 · 会员积分，1 积分≈4 张）">${items}</optgroup>`);
   }
+  groups.push(
+    `<optgroup label="Agnes（免费 / 自有配额）">` +
+      `<option value="${esc(agnesId)}"${dmAvail ? '' : ' selected'}>Agnes 图片（含免费额度）</option>` +
+      `</optgroup>`,
+  );
   return groups.join('');
 }
 
@@ -116,6 +120,66 @@ function onImageModelChange() {
   if (fc) fc.disabled = false;
 }
 
+/**
+ * 工作台角色图（第③步）的模型联动：切换 size 白名单
+ * （即梦 1k/2k 与 Agnes 1K–4K 不同），即梦按次计费时禁用候选张数。
+ */
+function onWorkspaceImgModelChange() {
+  const el = $('#wsImgModel');
+  if (!el) return;
+  const dm = dreaminaImageInfo(el.value);
+  const sizes = dm ? dm.resolutions : META?.image?.sizes || ['1K'];
+  const sel = $('#wsImgSize');
+  if (sel) sel.innerHTML = sizes.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+  const cnt = $('#wsImgCount');
+  if (cnt) cnt.disabled = Boolean(dm);
+}
+
+/**
+ * 成本护栏（共享：新建任务表单 + 工作台角色图均复用）。
+ * 仅对即梦模型生效，Agnes 零打扰。pass 静默 / confirm 弹窗 / block 阻断。
+ * 护栏查询本身失败时不阻断主流程（后端仍会做参数与业务校验）。
+ * @param {object} body 请求体（含 model，可选 size/seconds）
+ * @param {'image'|'video'} kind
+ * @returns {Promise<boolean>} 是否继续提交
+ */
+async function passDreaminaGuard(body, kind) {
+  const info = kind === 'image' ? dreaminaImageInfo(body.model) : dreaminaVideoInfo(body.model);
+  if (!info) return true; // 非即梦模型
+  try {
+    const q = new URLSearchParams({ model: body.model });
+    if (kind === 'image') {
+      if (body.size) q.set('size', body.size);
+    } else {
+      if (body.seconds) q.set('duration', body.seconds);
+      if (body.size) q.set('video_resolution', body.size);
+    }
+    const g = await api('/api/dreamina/cost?' + q.toString());
+    if (!g?.ok) return true;
+    if (g.level === 'block') {
+      toast(
+        `积分可能不足：本次约需 ${g.points}${g.remaining != null ? `，剩余 ${g.remaining}` : ''}。` +
+          '请改用 Agnes 模型或先充值',
+        'err',
+      );
+      return false;
+    }
+    if (g.level === 'confirm') {
+      const conf =
+        '即梦生成确认\n\n' +
+        `预估消耗：${g.points} 积分` +
+        `${g.confidence === 'estimated' ? '（推断值，实际以扣费为准）' : '（实测标定）'}\n` +
+        `明细：${g.breakdown}\n` +
+        (g.remaining != null ? `当前剩余：${g.remaining} 积分\n` : '') +
+        '\n确认提交？';
+      return window.confirm(conf);
+    }
+    return true; // pass：静默通过（图片等小额场景）
+  } catch {
+    return true;
+  }
+}
+
 /** 拉取 /api/meta 并填充两处模型/规格下拉（新建任务表单 + 设置弹窗默认模型） */
 async function loadMeta() {
   META = await api('/api/meta');
@@ -160,6 +224,10 @@ export {
   DEFAULT_MODEL,
   onModelChange,
   onImageModelChange,
+  onWorkspaceImgModelChange,
+  videoModelOptions,
+  imageModelOptions,
+  passDreaminaGuard,
   dreaminaVideoInfo,
   dreaminaImageInfo,
   dreaminaAvailable,

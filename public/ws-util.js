@@ -33,5 +33,11 @@ const STAGES_IMG = [
   [30, '模型仍在绘制，请稍候…'],
   [60, '复杂画风耗时较长，马上好…'],
 ];
+// 即梦图片为异步任务且队列较慢，等待预期明显长于 Agnes 同步生成
+const STAGES_IMG_DREAMINA = [
+  [0, '已提交即梦，正在排队生成（按次计费，一次约返回 4 张候选）…'],
+  [60, '即梦仍在排队 / 绘制中，请稍候…'],
+  [180, '耗时较长属正常（会员队列优先级较低），也可先去任务中心查看其它任务…'],
+];
 
-export { stageHints, sleep, STAGES_SCRIPT, STAGES_STORY, STAGES_IMG };
+export { stageHints, sleep, STAGES_SCRIPT, STAGES_STORY, STAGES_IMG, STAGES_IMG_DREAMINA };

@@ -6,7 +6,8 @@
 import { $, esc, toast, api, openModal } from './common.js';
 import { bus } from './state.js';
 import { st } from './ws-state.js';
-import { stageHints, STAGES_IMG } from './ws-util.js';
+import { stageHints, STAGES_IMG, STAGES_IMG_DREAMINA } from './ws-util.js';
+import { dreaminaImageInfo, passDreaminaGuard, onWorkspaceImgModelChange } from './task-meta.js';
 import { compare } from './compare.js';
 
 /* 角色描述 AI 优化（用户自主选择是否采用，优化后先对比） */
@@ -58,6 +59,22 @@ async function optimizeCharDesc() {
   }
 }
 
+/** 轮询图片任务直至终态（供即梦异步路径使用）；超时返回 null 而非抛错 */
+async function waitImageTask(taskId, { timeoutMs = 10 * 60_000, intervalMs = 3000 } = {}) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await new Promise((r) => setTimeout(r, intervalMs));
+    let t;
+    try {
+      t = await api(`/api/tasks/${taskId}`);
+    } catch {
+      continue; // 单次查询失败不中断整体等待
+    }
+    if (['completed', 'failed', 'submit_error'].includes(t.status)) return t;
+  }
+  return null;
+}
+
 async function genCharacterImage(projectId) {
   if (st.imgGenBusy) return; // 防双击并发
   const desc = $('#wsCharDesc')?.value.trim();
@@ -65,22 +82,41 @@ async function genCharacterImage(projectId) {
     toast('请先填写角色外观描述', 'err');
     return;
   }
+  const model = $('#wsImgModel')?.value || '';
+  const dmInfo = dreaminaImageInfo(model);
+  const body = {
+    prompt: `角色立绘：${desc}。全身或半身构图，干净背景，正面站立，电影级写实，高细节`,
+    size: $('#wsImgSize').value,
+    ratio: $('#wsImgRatio').value,
+    count: Number($('#wsImgCount')?.value) || 1,
+    project_id: projectId,
+    kind: 'character',
+  };
+
   st.imgGenBusy = true;
   bus.emit('ws-project-changed', projectId); // 装配层重绘 → 显示「正在生成候选图…」
   let stopHints = null;
   try {
+    // 即梦图片是**异步任务**（按次计费，1 次约返回 4 张候选），需入队后轮询；
+    // 未选即梦（含未安装 CLI 时下拉回退到 Agnes）走原有的同步生成路径，体验不变。
+    if (dmInfo) {
+      if (!(await passDreaminaGuard({ ...body, model }, 'image'))) return; // 用户取消 / 积分不足
+      stopHints = stageHints(['#wsCharSection .ws-loading-text'], STAGES_IMG_DREAMINA);
+      const t = await api('/api/images/tasks', { method: 'POST', body: { ...body, model } });
+      const done = await waitImageTask(t.id);
+      if (!done) {
+        toast('即梦图片任务仍在排队（已等待 10 分钟），可稍后在任务中心查看结果', 'warn');
+      } else if (done.status === 'completed') {
+        const n = (done.images || []).length;
+        toast(`即梦已生成 ${n} 张候选图，点击图片定稿种子图`, 'ok');
+      } else {
+        toast(`即梦生成失败：${done.error_message || '未知原因'}`, 'err');
+      }
+      return;
+    }
+    // —— Agnes 同步路径（原有行为） ——
     stopHints = stageHints(['#wsCharSection .ws-loading-text'], STAGES_IMG);
-    const r = await api('/api/images/generate', {
-      method: 'POST',
-      body: {
-        prompt: `角色立绘：${desc}。全身或半身构图，干净背景，正面站立，电影级写实，高细节`,
-        size: $('#wsImgSize').value,
-        ratio: $('#wsImgRatio').value,
-        count: Number($('#wsImgCount')?.value) || 1,
-        project_id: projectId,
-        kind: 'character',
-      },
-    });
+    const r = await api('/api/images/generate', { method: 'POST', body });
     const n = r.results?.length ?? 1;
     toast(`已生成 ${n} 张候选图${r.failed ? `（${r.failed} 张失败）` : ''}，点击图片定稿种子图`, 'ok');
   } catch (e) {
@@ -90,6 +126,14 @@ async function genCharacterImage(projectId) {
     stopHints?.();
     bus.emit('ws-project-changed', projectId);
   }
+}
+
+/** 绑定角色图模型下拉（工作台每次重绘后需调用；初始化 size 白名单） */
+function bindCharModelEvents() {
+  const el = $('#wsImgModel');
+  if (!el) return;
+  el.addEventListener('change', onWorkspaceImgModelChange);
+  onWorkspaceImgModelChange();
 }
 
 function bindWallEvents(projectId) {
@@ -224,4 +268,4 @@ async function pickCharacters(onPicked) {
   });
 }
 
-export { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary, pickCharacters };
+export { optimizeCharDesc, genCharacterImage, bindWallEvents, bindCharModelEvents, importFromLibrary, pickCharacters };

@@ -31,10 +31,18 @@ import {
 import { bindTtsEvents, bindVoiceMarket, defaultTtsText, wsDefaultSpeed } from './ws-tts.js';
 import { st } from './ws-state.js';
 import { submitShot, runBatchSubmit, submitVideo } from './ws-video.js';
-import { optimizeCharDesc, genCharacterImage, bindWallEvents, importFromLibrary, pickCharacters } from './ws-char.js';
+import {
+  optimizeCharDesc,
+  genCharacterImage,
+  bindWallEvents,
+  bindCharModelEvents,
+  importFromLibrary,
+  pickCharacters,
+} from './ws-char.js';
 import { genScript, genStoryboard, bindStoryboardEvents, bindTextSectionEvents, SCRIPT_FIELDS } from './ws-story.js';
 import { bindBgmEvents } from './ws-bgm.js';
 import { bindRenderPanel } from './ws-render-panel.js';
+import { imageModelOptions } from './task-meta.js';
 
 (() => {
   'use strict';
@@ -674,7 +682,8 @@ import { bindRenderPanel } from './ws-render-panel.js';
               </div>
             </div>
             <div class="field">
-              <label>画幅 / 分辨率档位</label>
+              <label>模型 / 画幅 / 分辨率档位</label>
+              <select id="wsImgModel" style="margin-bottom:6px">${imageModelOptions()}</select>
               <div class="grid2">
                 <select id="wsImgRatio">${meta.image.ratios.map((a) => `<option value="${esc(a)}" ${a === '1:1' ? 'selected' : ''}>${esc(a)}</option>`).join('')}</select>
                 <select id="wsImgSize">${meta.image.sizes.map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`).join('')}</select>
@@ -1001,6 +1010,7 @@ import { bindRenderPanel } from './ws-render-panel.js';
     if (submitVideoBtn) submitVideoBtn.onclick = () => submitVideo(p.id);
     bindTextSectionEvents(p.id);
     bindWallEvents(p.id);
+    bindCharModelEvents(); // 角色图模型下拉（即梦/Agnes 规格白名单联动）
     bindStoryboardEvents(p.id);
     // M2 第④步：镜头提交 / 批量提交 / 停止
     document.querySelectorAll('#wsShotSubmit [data-shot-submit]').forEach((b) => {

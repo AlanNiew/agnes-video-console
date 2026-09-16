@@ -5,7 +5,7 @@
 import { $, $$, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
-import { onModelChange, onImageModelChange, dreaminaVideoInfo, dreaminaImageInfo, DEFAULT_MODEL } from './task-meta.js';
+import { onModelChange, onImageModelChange, passDreaminaGuard, dreaminaVideoInfo, DEFAULT_MODEL } from './task-meta.js';
 
 const refState = { images: [], audios: [], videos: [] };
 let taskType = 'video'; // P1：新建任务类型（video | image）
@@ -96,43 +96,9 @@ function syncRefsFromDom() {
  * 护栏查询本身失败时不阻断主流程（后端仍会做参数与业务校验）。
  * @returns {Promise<boolean>} 是否继续提交
  */
-async function passDreaminaGuard(body, kind) {
-  const info = kind === 'image' ? dreaminaImageInfo(body.model) : dreaminaVideoInfo(body.model);
-  if (!info) return true; // 非即梦模型
-  try {
-    const q = new URLSearchParams({ model: body.model });
-    if (kind === 'image') {
-      if (body.size) q.set('size', body.size);
-    } else {
-      if (body.seconds) q.set('duration', body.seconds);
-      if (body.size) q.set('video_resolution', body.size);
-    }
-    const g = await api('/api/dreamina/cost?' + q.toString());
-    if (!g?.ok) return true;
-    if (g.level === 'block') {
-      toast(
-        `积分可能不足：本次约需 ${g.points}${g.remaining != null ? `，剩余 ${g.remaining}` : ''}。` +
-          '请改用 Agnes 模型或先充值',
-        'err',
-      );
-      return false;
-    }
-    if (g.level === 'confirm') {
-      const conf =
-        '即梦生成确认\n\n' +
-        `预估消耗：${g.points} 积分` +
-        `${g.confidence === 'estimated' ? '（推断值，实际以扣费为准）' : '（实测标定）'}\n` +
-        `明细：${g.breakdown}\n` +
-        (g.remaining != null ? `当前剩余：${g.remaining} 积分\n` : '') +
-        '\n确认提交？';
-      return window.confirm(conf);
-    }
-    return true; // pass：静默通过（图片等小额场景）
-  } catch {
-    return true;
-  }
-}
-
+/**
+ * 成本护栏见 task-meta.js 的 passDreaminaGuard（与工作台角色图共用同一实现）。
+ */
 async function submitTask() {
   const btn = $('#btnSubmitTask');
   btn.disabled = true;
