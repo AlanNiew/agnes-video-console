@@ -1,0 +1,4 @@
+#!/bin/sh
+# 分支路径护栏：按当前分支校验暂存文件（规则与启用方式见 docs/BRANCHING.md）
+# 启用（每个克隆一次）：git config core.hooksPath .githooks
+node tools/branch-guard.js || exit 1
