@@ -57,6 +57,26 @@ function splitCardTitle(name) {
   return { title: s, subtitle: '' };
 }
 
+/** 标题用衬线体（明朝/宋体）——片名主标题的"电影海报"质感；找不到则由主字体降级。
+ *  注意：细明体（mingliub.ttc）缺简体与假名字形，会渲染成方块，故排除。 */
+function findSerifFont() {
+  const candidates = [
+    'C:/Windows/Fonts/STSONG.TTF', // 华文宋体
+    'C:/Windows/Fonts/simsun.ttc', // 宋体
+    'C:/Windows/Fonts/NotoSerifSC-VF.ttf',
+    '/System/Library/Fonts/Songti.ttc',
+    '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
+  ];
+  for (const f of candidates) {
+    try {
+      if (fs.existsSync(f)) return f;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 /** 运行时可用的字体（优先中文字体；找不到返回 null） */
 function findFont() {
   const candidates = [
@@ -221,9 +241,21 @@ function stageFont(tmpDir) {
   const src = findFont();
   if (!src) return null;
   try {
-    const dest = path.join(tmpDir, 'font' + path.extname(src));
-    fs.copyFileSync(src, dest);
-    return { rel: 'font' + path.extname(src), cjk: !/DejaVu/i.test(src), family: fontFamilyName(src) };
+    const ext = path.extname(src);
+    const rel = 'font' + ext;
+    fs.copyFileSync(src, path.join(tmpDir, rel));
+    // v2.5.4：主标题用的衬线体（明朝/宋体）；缺失时回落到主字体
+    let titleRel = rel;
+    const serif = findSerifFont();
+    if (serif) {
+      try {
+        titleRel = 'font-title' + path.extname(serif);
+        fs.copyFileSync(serif, path.join(tmpDir, titleRel));
+      } catch {
+        titleRel = rel;
+      }
+    }
+    return { rel, cjk: !/DejaVu/i.test(src), family: fontFamilyName(src), titleRel };
   } catch {
     return null;
   }
@@ -238,6 +270,142 @@ function fontFamilyName(srcPath) {
   if (p.includes('noto')) return 'Noto Sans CJK SC';
   if (p.includes('wqy')) return 'WenQuanYi Micro Hei';
   return 'Arial';
+}
+
+/** 字距展开（字符间插空格，营造排版感；渲染端与预览端共用） */
+function spaced(s) {
+  return String(s || '')
+    .split('')
+    .filter((c) => c.trim())
+    .join(' ');
+}
+
+/** 集号与集名拆解：「S1E04 雨の音」→ { epNo:'S1E04', epTitle:'雨の音' }（无集号则整串作集名） */
+function splitEpisodeLabel(label) {
+  const s = String(label || '').trim();
+  const m = /^(S\d+E\d+|第[0-9一二三四五六七八九十百]+[话集回])\s*(.*)$/i.exec(s);
+  if (!m) return { epNo: '', epTitle: s };
+  return { epNo: m[1], epTitle: m[2] };
+}
+
+/**
+ * 片头卡滤镜链（v2.5.4 视觉重设计）——纯函数，供渲染与 `tools/card-preview.js` 共用：
+ *   左上系列标识（宽字距）+ 细分隔线 + 集号 → 居中**纵向**主标题（明朝/宋体）→ 底部署名 + 细分隔线
+ *   外加细内框（装裱感）。纵向主标题逐字绘制并各自居中：比 `\n` 方案可控，也不怕滤镜串换行。
+ * @param {{dims:{w:number,h:number}, font:{rel:string,titleRel?:string}, texts:{title?:string,subtitle?:string,creator?:string}}} o
+ * @returns {string[]} ffmpeg -vf 片段数组（顺序即层叠顺序）
+ */
+function titleCardFilters({ dims, font, texts = {}, style = {} }) {
+  const { title = '', subtitle = '', creator = '' } = texts;
+  // v2.5.4 定稿风格：挂轴纸带（浅底深字，缩略图下对比最强）。style 仅供 tools/card-preview.js 试版。
+  const band = style.band !== false;
+  const heroSans = style.hero === 'sans';
+  const fakeBold = style.fakeBold === true;
+  const w = dims.w;
+  const h = dims.h;
+  const vf = [];
+  const canText = font && (font.cjk || !hasCJK(`${title}${subtitle}${creator}`));
+  if (!canText) return vf;
+
+  const sans = font.rel;
+  const serif = font.titleRel || font.rel;
+  const heroFont = heroSans ? sans : serif;
+  const { epNo, epTitle } = splitEpisodeLabel(subtitle);
+
+  // 细内框（照片装裱感）
+  vf.push(
+    `drawbox=x=${Math.round(w * 0.033)}:y=${Math.round(h * 0.046)}` +
+      `:w=${Math.round(w * 0.934)}:h=${Math.round(h * 0.908)}:color=0xF3EAD8@0.18:t=2`,
+  );
+
+  // 左上：系列标识（宽字距）+ 细分隔线 + 集号
+  const markSize = Math.round(w * 0.043);
+  const markX = Math.round(w * 0.072);
+  const markY = Math.round(h * 0.108);
+  if (title) {
+    vf.push(
+      `drawtext=fontfile=${sans}:text='${escDrawtext(spaced(title))}':fontsize=${markSize}` +
+        `:fontcolor=0xF7F1E4:borderw=2:bordercolor=0x14100C@0.85:x=${markX}:y=${markY}`,
+    );
+  }
+  const ruleY = markY + Math.round(w * 0.062);
+  vf.push(
+    `drawbox=x=${markX}:y=${ruleY}:w=${Math.round(w * 0.082)}:h=${Math.max(2, Math.round(w * 0.0016))}` +
+      `:color=0xF5EFE2@0.5:t=fill`,
+  );
+  if (epNo) {
+    vf.push(
+      `drawtext=fontfile=${sans}:text='${escDrawtext(spaced(epNo))}':fontsize=${Math.round(w * 0.0225)}` +
+        `:fontcolor=0xE4DAC6:borderw=2:bordercolor=0x14100C@0.85` +
+        `:x=${markX + 2}:y=${ruleY + Math.round(w * 0.012)}`,
+    );
+  }
+
+  // 主标题：纵向逐字（自动缩放以适配过长的集名）
+  const chars = String(epTitle || title || '')
+    .replace(/\s+/g, '')
+    .split('');
+  if (chars.length) {
+    const fit = Math.floor((h * 0.58) / (chars.length * 1.16));
+    const size = Math.max(
+      Math.round(w * 0.05),
+      Math.min(heroSans ? Math.round(w * 0.125) : Math.round(w * 0.108), fit),
+    );
+    const step = Math.round(size * 1.16);
+    const blockH = step * chars.length - (step - size);
+    // 整块略高于画面中心（海报常见构图），纸带与文字用同一位移以保证"字在纸带内居中"
+    const blockTop = Math.round((h - blockH) / 2 - h * 0.075);
+    const top = blockTop;
+    if (band) {
+      // 纵向纸带（挂轴）：浅底 + 细边 + 上下木色"轴"杆，把纵排标题衬成"一幅字"
+      const bw = Math.round(w * 0.2);
+      const by = blockTop - Math.round(h * 0.075);
+      const bh = Math.round(blockH + h * 0.15);
+      const bx = Math.round((w - bw) / 2);
+      vf.push(`drawbox=x=${bx}:y=${by}:w=${bw}:h=${bh}:color=0xEFE6D2@0.90:t=fill`);
+      vf.push(
+        `drawbox=x=${bx}:y=${by}:w=${bw}:h=${bh}:color=0x6b6152@0.55:` + `t=${Math.max(2, Math.round(w * 0.0016))}`,
+      );
+      // 轴杆（比纸带略宽，木色）
+      const barH = Math.max(4, Math.round(h * 0.013));
+      const barX = bx - Math.round(w * 0.008);
+      const barW = bw + Math.round(w * 0.016);
+      vf.push(`drawbox=x=${barX}:y=${by - barH}:w=${barW}:h=${barH}:color=0x7d5c3a@0.95:t=fill`);
+      vf.push(`drawbox=x=${barX}:y=${by + bh}:w=${barW}:h=${barH}:color=0x7d5c3a@0.95:t=fill`);
+    }
+    const inkColor = band ? '0x241d16' : '0xF8F2E6';
+    const offsets =
+      fakeBold && !band
+        ? [
+            [0, 0],
+            [Math.round(w * 0.0013), 0],
+            [0, Math.round(w * 0.0017)],
+          ]
+        : [[0, 0]];
+    chars.forEach((ch, i) => {
+      for (const [dx, dy] of offsets) {
+        vf.push(
+          `drawtext=fontfile=${heroFont}:text='${escDrawtext(ch)}':fontsize=${size}` +
+            `:fontcolor=${inkColor}:borderw=${band ? 0 : 3}:bordercolor=0x120F0B@0.85` +
+            `:x=(w-text_w)/2+${dx}:y=${top + i * step + dy}`,
+        );
+      }
+    });
+  }
+
+  // 底部：细分隔线 + 署名
+  if (creator) {
+    const cRuleY = Math.round(h * 0.845);
+    vf.push(
+      `drawbox=x=${Math.round(w * 0.425)}:y=${cRuleY}:w=${Math.round(w * 0.15)}` +
+        `:h=${Math.max(2, Math.round(w * 0.0016))}:color=0xF5EFE2@0.36:t=fill`,
+    );
+    vf.push(
+      `drawtext=fontfile=${sans}:text='${escDrawtext(spaced(creator))}':fontsize=${Math.round(w * 0.0195)}` +
+        `:fontcolor=0xE0D6C4:x=(w-text_w)/2:y=${cRuleY + Math.round(h * 0.022)}`,
+    );
+  }
+  return vf;
 }
 
 /** v2.5：制作档案自动草稿（参数 + 规格 + 镜头清单；「复盘与教训」留空待补）——沉淀为可复用资产 */
@@ -925,21 +1093,15 @@ class Renderer {
    * 文字均带描边保证可读性；字体缺失/不含中文能力时降级为纯背景。
    */
   async makeTitleCard(tmpDir, font, texts, sceneSrc, dims = { w: 1280, h: 720 }) {
-    const { title = '', subtitle = '', creator = '' } = texts || {};
     const dest = path.join(tmpDir, 'card-title.mp4');
     const vf = [];
     if (sceneSrc) {
       vf.push(`scale=${dims.w}:${dims.h}:force_original_aspect_ratio=increase,crop=${dims.w}:${dims.h},setsar=1`);
-      vf.push('eq=brightness=-0.2:saturation=0.92');
-      vf.push('vignette=PI/4.5');
+      vf.push('eq=brightness=-0.22:saturation=0.9');
+      vf.push('vignette=PI/4.2');
     }
-    const canText = font && (font.cjk || !hasCJK(`${title}${subtitle}${creator}`));
-    const draw = (text, size, color, yExpr, border) =>
-      `drawtext=fontfile=${font.rel}:text='${escDrawtext(text)}':fontsize=${Math.round(dims.w * size)}` +
-      `:fontcolor=${color}:borderw=${border}:bordercolor=0x14100C:x=(w-text_w)/2:y=${yExpr}`;
-    if (canText && title) vf.push(draw(title, 0.092, '0xF5EFE2', '(h-text_h)*0.34', 4));
-    if (canText && subtitle) vf.push(draw(subtitle, 0.03, '0xE0D6C4', '(h-text_h)*0.52', 2));
-    if (canText && creator) vf.push(draw(creator, 0.021, '0xCFC4B0', '(h-text_h)*0.86', 2));
+    // v2.5.4：视觉重设计（排版/字体见 titleCardFilters——渲染与封面预览同源）
+    vf.push(...titleCardFilters({ dims, font, texts: texts || {} }));
     vf.push(`fade=t=in:st=0:d=0.9,fade=t=out:st=${(TITLE_DUR - 0.6).toFixed(1)}:d=0.6`, 'format=yuv420p');
     const inputArgs = sceneSrc
       ? ['-loop', '1', '-i', sceneSrc]
@@ -1044,3 +1206,7 @@ module.exports.collectSegments = collectSegments;
 module.exports.hasFfmpeg = hasFfmpeg;
 module.exports.escDrawtext = escDrawtext;
 module.exports.findFont = findFont; // 预检脚本复用同一字体来源（避免两处候选表漂移）
+module.exports.findSerifFont = findSerifFont;
+module.exports.stageFont = stageFont;
+module.exports.titleCardFilters = titleCardFilters; // 片头卡/封面预览共用（tools/card-preview.js）
+module.exports.splitEpisodeLabel = splitEpisodeLabel;
