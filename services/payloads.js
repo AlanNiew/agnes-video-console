@@ -289,6 +289,12 @@ function buildDreaminaPayload(b) {
   const info = DREAMINA_MODELS[model];
   if (!info) throw new ApiError(400, `不支持的即梦模型：${model}`);
 
+  // 即梦当前仅开放 text2video；参考图 / 首尾帧需 image2video / frames2video 子命令（尚未接入）。
+  // 必须显式拒绝，否则用户以为带了参考素材、实际被静默忽略。
+  if (b.mode && String(b.mode) !== 'text') {
+    throw new ApiError(400, `即梦模型当前仅支持 text（文生视频）模式，收到 mode=${b.mode}；请改用 Agnes 模型`);
+  }
+
   const prompt = String(b.prompt || '').trim();
   if (!prompt) throw new ApiError(400, '即梦视频生成 prompt 不能为空');
   if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);
@@ -305,7 +311,9 @@ function buildDreaminaPayload(b) {
     throw new ApiError(400, `分辨率须为 ${info.resolutions.join(' / ')}（${model}）`);
   }
 
-  const ratio = b.ratio ? String(b.ratio) : null;
+  // 兼容前端视频表单的字段名：该表单发 aspect_ratio，不发 ratio（图片表单发 ratio）
+  const rawRatio = b.ratio || b.aspect_ratio;
+  const ratio = rawRatio ? String(rawRatio) : null;
   if (ratio && !DREAMINA_VIDEO_RATIOS.includes(ratio)) {
     throw new ApiError(400, `画幅须为 ${DREAMINA_VIDEO_RATIOS.join(' / ')}`);
   }

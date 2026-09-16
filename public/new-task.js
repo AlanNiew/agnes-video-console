@@ -5,7 +5,7 @@
 import { $, $$, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
-import { onModelChange, DEFAULT_MODEL } from './task-meta.js';
+import { onModelChange, onImageModelChange, dreaminaVideoInfo, dreaminaImageInfo, DEFAULT_MODEL } from './task-meta.js';
 
 const refState = { images: [], audios: [], videos: [] };
 let taskType = 'video'; // P1：新建任务类型（video | image）
@@ -28,6 +28,7 @@ function switchTaskType(ptype) {
 /** P1：图片任务请求体 */
 function collectImageBody() {
   return {
+    model: $('#fiModel')?.value || undefined, // 缺省时后端回退到 Agnes 图片模型
     prompt: $('#fiPrompt').value.trim(),
     size: $('#fiSize').value || '1K',
     ratio: $('#fiRatio').value || '1:1',
@@ -89,6 +90,49 @@ function syncRefsFromDom() {
   });
 }
 
+/**
+ * 成本护栏：仅对即梦模型生效（Agnes 零打扰）。
+ * pass 静默通过 / confirm 弹窗确认 / block 直接阻断。
+ * 护栏查询本身失败时不阻断主流程（后端仍会做参数与业务校验）。
+ * @returns {Promise<boolean>} 是否继续提交
+ */
+async function passDreaminaGuard(body, kind) {
+  const info = kind === 'image' ? dreaminaImageInfo(body.model) : dreaminaVideoInfo(body.model);
+  if (!info) return true; // 非即梦模型
+  try {
+    const q = new URLSearchParams({ model: body.model });
+    if (kind === 'image') {
+      if (body.size) q.set('size', body.size);
+    } else {
+      if (body.seconds) q.set('duration', body.seconds);
+      if (body.size) q.set('video_resolution', body.size);
+    }
+    const g = await api('/api/dreamina/cost?' + q.toString());
+    if (!g?.ok) return true;
+    if (g.level === 'block') {
+      toast(
+        `积分可能不足：本次约需 ${g.points}${g.remaining != null ? `，剩余 ${g.remaining}` : ''}。` +
+          '请改用 Agnes 模型或先充值',
+        'err',
+      );
+      return false;
+    }
+    if (g.level === 'confirm') {
+      const conf =
+        '即梦生成确认\n\n' +
+        `预估消耗：${g.points} 积分` +
+        `${g.confidence === 'estimated' ? '（推断值，实际以扣费为准）' : '（实测标定）'}\n` +
+        `明细：${g.breakdown}\n` +
+        (g.remaining != null ? `当前剩余：${g.remaining} 积分\n` : '') +
+        '\n确认提交？';
+      return window.confirm(conf);
+    }
+    return true; // pass：静默通过（图片等小额场景）
+  } catch {
+    return true;
+  }
+}
+
 async function submitTask() {
   const btn = $('#btnSubmitTask');
   btn.disabled = true;
@@ -98,7 +142,9 @@ async function submitTask() {
     let t;
     if (taskType === 'image') {
       if (!$('#fiPrompt').value.trim()) throw new Error('请填写图片描述 prompt');
-      t = await api('/api/images/tasks', { method: 'POST', body: collectImageBody() });
+      const imgBody = collectImageBody();
+      if (!(await passDreaminaGuard(imgBody, 'image'))) return; // 用户取消 / 积分不足
+      t = await api('/api/images/tasks', { method: 'POST', body: imgBody });
       toast(`图片任务 #${t.id} 已入队，生成完成后在列表中查看`, 'ok');
     } else {
       const body = collectBody();
@@ -108,6 +154,7 @@ async function submitTask() {
         throw new Error('首尾帧模式需要至少提供一个首帧或尾帧 URL');
       if (body.mode === 'reference' && !body.images.length && !body.audios.length && !body.videos.length)
         throw new Error('参考模式需要至少提供一类参考素材（图片/音频/视频）');
+      if (!(await passDreaminaGuard(body, 'video'))) return; // 用户取消 / 积分不足
       t = await api('/api/tasks', { method: 'POST', body });
       toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');
     }
@@ -124,10 +171,14 @@ async function submitTask() {
 }
 
 function collectBody() {
-  const mode = $('#modeTabs .tab.active').dataset.mode;
+  const rawMode = $('#modeTabs .tab.active').dataset.mode;
+  const model = $('#fModel').value;
+  // 即梦仅支持文生视频：即便 UI 状态残留在其它模式，也强制按 text 提交
+  // （与 services/payloads.js 的服务端校验一致，避免提交后才报错）
+  const mode = dreaminaVideoInfo(model) ? 'text' : rawMode;
   syncRefsFromDom();
   const body = {
-    model: $('#fModel').value,
+    model,
     prompt: $('#fPrompt').value.trim(),
     mode,
     seconds: $('#fSeconds').value,
@@ -328,8 +379,9 @@ function initNewTask() {
   });
   ['images', 'audios', 'videos'].forEach(renderRefList);
 
-  // 模型切换
+  // 模型切换（视频 / 图片两套表单各自联动规格白名单）
   $('#fModel').addEventListener('change', onModelChange);
+  $('#fiModel')?.addEventListener('change', onImageModelChange);
 
   // ✨ AI 优化提示词（调文本模型；视频与图片两套系统提示词）
   $('#btnAiOptimize').addEventListener('click', () => runAiOptimize({ btn: $('#btnAiOptimize') }));

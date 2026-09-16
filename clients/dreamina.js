@@ -307,8 +307,38 @@ function extractVideoUrls(j) {
   return [...new Set(urls)];
 }
 
+/**
+ * 二进制是否可定位（**仅文件探测，不 spawn**，供 /api/meta 这类高频端点使用）。
+ * 探测失败一律保守返回 false——前端至多隐藏即梦分组，不影响主链路。
+ */
+function isInstalled() {
+  const bin = resolveBin();
+  if (path.isAbsolute(bin)) {
+    try {
+      return fs.existsSync(bin);
+    } catch {
+      return false;
+    }
+  }
+  // resolveBin 未命中已知安装位置 → 退回 PATH 搜索（Windows 需补常见扩展名）
+  const sep = process.platform === 'win32' ? ';' : ':';
+  const names = process.platform === 'win32' ? [`${bin}.exe`, `${bin}.cmd`, bin] : [bin];
+  for (const dir of String(process.env.PATH || '').split(sep)) {
+    if (!dir) continue;
+    for (const n of names) {
+      try {
+        if (fs.existsSync(path.join(dir, n))) return true;
+      } catch {
+        /* 忽略单条 PATH 项的探测异常 */
+      }
+    }
+  }
+  return false;
+}
+
 const dreamina = {
   resolveBin,
+  isInstalled,
   run,
   buildVideoArgs,
   buildImageArgs,

@@ -17,42 +17,151 @@ const selectableModels = () => (META ? META.models.filter((m) => !m.deprecated) 
 const DEFAULT_MODEL = () =>
   (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
 
+/* ---------------- 即梦（可选上游）元数据与分组渲染 ----------------
+ * 即梦模型由 /api/meta 的 dreamina 字段单独下发（**不在 models 里**，避免污染 Agnes 下拉契约）。
+ * 未安装 CLI 时不下拉展示即梦分组——否则用户选中后必然提交失败。 */
+
+const dreaminaMeta = () => META?.dreamina || null;
+const dreaminaVideoInfo = (id) => (dreaminaMeta()?.video || []).find((m) => m.id === id) || null;
+const dreaminaImageInfo = (id) => (dreaminaMeta()?.image || []).find((m) => m.id === id) || null;
+const dreaminaAvailable = () => Boolean(dreaminaMeta()?.installed);
+
+/** 生成 [min, max] 的整数秒选项（即梦时长范围与 Agnes 不同，需按模型动态生成） */
+function durationOptions(min, max) {
+  const lo = Math.max(Number(min) || 4, 1);
+  const hi = Math.min(Number(max) || 15, 120);
+  const out = [];
+  for (let s = lo; s <= hi; s++) out.push(`<option value="${s}" ${s === lo ? 'selected' : ''}>${s}</option>`);
+  return out.join('');
+}
+
+/** 视频模型下拉（Agnes 分组 + 即梦分组） */
+function videoModelOptions() {
+  const agnes = selectableModels()
+    .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+    .join('');
+  const groups = [`<optgroup label="Agnes（免费 / 自有配额）">${agnes}</optgroup>`];
+  if (dreaminaAvailable()) {
+    const items = (dreaminaMeta().video || [])
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .join('');
+    groups.push(`<optgroup label="即梦（收费 · 会员积分）">${items}</optgroup>`);
+  }
+  return groups.join('');
+}
+
+/** 图片模型下拉（Agnes 单档 + 即梦分组） */
+function imageModelOptions() {
+  const agnesId = META?.image?.model || 'agnes-image-2.5-flash';
+  const groups = [
+    `<optgroup label="Agnes（免费 / 自有配额）"><option value="${esc(agnesId)}">Agnes 图片（含免费额度）</option></optgroup>`,
+  ];
+  if (dreaminaAvailable()) {
+    const items = (dreaminaMeta().image || [])
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .join('');
+    groups.push(`<optgroup label="即梦（收费 · 会员积分）">${items}</optgroup>`);
+  }
+  return groups.join('');
+}
+
 /** 模型切换联动：更新提示、size 选项与视频参考能力显隐（供新建任务表单绑定） */
 function onModelChange() {
-  const info = modelInfo($('#fModel').value);
+  const id = $('#fModel').value;
+  const dm = dreaminaVideoInfo(id);
+  if (dm) {
+    // 即梦分支：规格取自模型自身（与 Agnes 的 720P/960P/2K 体系不同）
+    $('#modelHint').textContent =
+      `（即梦 · 会员积分计费 · ${dm.resolutions.join('/')} · ${dm.min_duration}-${dm.max_duration}s` +
+      `${dm.vip_only ? ' · VIP' : ''}）`;
+    $('#fSize').innerHTML = dm.resolutions.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    $('#fSeconds').innerHTML = durationOptions(dm.min_duration, dm.max_duration);
+    // 即梦当前仅支持文生视频：隐藏模式切换与素材区作为视觉提示，
+    // collectBody 提交时亦会强制 mode=text 兜底（防止残留在 reference 状态）
+    $('#modeTabs')?.classList.add('hidden');
+    $('#grpKeyframe')?.classList.add('hidden');
+    $('#grpReference')?.classList.add('hidden');
+    $('#grpVideos')?.classList.add('hidden');
+    return;
+  }
+  // —— Agnes 分支 ——
+  const info = modelInfo(id);
   $('#modelHint').textContent = info ? `（${info.hint}）` : '';
   $('#fSize').innerHTML = (info?.sizes?.length ? info.sizes : ['720P'])
     .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)
     .join('');
+  $('#modeTabs')?.classList.remove('hidden');
   const grpVideos = $('#grpVideos');
   if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
+}
+
+/** 图片模型切换联动：切换 size 白名单（即梦按次计费，禁用候选张数） */
+function onImageModelChange() {
+  const el = $('#fiModel');
+  if (!el) return;
+  const dm = dreaminaImageInfo(el.value);
+  const img = META?.image || {};
+  if (dm) {
+    $('#fiModelHint').textContent = '（即梦 · 按次计费，一次请求约返回 4 张候选）';
+    $('#fiSize').innerHTML = dm.resolutions.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    const fc = $('#fiCount');
+    if (fc) fc.disabled = true; // 成本与张数无关，避免误导
+    return;
+  }
+  $('#fiModelHint').textContent = '';
+  $('#fiSize').innerHTML = (img.sizes?.length ? img.sizes : ['1K'])
+    .map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`)
+    .join('');
+  const fc = $('#fiCount');
+  if (fc) fc.disabled = false;
 }
 
 /** 拉取 /api/meta 并填充两处模型/规格下拉（新建任务表单 + 设置弹窗默认模型） */
 async function loadMeta() {
   META = await api('/api/meta');
-  // 新建任务表单下拉（视频）
-  $('#fModel').innerHTML = selectableModels()
-    .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
-    .join('');
+  // 新建任务表单下拉（视频）：Agnes 与即梦分组渲染
+  $('#fModel').innerHTML = videoModelOptions();
   $('#fSeconds').innerHTML = META.seconds
     .map((s) => `<option value="${esc(s)}" ${s === '5' ? 'selected' : ''}>${esc(s)}</option>`)
     .join('');
   $('#fAspect').innerHTML = META.aspect_ratios
     .map((a) => `<option value="${esc(a)}" ${a === '16:9' ? 'selected' : ''}>${esc(a)}</option>`)
     .join('');
-  // P1：新建任务表单下拉（图片）
+  // P1：新建任务表单下拉（图片）——模型 + 规格
+  const fiModel = $('#fiModel');
+  if (fiModel) {
+    fiModel.innerHTML = imageModelOptions();
+    onImageModelChange();
+  }
   const img = META.image || {};
-  $('#fiSize').innerHTML = (img.sizes?.length ? img.sizes : ['1K'])
-    .map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`)
-    .join('');
-  $('#fiRatio').innerHTML = (img.ratios?.length ? img.ratios : ['1:1'])
-    .map((r) => `<option value="${esc(r)}" ${r === '1:1' ? 'selected' : ''}>${esc(r)}</option>`)
-    .join('');
-  // 设置弹窗默认模型下拉（同样只列未下架模型）
+  if (fiModel) {
+    // onImageModelChange 已按选中的模型填过 size，此处只补 ratio
+    $('#fiRatio').innerHTML = (img.ratios?.length ? img.ratios : ['1:1'])
+      .map((r) => `<option value="${esc(r)}" ${r === '1:1' ? 'selected' : ''}>${esc(r)}</option>`)
+      .join('');
+  } else {
+    $('#fiSize').innerHTML = (img.sizes?.length ? img.sizes : ['1K'])
+      .map((s) => `<option value="${esc(s)}" ${s === '1K' ? 'selected' : ''}>${esc(s)}</option>`)
+      .join('');
+    $('#fiRatio').innerHTML = (img.ratios?.length ? img.ratios : ['1:1'])
+      .map((r) => `<option value="${esc(r)}" ${r === '1:1' ? 'selected' : ''}>${esc(r)}</option>`)
+      .join('');
+  }
+  // 设置弹窗默认模型下拉（只列 Agnes——即梦刻意不设为默认，符合成本均衡）
   $('#setModel').innerHTML = selectableModels()
     .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
     .join('');
 }
 
-export { modelInfo, modelShort, selectableModels, DEFAULT_MODEL, onModelChange, loadMeta };
+export {
+  modelInfo,
+  modelShort,
+  selectableModels,
+  DEFAULT_MODEL,
+  onModelChange,
+  onImageModelChange,
+  dreaminaVideoInfo,
+  dreaminaImageInfo,
+  dreaminaAvailable,
+  loadMeta,
+};
