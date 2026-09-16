@@ -22,6 +22,10 @@ const RATE_LIMIT_CAP_MS = Number(process.env.SUBMIT_RATE_LIMIT_BASE_MS)
   : 10 * 60_000;
 const NET_BASE_MS = 10_000;
 const NET_CAP_MS = 60_000;
+// 上游「队列满」（video_queue_full / 503）用分钟级耐心退避：秒级档位会在一两分钟内耗尽重试次数，
+// 等于对着同一堵墙反复撞（E05 实测：503 持续数分钟，秒级退避 4 次全废）
+const QUEUE_BASE_MS = 90_000;
+const QUEUE_CAP_MS = 15 * 60_000;
 
 function safeUrl(u) {
   return typeof u === 'string' && /^https?:\/\//i.test(u.trim()) ? u.trim() : null;
@@ -30,9 +34,10 @@ function safeUrl(u) {
 /**
  * 退避延迟计算（指数退避 + 上限）
  * @param {number} attempts 重试次数（从 1 起）
- * @param {'rate-limit'|'net'} kind 429 限流 / 网络异常（各自基数与上限）
+ * @param {'rate-limit'|'net'|'queue'} kind 429 限流 / 网络异常 / 上游队列满（各自基数与上限）
  */
 function computeBackoffMs(attempts, kind) {
+  if (kind === 'queue') return Math.min(QUEUE_BASE_MS * 2 ** (attempts - 1), QUEUE_CAP_MS);
   if (kind === 'net') return Math.min(NET_BASE_MS * 2 ** (attempts - 1), NET_CAP_MS);
   return Math.min(RATE_LIMIT_BASE_MS * 2 ** (attempts - 1), RATE_LIMIT_CAP_MS);
 }
@@ -142,15 +147,16 @@ class Submitter {
     // 5xx（上游队列满 503 / 网关抖动等）属瞬时错误：退避重试，不再秒判死。
     // 历史缺陷：除 429 外一律 fail，导致 video_queue_full 直接把任务打成 submit_error（E03 重拍实测）
     if (r.status >= 500) {
+      const queueFull = /queue_full|queue is full|队列/i.test(JSON.stringify(r.data || ''));
       if (attempts >= MAX_ATTEMPTS) {
         this.fail(t.id, `提交失败（${r.status}），自动重试 ${attempts - 1} 次后仍失败：${serverDetail(r)}`, r.data);
         return;
       }
-      const delay = computeBackoffMs(attempts, 'net');
+      const delay = computeBackoffMs(attempts, queueFull ? 'queue' : 'net');
       this.backoff(t.id, delay, attempts);
       log(
         'warn',
-        `任务 #${t.id} 上游返回 ${r.status}（瞬时错误，${serverDetail(r)}），` +
+        `任务 #${t.id} 上游返回 ${r.status}（${queueFull ? '队列满，分钟级耐心重试' : '瞬时错误'}，${serverDetail(r)}），` +
           `${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
       );
       return;
