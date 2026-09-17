@@ -5,7 +5,14 @@
 import { $, $$, esc, toast, api } from './common.js';
 import { bus } from './state.js';
 import { compare } from './compare.js';
-import { onModelChange, onImageModelChange, passDreaminaGuard, dreaminaVideoInfo, DEFAULT_MODEL } from './task-meta.js';
+import {
+  onModelChange,
+  onImageModelChange,
+  passDreaminaGuard,
+  dreaminaVideoInfo,
+  videoModelOptions,
+  DEFAULT_MODEL,
+} from './task-meta.js';
 
 const refState = { images: [], audios: [], videos: [] };
 let taskType = 'video'; // P1：新建任务类型（video | image）
@@ -55,6 +62,23 @@ function switchMode(mode) {
   if (mode === 'reference')
     hint.textContent =
       '多模态参考：素材作为内容/风格/节奏参考，提示词中用 <Picture 1>、<Audio 1>、<Video 1> 指代（从 1 编号）。';
+  // 模式变化会改变即梦的可选模型与规格（text2video vs image2video）→ 重建下拉并联动
+  refreshVideoModels();
+}
+
+/**
+ * 按当前模式重建视频模型下拉：即梦各子命令的支持集不同
+ * （如 1.0fast/1.5pro 仅支持图生视频），参考模式下列表不含即梦。
+ * 尽量保留用户原选择；该模型在新模式下不可用时自动回落到首项（通常是免费 Agnes）。
+ */
+function refreshVideoModels() {
+  const el = $('#fModel');
+  if (!el) return;
+  const mode = $('#modeTabs .tab.active')?.dataset.mode || 'text';
+  const prev = el.value;
+  el.innerHTML = videoModelOptions(mode);
+  if ([...el.options].some((o) => o.value === prev)) el.value = prev;
+  onModelChange();
 }
 
 function renderRefList(key) {
@@ -120,6 +144,10 @@ async function submitTask() {
         throw new Error('首尾帧模式需要至少提供一个首帧或尾帧 URL');
       if (body.mode === 'reference' && !body.images.length && !body.audios.length && !body.videos.length)
         throw new Error('参考模式需要至少提供一类参考素材（图片/音频/视频）');
+      // 即梦仅支持单首帧（尾帧属未接入的 frames2video）：带尾帧直接拒绝，避免静默忽略
+      if (dreaminaVideoInfo(body.model, body.mode)?.command === 'image2video' && body.last_frame) {
+        throw new Error('即梦暂不支持尾帧（frames2video）；请只填首帧图，或改用 Agnes 模型');
+      }
       if (!(await passDreaminaGuard(body, 'video'))) return; // 用户取消 / 积分不足
       t = await api('/api/tasks', { method: 'POST', body });
       toast(`任务 #${t.id} 已提交（video_id: ${t.video_id || '-'}）`, 'ok');

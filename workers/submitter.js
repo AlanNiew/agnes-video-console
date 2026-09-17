@@ -11,9 +11,35 @@ const { settings, tasks } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
 const dreamina = require('../clients/dreamina');
+const { downloadArtifact, ARTIFACTS_DIR } = require('../lib/artifacts');
+const path = require('node:path');
+const fs = require('node:fs');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
 const { providerOf } = require('../core/constants');
+
+/**
+ * 即梦 CLI 的 `--image` 只接受**本地文件路径**（官方 help 原文「local first-frame image path」）。
+ * 本系统的首帧图通常是远端 URL（Agnes/即梦产物）或 `/artifacts/xxx` 相对路径，故提交前需落到本地。
+ * @returns {Promise<string|null>} 本地绝对路径；null 表示无法取得（调用方据此给出可读错误）
+ */
+async function ensureLocalImage(input) {
+  const s = String(input || '').trim();
+  if (!s) return null;
+  // 1) 已是绝对路径
+  if (path.isAbsolute(s)) return fs.existsSync(s) ? s : null;
+  // 2) 本地产物相对路径（前端展示用的 /artifacts/xxx）
+  if (s.startsWith('/artifacts/')) {
+    const abs = path.join(ARTIFACTS_DIR, s.slice('/artifacts/'.length));
+    return fs.existsSync(abs) ? abs : null;
+  }
+  // 3) 远端 URL → 下载归档后取本地路径
+  if (/^https?:\/\//i.test(s)) {
+    const art = await downloadArtifact(s, { fallbackExt: '.png' });
+    return art?.local_path || null;
+  }
+  return null;
+}
 
 const TICK_MS = 1000;
 const MAX_ATTEMPTS = 5;
@@ -202,10 +228,23 @@ class Submitter {
    * submit_id 存入 video_id 字段：poller 的 active() 靠 video_id 非空判定「已提交」，复用即零 schema 变更。
    */
   async submitDreamina(t) {
-    const payload = t.request_json;
-    if (!payload) {
+    if (!t.request_json) {
       this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
       return;
+    }
+    // 浅拷贝一份：image 需替换为本地路径（即梦 CLI 的 --image 只接受本地文件），
+    // 不污染库中保存的原始请求（升级 / 重试可能复用同一份）
+    const payload = { ...t.request_json };
+    if (payload.image) {
+      const local = await ensureLocalImage(payload.image);
+      if (!local) {
+        this.fail(
+          t.id,
+          `首帧图无法落到本地（即梦 CLI 的 --image 只接受本地文件）：${String(payload.image).slice(0, 120)}`,
+        );
+        return;
+      }
+      payload.image = local;
     }
     const prev = this.retryUntil.get(t.id);
     const attempts = prev ? prev.attempts + 1 : 1;

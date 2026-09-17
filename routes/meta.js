@@ -58,10 +58,20 @@ module.exports = function registerMetaRoutes(app) {
         video: Object.entries(DREAMINA_MODELS).map(([id, m]) => ({
           id,
           label: m.label,
-          resolutions: m.resolutions,
-          min_duration: m.minDuration,
-          max_duration: m.maxDuration,
           vip_only: Boolean(m.vipOnly),
+          // 按子命令下发规格（各子命令的支持集与时长/分辨率/画幅规则不同）：
+          // 前端据此过滤可选模型并联动 seconds/size —— 例如有首帧图时按 image2video 取规格
+          specs: Object.fromEntries(
+            Object.entries(m.specs || {}).map(([cmd, s]) => [
+              cmd,
+              {
+                resolutions: s.resolutions,
+                min_duration: s.minDuration,
+                max_duration: s.maxDuration,
+                omit_ratio: Boolean(s.omitRatio),
+              },
+            ]),
+          ),
         })),
         image: Object.entries(DREAMINA_IMAGE_MODELS).map(([id, m]) => ({
           id,

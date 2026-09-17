@@ -41,110 +41,189 @@ const MODELS = {
 
 /**
  * 即梦（官方 dreamina CLI）视频模型 —— 与 Agnes 的 MODELS **分离维护**：
- * 故意不进 /api/meta 的模型清单，故前端下拉/默认模型不受影响；
- * 仅可经 /api/tasks 直接指定 model 调用（provider 由 providerOf 推导）。
- * 参数矩阵取自 `dreamina text2video -h`（CLI v1.4.18 实测）；CLI 侧对取值做严格校验，
+ * 故意不进 /api/meta 的 models 清单，故前端下拉/默认模型不受影响。
+ * 参数矩阵取自 `dreamina <子命令> -h`（CLI v1.4.18 实测）；CLI 侧对取值做严格校验，
  * 不支持或旧版取值会被拒绝而非静默调整，故此处白名单需与 CLI 保持同步。
+ *
+ * ⚠️ **不同子命令的支持集与规格各不相同**，故用 `specs` 按子命令声明：
+ *   text2video  : 2.0 / 2.0fast / 2.0mini / 2.0_vip / 2.0fast_vip / 2.5
+ *   image2video : 上述全部 + **seedance1.0fast / 1.5pro**（老代际仅支持图生视频）
+ * 未列出的子命令 = 该模型不支持（服务端据此拒绝，不静默降级）。
+ *
+ * 主力/备用：主链路是 Agnes 免费档；即梦视频里 `seedance2.0fast` 最省（标准会员可用），
+ * 置于列表首位作为默认；其余按能力/成本递增备用。
  */
 const DREAMINA_VIDEO_RATIOS = ['1:1', '3:4', '16:9', '4:3', '9:16', '21:9'];
-const DREAMINA_RESOLUTIONS = ['480p', '720p', '1080p', '4k']; // 全局并集；各模型实际支持见 resolutions
+const DREAMINA_RESOLUTIONS = ['480p', '720p', '1080p', '4k']; // 全局并集；各模型/子命令实际支持见 specs
 const DREAMINA_MODELS = {
+  // —— 标准档（standard 会员可用；720p） ——
   'seedance2.0fast': {
     provider: 'dreamina',
-    model_version: 'seedance2.0fast',
-    subcommand: 'text2video',
-    resolutions: ['720p'],
-    minDuration: 4,
-    maxDuration: 15,
-    ratios: DREAMINA_VIDEO_RATIOS,
+    modelVersion: 'seedance2.0fast',
     vipOnly: false,
-    label: 'Seedance 2.0 Fast（即梦 · 720p · 4-15s）',
-  },
-  'seedance2.0': {
-    provider: 'dreamina',
-    model_version: 'seedance2.0',
-    subcommand: 'text2video',
-    resolutions: ['720p'],
-    minDuration: 4,
-    maxDuration: 15,
-    ratios: DREAMINA_VIDEO_RATIOS,
-    vipOnly: false,
-    label: 'Seedance 2.0（即梦 · 720p · 4-15s）',
+    specs: {
+      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0 Fast（720p · 4-15s · 即梦内最省）',
   },
   'seedance2.0mini': {
     provider: 'dreamina',
-    model_version: 'seedance2.0mini',
-    subcommand: 'text2video',
-    resolutions: ['720p'],
-    minDuration: 4,
-    maxDuration: 15,
-    ratios: DREAMINA_VIDEO_RATIOS,
+    modelVersion: 'seedance2.0mini',
     vipOnly: false,
-    label: 'Seedance 2.0 Mini（即梦 · 720p · 4-15s）',
+    specs: {
+      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0 Mini（720p · 4-15s）',
+  },
+  'seedance2.0': {
+    provider: 'dreamina',
+    modelVersion: 'seedance2.0',
+    vipOnly: false,
+    specs: {
+      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0（720p · 4-15s）',
+  },
+  // —— 旗舰档（VIP） ——
+  'seedance2.5': {
+    provider: 'dreamina',
+    modelVersion: 'seedance2.5',
+    vipOnly: true,
+    specs: {
+      text2video: { resolutions: ['480p', '720p', '1080p'], minDuration: 4, maxDuration: 30 },
+      // 2.5 的图生视频跟随首帧输出，CLI 明确**拒绝 --ratio**
+      image2video: {
+        resolutions: ['480p', '720p', '1080p'],
+        minDuration: 4,
+        maxDuration: 30,
+        omitRatio: true,
+      },
+    },
+    label: 'Seedance 2.5（480p/720p/1080p · 4-30s · VIP）',
   },
   'seedance2.0_vip': {
     provider: 'dreamina',
-    model_version: 'seedance2.0_vip',
-    subcommand: 'text2video',
-    resolutions: ['720p', '1080p', '4k'],
-    minDuration: 4,
-    maxDuration: 15,
-    ratios: DREAMINA_VIDEO_RATIOS,
+    modelVersion: 'seedance2.0_vip',
     vipOnly: true,
-    label: 'Seedance 2.0 VIP（即梦 · 720p/1080p/4k · 4-15s）',
+    specs: {
+      text2video: { resolutions: ['720p', '1080p', '4k'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p', '1080p', '4k'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0 VIP（720p/1080p/4k · 4-15s）',
   },
   'seedance2.0fast_vip': {
     provider: 'dreamina',
-    model_version: 'seedance2.0fast_vip',
-    subcommand: 'text2video',
-    resolutions: ['720p'],
-    minDuration: 4,
-    maxDuration: 15,
-    ratios: DREAMINA_VIDEO_RATIOS,
+    modelVersion: 'seedance2.0fast_vip',
     vipOnly: true,
-    label: 'Seedance 2.0 Fast VIP（即梦 · 720p · 4-15s）',
+    specs: {
+      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0 Fast VIP（720p · 4-15s）',
   },
-  'seedance2.5': {
+  // —— 老代际：**仅支持图生视频**（官方 image2video 支持集内含之，text2video 不含） ——
+  'seedance1.5pro': {
     provider: 'dreamina',
-    model_version: 'seedance2.5',
-    subcommand: 'text2video',
-    resolutions: ['480p', '720p', '1080p'],
-    minDuration: 4,
-    maxDuration: 30,
-    ratios: DREAMINA_VIDEO_RATIOS,
-    vipOnly: true,
-    label: 'Seedance 2.5（即梦 · 480p/720p/1080p · 4-30s · 需高级会员）',
+    modelVersion: 'seedance1.5pro',
+    vipOnly: false,
+    specs: {
+      image2video: { resolutions: ['720p'], minDuration: 5, maxDuration: 12 },
+    },
+    label: 'Seedance 1.5 Pro（720p · 5-12s · 仅图生视频）',
+  },
+  'seedance1.0fast': {
+    provider: 'dreamina',
+    modelVersion: 'seedance1.0fast',
+    vipOnly: false,
+    specs: {
+      image2video: { resolutions: ['720p'], minDuration: 5, maxDuration: 10 },
+    },
+    label: 'Seedance 1.0 Fast（720p · 5-10s · 仅图生视频）',
   },
 };
 
+/** 已接入的子命令（其余子命令官方支持但本系统暂未开放，见 docs/DREAMINA_CLI_PLAN.md） */
+const DREAMINA_VIDEO_COMMANDS = ['text2video', 'image2video'];
+
 /**
  * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
- * （resolution_type / generate_num，且为异步任务）。参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测）。
- * 按积分成本梯度提供三档，贯彻「Agnes 免费打主力、即梦只砸关键处」的均衡策略：
- * 角色图 / 封面这类「量少但决定成败」的资产生成走这里，分镜视频仍以免费 Agnes 为主。
+ * （resolution_type / generate_num，且为异步任务）。
+ * 参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测），**清单与官方支持集完全对齐**：
+ *   3.0/3.1 -> 1k/2k；4.0/4.1/4.5/4.6/4.7/5.0 -> 2k/4k；5.0Pro -> 1.5k/2k/4k
+ *
+ * 主力 / 备用策略（成本均衡）：
+ *   主力 = `jimeng-image-3.1`（实测 1 积分/次，一次约 4 张候选），默认选中；
+ *   其余为备用档位，按需手动切换（代际越高画质越好、积分越贵）。
  */
 const DREAMINA_IMAGE_RATIOS = ['21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'];
 const DREAMINA_IMAGE_MODELS = {
+  // —— 主力：实测 1 积分/次，性价比最高，默认选中 ——
   'jimeng-image-3.1': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '3.1',
     resolutions: ['1k', '2k'],
-    label: '即梦图片 3.1（1k/2k · 最省积分）',
+    label: '即梦图片 3.1（1k/2k · 主力 · 最省积分）',
+  },
+  // —— 备用档位（与官方 CLI 支持集对齐） ——
+  'jimeng-image-3.0': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '3.0',
+    resolutions: ['1k', '2k'],
+    label: '即梦图片 3.0（1k/2k · 备用）',
+  },
+  'jimeng-image-4.0': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.0',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.0（2k/4k · 备用）',
+  },
+  'jimeng-image-4.1': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.1',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.1（2k/4k · 备用）',
+  },
+  'jimeng-image-4.5': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.5',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.5（2k/4k · 备用）',
+  },
+  'jimeng-image-4.6': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.6',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.6（2k/4k · 备用）',
+  },
+  'jimeng-image-4.7': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.7',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.7（2k/4k · 备用）',
   },
   'jimeng-image-5.0': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '5.0',
     resolutions: ['2k', '4k'],
-    label: '即梦图片 5.0（2k/4k · 性价比主力）',
+    label: '即梦图片 5.0（2k/4k · 备用 · 高画质）',
   },
   'jimeng-image-5.0pro': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '5.0Pro',
     resolutions: ['1.5k', '2k', '4k'],
-    label: '即梦图片 5.0 Pro（1.5k/2k/4k · 最强）',
+    label: '即梦图片 5.0 Pro（1.5k/2k/4k · 备用 · 最强）',
   },
 };
 
@@ -169,7 +248,16 @@ const DREAMINA_CREDIT_COST = {
     '4k': { perSecond: 40, source: 'estimated' },
   },
   image: {
+    // 实测：3.1/1k = 1 积分（一次请求返回 4 张候选，按「次」计费）
     'jimeng-image-3.1': { perRequest: { '1k': 1, '2k': 2 }, source: 'measured' },
+    // 以下为推断值（同代际/同档位类比），UI 会提示「以实际扣费为准」；
+    // 待用最低规格各跑一次后逐步升级为 measured（见 docs/DREAMINA_CLI_PLAN.md 4.1）
+    'jimeng-image-3.0': { perRequest: { '1k': 1, '2k': 2 }, source: 'estimated' },
+    'jimeng-image-4.0': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
+    'jimeng-image-4.1': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
+    'jimeng-image-4.5': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
+    'jimeng-image-4.6': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
+    'jimeng-image-4.7': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
     'jimeng-image-5.0': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
     'jimeng-image-5.0pro': { perRequest: { '1.5k': 4, '2k': 6, '4k': 10 }, source: 'estimated' },
   },
@@ -272,6 +360,7 @@ module.exports = {
   DREAMINA_IMAGE_MODELS,
   DREAMINA_RESOLUTIONS,
   DREAMINA_VIDEO_RATIOS,
+  DREAMINA_VIDEO_COMMANDS,
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,

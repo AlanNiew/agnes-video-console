@@ -281,18 +281,34 @@ function buildPayload(body) {
  * 校验即梦视频请求并构建「语义参数」对象（存入 tasks.request_json，由 submitter 转 argv）。
  * 与 Agnes payload 的区别：这里不组装 HTTP body——argv 由 clients/dreamina.js 的 buildVideoArgs
  * 从此对象生成，字段名与 CLI 的 --kebab 参数一一对应。
- * 当前仅开放 text2video（文生视频）；image2video / frames2video 等子命令的参数形态尚未实测，
- * 待验证后再扩展（DREAMINA_MODELS[*].subcommand 已预留该扩展点）。
+ * 子命令由入参自动推导：**提供首帧图 → image2video，否则 text2video**（后者更符合直觉）。
+ * frames2video（首尾帧）/ multimodal2video（全能参考）尚未接入，显式拒绝而非静默忽略。
  */
 function buildDreaminaPayload(b) {
   const model = String(b.model || '').trim();
   const info = DREAMINA_MODELS[model];
   if (!info) throw new ApiError(400, `不支持的即梦模型：${model}`);
 
-  // 即梦当前仅开放 text2video；参考图 / 首尾帧需 image2video / frames2video 子命令（尚未接入）。
-  // 必须显式拒绝，否则用户以为带了参考素材、实际被静默忽略。
-  if (b.mode && String(b.mode) !== 'text') {
-    throw new ApiError(400, `即梦模型当前仅支持 text（文生视频）模式，收到 mode=${b.mode}；请改用 Agnes 模型`);
+  // 首帧图来源：直接传 image，或复用前端 keyframe 模式的 first_frame
+  const firstFrame = b.image || b.first_frame || null;
+  const subcommand = firstFrame ? 'image2video' : 'text2video';
+  const spec = info.specs?.[subcommand];
+  if (!spec) {
+    const avail = Object.keys(info.specs || {}).join(' / ') || '无';
+    throw new ApiError(
+      400,
+      subcommand === 'image2video'
+        ? `模型 ${model} 不支持图生视频（image2video），可用：${avail}；请换用支持首帧的模型`
+        : `模型 ${model} 不支持文生视频（text2video），可用：${avail}；该模型需要首帧图`,
+    );
+  }
+
+  // 未接入的子命令必须显式拒绝，否则用户以为素材生效、实际被静默忽略
+  if (b.last_frame) {
+    throw new ApiError(400, '即梦暂不支持首尾帧（frames2video）；请只提供首帧图，或改用 Agnes 模型');
+  }
+  if (b.mode && String(b.mode) === 'reference') {
+    throw new ApiError(400, '即梦暂不支持多模态参考（multimodal2video）；请用 text 或 keyframe 模式，或改用 Agnes');
   }
 
   const prompt = String(b.prompt || '').trim();
@@ -301,22 +317,24 @@ function buildDreaminaPayload(b) {
 
   // 时长：兼容 seconds 别名（与前端/Agnes 的字段习惯保持一致）
   const duration = Number(b.duration ?? b.seconds ?? 5);
-  if (!Number.isInteger(duration) || duration < info.minDuration || duration > info.maxDuration) {
-    throw new ApiError(400, `时长须为 ${info.minDuration}-${info.maxDuration} 的整数秒（${model}）`);
+  if (!Number.isInteger(duration) || duration < spec.minDuration || duration > spec.maxDuration) {
+    throw new ApiError(400, `时长须为 ${spec.minDuration}-${spec.maxDuration} 的整数秒（${model} / ${subcommand}）`);
   }
 
   // 分辨率：CLI 侧 --video_resolution 为必填项，故此处必须落到合法值
-  const resolution = String(b.video_resolution || b.size || info.resolutions[0]).toLowerCase();
-  if (!info.resolutions.includes(resolution)) {
-    throw new ApiError(400, `分辨率须为 ${info.resolutions.join(' / ')}（${model}）`);
+  const resolution = String(b.video_resolution || b.size || spec.resolutions[0]).toLowerCase();
+  if (!spec.resolutions.includes(resolution)) {
+    throw new ApiError(400, `分辨率须为 ${spec.resolutions.join(' / ')}（${model}）`);
   }
 
   // 兼容前端视频表单的字段名：该表单发 aspect_ratio，不发 ratio（图片表单发 ratio）
   const rawRatio = b.ratio || b.aspect_ratio;
-  const ratio = rawRatio ? String(rawRatio) : null;
+  let ratio = rawRatio ? String(rawRatio) : null;
   if (ratio && !DREAMINA_VIDEO_RATIOS.includes(ratio)) {
     throw new ApiError(400, `画幅须为 ${DREAMINA_VIDEO_RATIOS.join(' / ')}`);
   }
+  // 2.5 的图生视频跟随首帧输出，CLI 会直接拒绝 --ratio：此处主动丢弃（画幅由首帧决定）
+  if (ratio && spec.omitRatio) ratio = null;
 
   return {
     // 存入 tasks.request_json：submitter 直接交给 clients/dreamina.buildVideoArgs 生成 argv。
@@ -324,19 +342,21 @@ function buildDreaminaPayload(b) {
     // --video_resolution/--model_version 根本没生成，CLI 直接报 required flag not set。
     payload: {
       provider: 'dreamina',
-      subcommand: info.subcommand,
-      modelVersion: info.model_version,
+      subcommand,
+      modelVersion: info.modelVersion,
       model,
       prompt,
       duration,
       videoResolution: resolution,
-      ratio, // null 表示交给 CLI 用默认画幅（16:9）
+      ratio, // null 表示交给 CLI 用默认画幅（或由首帧推断）
+      ...(firstFrame ? { image: firstFrame } : {}), // 即梦 CLI 的 --image（首帧，本地路径）
     },
     // 存入 tasks 表列：字段名刻意对齐既有列（seconds / size / aspect_ratio），
     // 使前端任务列表无需任何改动即可正常显示时长与规格
     meta: {
       model,
-      mode: 'text', // 即梦当前仅开放文生视频，对应本系统的 text 模式
+      // 有首帧 → 图生视频（本系统的 'image' 模式）；否则文生视频
+      mode: firstFrame ? 'image' : 'text',
       prompt,
       seconds: duration,
       size: resolution,
@@ -471,7 +491,11 @@ function estimateDreaminaCost(model, params = {}) {
   // —— 视频：按秒计费 ——
   const vInfo = DREAMINA_MODELS[model];
   if (vInfo) {
-    const resolution = String(b.video_resolution || b.size || vInfo.resolutions[0]).toLowerCase();
+    // 子命令与 buildDreaminaPayload 同规则：有首帧 → image2video，否则 text2video
+    const sub = b.image || b.first_frame ? 'image2video' : 'text2video';
+    const spec = vInfo.specs?.[sub];
+    if (!spec) return { points: null, confidence: 'estimated', breakdown: `${model} 不支持 ${sub}` };
+    const resolution = String(b.video_resolution || b.size || spec.resolutions[0]).toLowerCase();
     const duration = Number(b.duration ?? b.seconds ?? 5);
     const row = DREAMINA_CREDIT_COST.video[resolution];
     if (!row) return { points: null, confidence: 'estimated', breakdown: `未知分辨率 ${resolution}` };

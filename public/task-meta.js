@@ -22,9 +22,22 @@ const DEFAULT_MODEL = () =>
  * 未安装 CLI 时不下拉展示即梦分组——否则用户选中后必然提交失败。 */
 
 const dreaminaMeta = () => META?.dreamina || null;
-const dreaminaVideoInfo = (id) => (dreaminaMeta()?.video || []).find((m) => m.id === id) || null;
 const dreaminaImageInfo = (id) => (dreaminaMeta()?.image || []).find((m) => m.id === id) || null;
 const dreaminaAvailable = () => Boolean(dreaminaMeta()?.installed);
+
+/**
+ * 查询即梦视频模型在指定模式下是否可用；可用时返回带 `spec`（该子命令的规格）与 `command` 的对象。
+ * mode 映射：'text' → text2video；'keyframe' → image2video（本系统只支持单首帧）；
+ * 'reference' → multimodal2video **本系统未接入**，一律返回 null（调用方据此强制回落或拒绝）。
+ * 之所以要按模式判断：官方各子命令的支持集不同（1.0fast/1.5pro 仅支持图生视频）。
+ */
+function dreaminaVideoInfo(id, mode = 'text') {
+  const m = (dreaminaMeta()?.video || []).find((x) => x.id === id);
+  if (!m || mode === 'reference') return null;
+  const command = mode === 'keyframe' ? 'image2video' : 'text2video';
+  const spec = m.specs?.[command];
+  return spec ? { ...m, spec, command } : null;
+}
 
 /** 生成 [min, max] 的整数秒选项（即梦时长范围与 Agnes 不同，需按模型动态生成） */
 function durationOptions(min, max) {
@@ -35,17 +48,23 @@ function durationOptions(min, max) {
   return out.join('');
 }
 
-/** 视频模型下拉（Agnes 分组 + 即梦分组） */
-function videoModelOptions() {
+/**
+ * 视频模型下拉（Agnes 分组 + 即梦分组）。
+ * @param {'text'|'keyframe'|'reference'} mode 按当前模式过滤即梦模型——
+ *   仅列支持对应子命令的模型（如 keyframe 时隐藏只支持文生视频的老代际差异）
+ */
+function videoModelOptions(mode = 'text') {
   const agnes = selectableModels()
     .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
     .join('');
   const groups = [`<optgroup label="Agnes（免费 / 自有配额）">${agnes}</optgroup>`];
-  if (dreaminaAvailable()) {
+  if (dreaminaAvailable() && mode !== 'reference') {
+    const command = mode === 'keyframe' ? 'image2video' : 'text2video';
     const items = (dreaminaMeta().video || [])
+      .filter((m) => m.specs?.[command])
       .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
       .join('');
-    groups.push(`<optgroup label="即梦（收费 · 会员积分）">${items}</optgroup>`);
+    if (items) groups.push(`<optgroup label="即梦（收费 · 会员积分）">${items}</optgroup>`);
   }
   return groups.join('');
 }
@@ -69,32 +88,44 @@ function imageModelOptions() {
   return groups.join('');
 }
 
-/** 模型切换联动：更新提示、size 选项与视频参考能力显隐（供新建任务表单绑定） */
+/** 模型切换联动：更新提示、size/seconds 选项与素材区显隐（供新建任务表单绑定） */
 function onModelChange() {
   const id = $('#fModel').value;
-  const dm = dreaminaVideoInfo(id);
-  if (dm) {
-    // 即梦分支：规格取自模型自身（与 Agnes 的 720P/960P/2K 体系不同）
-    $('#modelHint').textContent =
-      `（即梦 · 会员积分计费 · ${dm.resolutions.join('/')} · ${dm.min_duration}-${dm.max_duration}s` +
-      `${dm.vip_only ? ' · VIP' : ''}）`;
-    $('#fSize').innerHTML = dm.resolutions.map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
-    $('#fSeconds').innerHTML = durationOptions(dm.min_duration, dm.max_duration);
-    // 即梦当前仅支持文生视频：隐藏模式切换与素材区作为视觉提示，
-    // collectBody 提交时亦会强制 mode=text 兜底（防止残留在 reference 状态）
-    $('#modeTabs')?.classList.add('hidden');
-    $('#grpKeyframe')?.classList.add('hidden');
-    $('#grpReference')?.classList.add('hidden');
-    $('#grpVideos')?.classList.add('hidden');
+  const mode = $('#modeTabs .tab.active')?.dataset.mode || 'text';
+  const isDmModel = (dreaminaMeta()?.video || []).some((m) => m.id === id);
+
+  // 即梦 + 参考模式：本系统未接入 multimodal2video → 明确提示（提交也会被后端拒绝）
+  if (isDmModel && mode === 'reference') {
+    $('#modelHint').textContent = '（即梦不支持多模态参考模式，请切换到「文生视频」或「首尾帧控制」）';
     return;
   }
+
+  const dm = dreaminaVideoInfo(id, mode);
+  if (dm) {
+    // 即梦分支：规格取自该**子命令**的 spec（各子命令的时长/分辨率范围不同）
+    const s = dm.spec;
+    const cmdLabel = dm.command === 'image2video' ? '图生视频' : '文生视频';
+    $('#modelHint').textContent =
+      `（即梦 ${cmdLabel} · 积分计费 · ${s.resolutions.join('/')} · ${s.min_duration}-${s.max_duration}s` +
+      `${dm.vip_only ? ' · VIP' : ''}${s.omit_ratio ? ' · 画幅随首帧' : ''}）`;
+    $('#fSize').innerHTML = s.resolutions.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
+    $('#fSeconds').innerHTML = durationOptions(s.min_duration, s.max_duration);
+    // 未接入的素材区隐藏：尾帧属 frames2video、参考文本属 multimodal2video
+    $('#grpVideos')?.classList.add('hidden');
+    // 2.5 图生视频会拒绝 --ratio（画幅由首帧决定）→ 表单同步禁用，避免误以为设置生效
+    const aspect = $('#fAspect');
+    if (aspect) aspect.disabled = Boolean(s.omit_ratio);
+    return;
+  }
+
   // —— Agnes 分支 ——
   const info = modelInfo(id);
   $('#modelHint').textContent = info ? `（${info.hint}）` : '';
   $('#fSize').innerHTML = (info?.sizes?.length ? info.sizes : ['720P'])
     .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)
     .join('');
-  $('#modeTabs')?.classList.remove('hidden');
+  const aspect = $('#fAspect');
+  if (aspect) aspect.disabled = false;
   const grpVideos = $('#grpVideos');
   if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
 }
@@ -166,6 +197,8 @@ async function passDreaminaGuard(body, kind) {
     } else {
       if (body.seconds) q.set('duration', body.seconds);
       if (body.size) q.set('video_resolution', body.size);
+      // 有首帧 → 后端按 image2video 的规格与单价预估（各子命令范围不同）
+      if (body.first_frame || body.image) q.set('first_frame', '1');
     }
     const g = await api('/api/dreamina/cost?' + q.toString());
     if (!g?.ok) return true;

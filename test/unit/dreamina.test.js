@@ -4,12 +4,13 @@
  * 覆盖：provider 推导、即梦 payload 校验矩阵、CLI argv 组装。
  * 全部为纯函数校验，不触网、不 spawn 子进程、不消耗积分。
  */
-const { providerOf } = require('../../core/constants');
+const { providerOf, DREAMINA_MODELS, DREAMINA_IMAGE_MODELS } = require('../../core/constants');
 const {
   buildPayload,
   buildDreaminaPayload,
   buildImagePayload,
   buildDreaminaImagePayload,
+  estimateDreaminaCost,
 } = require('../../services/payloads');
 const { buildVideoArgs, buildImageArgs, extractImageUrls, extractVideoUrls } = require('../../clients/dreamina');
 const { ApiError } = require('../../core/errors');
@@ -382,5 +383,142 @@ describe('payload → argv 衔接（防字段名 snake_case / camelCase 不匹�
     expect(args).toContain('--model_version=5.0');
     expect(args).toContain('--generate_num=2');
     expect(args).toContain('--prompt=少女站在麦田里');
+  });
+});
+
+describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
+  test('图片模型覆盖 text2image 官方支持集全 9 档，且主力 3.1 置首', () => {
+    const keys = Object.keys(DREAMINA_IMAGE_MODELS);
+    expect(keys.slice().sort()).toEqual(
+      [
+        'jimeng-image-3.0',
+        'jimeng-image-3.1',
+        'jimeng-image-4.0',
+        'jimeng-image-4.1',
+        'jimeng-image-4.5',
+        'jimeng-image-4.6',
+        'jimeng-image-4.7',
+        'jimeng-image-5.0',
+        'jimeng-image-5.0pro',
+      ].sort(),
+    );
+    expect(keys[0]).toBe('jimeng-image-3.1'); // 默认选中主力档
+  });
+
+  test('图片分辨率档位与官方一致', () => {
+    expect(DREAMINA_IMAGE_MODELS['jimeng-image-3.0'].resolutions).toEqual(['1k', '2k']);
+    expect(DREAMINA_IMAGE_MODELS['jimeng-image-4.5'].resolutions).toEqual(['2k', '4k']);
+    expect(DREAMINA_IMAGE_MODELS['jimeng-image-5.0pro'].resolutions).toEqual(['1.5k', '2k', '4k']);
+  });
+
+  test('视频模型：text2video 6 个 / image2video 8 个（老代际仅图生视频）', () => {
+    const all = Object.values(DREAMINA_MODELS);
+    expect(all.filter((m) => m.specs.text2video).length).toBe(6);
+    expect(all.filter((m) => m.specs.image2video).length).toBe(8);
+    expect(DREAMINA_MODELS['seedance1.5pro'].specs.text2video).toBeUndefined();
+    expect(DREAMINA_MODELS['seedance1.5pro'].specs.image2video.minDuration).toBe(5);
+    expect(DREAMINA_MODELS['seedance1.0fast'].specs.image2video.maxDuration).toBe(10);
+  });
+});
+
+describe('图生视频（image2video）子命令推导与守卫', () => {
+  test('提供首帧 → 自动推导 image2video，首帧进入 payload.image', () => {
+    const { payload, meta } = buildDreaminaPayload({
+      model: 'seedance2.0fast',
+      prompt: '镜头缓缓推近',
+      image: '/artifacts/a.png',
+      duration: 5,
+      video_resolution: '720p',
+    });
+    expect(payload.subcommand).toBe('image2video');
+    expect(payload.image).toBe('/artifacts/a.png');
+    expect(meta.mode).toBe('image');
+  });
+
+  test('first_frame 同样可作为首帧来源（复用前端 keyframe 字段）', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.0fast',
+      prompt: 'x',
+      first_frame: 'https://a.com/f.png',
+      video_resolution: '720p',
+    });
+    expect(payload.subcommand).toBe('image2video');
+    expect(payload.image).toBe('https://a.com/f.png');
+  });
+
+  test('无首帧 → text2video，且 payload 不含 image', () => {
+    const { payload } = buildDreaminaPayload({ model: 'seedance2.0fast', prompt: 'x', video_resolution: '720p' });
+    expect(payload.subcommand).toBe('text2video');
+    expect(payload.image).toBeUndefined();
+  });
+
+  test('老代际仅支持图生视频：纯文生被 400 拒', () => {
+    expectApiError(400, () => buildDreaminaPayload({ model: 'seedance1.5pro', prompt: 'x', video_resolution: '720p' }));
+  });
+
+  test('老代际图生视频可用，时长按该模型范围（1.5pro 为 5-12s）', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance1.5pro',
+      prompt: 'x',
+      image: '/a.png',
+      duration: 12,
+      video_resolution: '720p',
+    });
+    expect(payload.subcommand).toBe('image2video');
+    expect(payload.duration).toBe(12);
+    expectApiError(400, () =>
+      buildDreaminaPayload({
+        model: 'seedance1.5pro',
+        prompt: 'x',
+        image: '/a.png',
+        duration: 4,
+        video_resolution: '720p',
+      }),
+    );
+  });
+
+  test('尾帧被拒（frames2video 未接入，避免静默忽略素材）', () => {
+    expectApiError(400, () =>
+      buildDreaminaPayload({
+        model: 'seedance2.0fast',
+        prompt: 'x',
+        image: '/a.png',
+        last_frame: '/b.png',
+        video_resolution: '720p',
+      }),
+    );
+  });
+
+  test('参考模式被拒（multimodal2video 未接入）', () => {
+    expectApiError(400, () =>
+      buildDreaminaPayload({ model: 'seedance2.0fast', prompt: 'x', mode: 'reference', video_resolution: '720p' }),
+    );
+  });
+
+  test('2.5 图生视频丢弃 ratio（CLI 拒绝 --ratio），文生视频仍保留', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.5',
+      prompt: 'x',
+      image: '/a.png',
+      duration: 10,
+      video_resolution: '1080p',
+      aspect_ratio: '9:16',
+    });
+    expect(payload.ratio).toBeNull();
+    const { payload: textOne } = buildDreaminaPayload({
+      model: 'seedance2.5',
+      prompt: 'x',
+      duration: 10,
+      video_resolution: '1080p',
+      aspect_ratio: '9:16',
+    });
+    expect(textOne.ratio).toBe('9:16');
+  });
+
+  test('成本预估按子命令取规格：1.5pro 无首帧时无法预估', () => {
+    expect(estimateDreaminaCost('seedance1.5pro', { video_resolution: '720p', duration: 5 }).points).toBeNull();
+    expect(
+      estimateDreaminaCost('seedance1.5pro', { first_frame: 'x', video_resolution: '720p', duration: 5 }).points,
+    ).toBe(25);
   });
 });

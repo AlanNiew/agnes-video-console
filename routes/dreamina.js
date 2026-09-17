@@ -156,6 +156,8 @@ module.exports = function registerDreaminaRoutes(app) {
         size: q.size,
         resolution_type: q.resolution_type,
         count: q.count,
+        // 有首帧 → 按 image2video 取规格（各子命令的分辨率/时长范围不同）
+        first_frame: q.first_frame === '1' ? 'provided' : undefined,
       };
       const threshold = Number(settings.get('dreamina_confirm_threshold', DEFAULT_SETTINGS.dreamina_confirm_threshold));
 
