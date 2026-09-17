@@ -24,6 +24,13 @@ const {
   MAX_INPUT_IMAGES,
 } = require('../core/constants');
 const { ApiError } = require('../core/errors');
+const {
+  FREE_VIDEO_MODEL,
+  FREE_IMAGE_MODEL,
+  clampFreeSeconds,
+  freeVideoSize,
+  isVipLevel,
+} = require('../core/provider-policy');
 
 /* ---------------- URL 工具 ---------------- */
 
@@ -497,12 +504,14 @@ function estimateDreaminaCost(model, params = {}) {
     if (!spec) return { points: null, confidence: 'estimated', breakdown: `${model} 不支持 ${sub}` };
     const resolution = String(b.video_resolution || b.size || spec.resolutions[0]).toLowerCase();
     const duration = Number(b.duration ?? b.seconds ?? 5);
-    const row = DREAMINA_CREDIT_COST.video[resolution];
+    // v2.6.1：**模型覆盖档优先**——同一分辨率下不同代际单价不同（实测 seedance2.0 720p = 8 积分/秒，
+    // 而 seedance2.0fast = 5 积分/秒），只按分辨率取单一值会低报 60%。
+    const row = DREAMINA_CREDIT_COST.videoByModel?.[model]?.[resolution] || DREAMINA_CREDIT_COST.video[resolution];
     if (!row) return { points: null, confidence: 'estimated', breakdown: `未知分辨率 ${resolution}` };
     return {
       points: row.perSecond * duration,
       confidence: row.source,
-      breakdown: `${resolution} · ${duration}s × ${row.perSecond} 积分/秒`,
+      breakdown: `${model} · ${resolution} · ${duration}s × ${row.perSecond} 积分/秒`,
     };
   }
 
@@ -531,9 +540,14 @@ function estimateDreaminaCost(model, params = {}) {
  *
  * 无法预估（未知规格）时按最保守处理，返回 confirm。
  *
+ * v2.6.1：三档语义**保持不变**（前端与 e2e 依赖），额外返回**回退建议**（additive 字段）：
+ *   `free_model`        —— 免费档（Agnes）等效模型
+ *   `fallback`          —— 命中"该走免费档"时给出 {model, reason}（额度不足 / 账户无 VIP）
+ * 调用方（前端护栏、worker）据此把同一份创意改投免费档，而不是把制作卡死。
+ *
  * @param {string} model
  * @param {object} params
- * @param {{threshold?:number, remainingCredit?:number|null}} [opts]
+ * @param {{threshold?:number, remainingCredit?:number|null, vipLevel?:string}} [opts]
  */
 function checkDreaminaGuard(model, params = {}, opts = {}) {
   const threshold = Number.isFinite(Number(opts.threshold)) ? Number(opts.threshold) : DREAMINA_DEFAULT_THRESHOLD;
@@ -541,14 +555,99 @@ function checkDreaminaGuard(model, params = {}, opts = {}) {
   const est = estimateDreaminaCost(model, params);
 
   if (!est) return null; // 非即梦模型：不套护栏
-  const base = { points: est.points, confidence: est.confidence, breakdown: est.breakdown, threshold, remaining };
+  const isVideo = Boolean(DREAMINA_MODELS[model]);
+  const freeModel = isVideo ? FREE_VIDEO_MODEL : FREE_IMAGE_MODEL;
+  const base = {
+    points: est.points,
+    confidence: est.confidence,
+    breakdown: est.breakdown,
+    threshold,
+    remaining,
+    kind: isVideo ? 'video' : 'image',
+    free_model: freeModel,
+  };
 
   if (est.points === null) return { ...base, level: 'confirm' }; // 无法预估 → 保守确认
   if (remaining !== null && Number.isFinite(Number(remaining)) && est.points > Number(remaining)) {
-    return { ...base, level: 'block' };
+    return { ...base, level: 'block', fallback: { model: freeModel, reason: 'insufficient-credit' } };
+  }
+  // 账户无 VIP：即梦付费档不该由本账户承担 → 给出回退建议（level 仍按额度档位，前端据此提示）
+  if (opts.vipLevel !== undefined && !isVipLevel(opts.vipLevel)) {
+    const level = est.points > threshold ? 'confirm' : 'pass';
+    return { ...base, level, fallback: { model: freeModel, reason: 'not-vip' } };
   }
   if (est.points > threshold) return { ...base, level: 'confirm' };
   return { ...base, level: 'pass' };
+}
+
+/**
+ * 即梦任务 → 免费档（Agnes）任务映射（纯函数）。
+ *
+ * 用途：积分不足 / 生成失败 / 非 VIP / 环境未就绪时，把**同一份创意**改投免费档，
+ * 由调用方把返回值写回 tasks 行（model + request_json），制作不中断。
+ *
+ * 映射规则：
+ *   - 提示词原样保留（改投不降级创意）；
+ *   - 视频时长钳到免费档 4–12s；分辨率落到 Flash 仅支持的 720P；
+ *   - 首帧**只在是公网 http(s) URL 时**保留（转 `keyframe` 模式）；本地路径 Agnes 取不到 → 降级纯文生并记 note；
+ *   - 图片按次计费与 count 无关，count 原样带回。
+ *
+ * @param {'video'|'image'} kind
+ * @param {object} job 任务行（读 prompt / seconds / size / aspect_ratio / request_json）
+ * @returns {{model:string,size:string,seconds?:string,aspect_ratio?:string,request_json:object,notes:string[]}|null}
+ *          无提示词可映射时返回 null
+ */
+function dreaminaToAgnes(kind, job = {}) {
+  const rj = job.request_json || {};
+  const prompt = String(job.prompt || rj.prompt || '').trim();
+  if (!prompt) return null;
+  const notes = [];
+
+  if (kind === 'image') {
+    const raw = String(job.size || '').toUpperCase();
+    const size = IMAGE_SIZES.includes(raw) ? raw : '1K';
+    if (raw && size !== raw) notes.push(`分辨率 ${job.size} → ${size}`);
+    const ratio = IMAGE_RATIOS.includes(String(job.aspect_ratio || '')) ? String(job.aspect_ratio) : '1:1';
+    const count = [1, 2, 3, 4].includes(Number(rj.count)) ? Number(rj.count) : 1;
+    return {
+      model: FREE_IMAGE_MODEL,
+      size,
+      ratio,
+      request_json: {
+        model: FREE_IMAGE_MODEL,
+        prompt,
+        size,
+        ratio,
+        extra_body: { response_format: 'url' },
+        count,
+        image_kind: rj.image_kind || null,
+      },
+      notes,
+    };
+  }
+
+  // —— 视频 ——
+  const rawSeconds = job.seconds ?? rj.duration;
+  const seconds = clampFreeSeconds(rawSeconds);
+  if (String(rawSeconds) !== String(seconds)) notes.push(`时长 ${rawSeconds}s → ${seconds}s（免费档 4–12s）`);
+  const rawSize = job.size || rj.videoResolution;
+  const size = freeVideoSize(rawSize && String(rawSize).toLowerCase() === '720p' ? '720P' : rawSize);
+  if (rawSize && String(rawSize).toLowerCase() !== size.toLowerCase()) notes.push(`分辨率 ${rawSize} → ${size}`);
+  const aspect_ratio = ASPECT_RATIOS.includes(String(job.aspect_ratio || '')) ? String(job.aspect_ratio) : '16:9';
+  const frame = isHttpUrl(rj.image) ? String(rj.image).trim() : '';
+  if (rj.image && !frame) notes.push('首帧为本地路径/不可达 URL → 降级为纯文生');
+
+  const request_json = {
+    model: FREE_VIDEO_MODEL,
+    prompt,
+    mode: frame ? 'keyframe' : 'text',
+    seconds: String(seconds),
+    size,
+    aspect_ratio,
+    n: 1,
+  };
+  if (frame) request_json.first_frame = frame;
+  return { model: FREE_VIDEO_MODEL, size, seconds: String(seconds), aspect_ratio, request_json, notes };
 }
 
 module.exports = {
@@ -565,4 +664,5 @@ module.exports = {
   buildDreaminaImagePayload,
   estimateDreaminaCost,
   checkDreaminaGuard,
+  dreaminaToAgnes,
 };

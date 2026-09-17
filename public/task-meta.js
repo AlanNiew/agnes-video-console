@@ -2,7 +2,7 @@
  * GET /api/meta 单一事实来源：模块级 META + 查询函数 + 新建任务/设置弹窗下拉填充。
  * 依赖：common.js（$、esc）。被 new-task / settings-panel / task-center 显式 import。
  */
-import { $, esc, toast, api } from './common.js';
+import { $, esc, api } from './common.js';
 
 /* ---------------- 模型元数据（GET /api/meta，单一事实来源；加载完成前的静态兜底） ---------------- */
 let META = null;
@@ -203,12 +203,13 @@ async function passDreaminaGuard(body, kind) {
     const g = await api('/api/dreamina/cost?' + q.toString());
     if (!g?.ok) return true;
     if (g.level === 'block') {
-      toast(
-        `积分可能不足：本次约需 ${g.points}${g.remaining != null ? `，剩余 ${g.remaining}` : ''}。` +
-          '请改用 Agnes 模型或先充值',
-        'err',
+      // v2.6.1：额度不足不再硬拦 —— 服务端会按「回退免费档」规则改用 Agnes 完成本次生成，
+      // 这里如实告知并让用户决定是否继续（避免"以为提交了即梦、实际一直排不上"）。
+      return window.confirm(
+        '即梦积分可能不足\n\n' +
+          `本次约需 ${g.points} 积分${g.remaining != null ? `，剩余 ${g.remaining}` : ''}。\n` +
+          `继续提交将自动改用免费档（${g.free_model || 'Agnes'}）完成这次生成。\n\n继续？`,
       );
-      return false;
     }
     if (g.level === 'confirm') {
       const conf =

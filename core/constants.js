@@ -253,6 +253,20 @@ const DREAMINA_CREDIT_COST = {
     '1080p': { perSecond: 15, source: 'estimated' },
     '4k': { perSecond: 40, source: 'estimated' },
   },
+  /**
+   * 视频**按模型覆盖**档（优先级高于上面的分辨率默认档）。
+   *
+   * 为什么需要：同一分辨率下，不同代际/子命令的单价并不相同，
+   * 只按分辨率取单一值必然估错，而预估数字正是成本护栏弹给用户看的东西。
+   *
+   * 实测标定（E06《祖母の椅子》英雄镜头，镜6 / 10s / 720p）：
+   *   `seedance2.0`    720p = **8 积分/秒**（10s 实扣 80 积分）
+   *   `seedance2.0fast` 720p = 5 积分/秒（沿用 video['720p'] 默认档）
+   *   —— **同为 720p 相差 60%**，此前按分辨率估 50 分、实扣 80 分。
+   */
+  videoByModel: {
+    'seedance2.0': { '720p': { perSecond: 8, source: 'measured' } },
+  },
   image: {
     // 实测：3.1/1k = 1 积分（一次请求返回 4 张候选，按「次」计费）
     'jimeng-image-3.1': { perRequest: { '1k': 1, '2k': 2 }, source: 'measured' },

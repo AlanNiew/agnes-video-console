@@ -14,7 +14,8 @@ const dreamina = require('../clients/dreamina');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { IMAGE_MODEL, providerOf } = require('../core/constants');
-const { safeUrl } = require('../services/payloads');
+const { safeUrl, dreaminaToAgnes } = require('../services/payloads');
+const { shouldFallbackFromDreamina, fallbackReasonText } = require('../core/provider-policy');
 
 const TICK_MS = 5000;
 const MAX_ATTEMPTS = 5;
@@ -302,6 +303,58 @@ class ImageWorker {
   }
 
   /**
+   * v2.6.1 即梦图片不可用 / 失败 → **改投免费档（Agnes）**，制作不中断。
+   *
+   * 命中条件（见 core/provider-policy.js）：积分不足 / 生成失败 / 非 VIP / 环境未就绪 / 合规闸门。
+   * 改投是**原地改写任务行**（model + request_json + 清掉即梦 submit_id），状态回到 queued，
+   * 下一轮 tick 由 Agnes 同步路径执行——不新增状态、不新增路由，前端列表无需改动。
+   *
+   * @param {object} t 任务行
+   * @param {string} reason 回退原因（provider-policy 的 reason 词表）
+   * @returns {boolean} true=已改投（调用方直接 return）；false=未改投（调用方按原逻辑处理）
+   */
+  fallbackDreaminaImage(t, reason) {
+    if (settings.get('dreamina_fallback', DEFAULT_SETTINGS.dreamina_fallback) !== '1') return false;
+    const why = fallbackReasonText(reason);
+    const mapped = dreaminaToAgnes('image', t);
+    if (!mapped) {
+      log('warn', `图片任务 #${t.id} ${why}，但没有可映射的提示词，无法改投免费档`);
+      return false;
+    }
+    // 回退路径本身需要 Agnes API Key；缺 Key 时如实落 failed，避免任务永远挂在队列里
+    if (!settings.get('api_key', '')) {
+      log('warn', `图片任务 #${t.id} ${why}，但未配置 Agnes API Key，回退路径不可用`);
+      return false;
+    }
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      model: mapped.model,
+      size: mapped.size,
+      aspect_ratio: mapped.ratio,
+      request_json: mapped.request_json,
+      status: 'queued',
+      progress: 0,
+      video_id: null, // 清掉即梦 submit_id 标记 → 交回 Agnes 同步路径
+      task_id: null,
+      error_message: `已回退免费档（${why}${mapped.notes.length ? '；' + mapped.notes.join('；') : ''}）`,
+    });
+    log('warn', `图片任务 #${t.id} ${why} → 改投免费档 ${mapped.model}（创意提示词不变），继续制作`);
+    return true;
+  }
+
+  /**
+   * 即梦分支的「瞬时错误退避重试 → 重试耗尽改投免费档」统一入口。
+   * @returns {boolean} 恒为 true（本轮已处理）
+   */
+  backoffDreaminaOrFallback(t, detail, kind) {
+    const prev = this.retryUntil.get(t.id);
+    const attempts = (prev?.attempts || 0) + 1;
+    const decision = shouldFallbackFromDreamina(kind, { attempts, maxAttempts: MAX_ATTEMPTS });
+    if (decision.fallback && this.fallbackDreaminaImage(t, kind)) return true;
+    return this.backoffOrGiveUp(t, detail);
+  }
+
+  /**
    * 即梦图片两阶段状态机（复用 tasks 的 queued 状态承载「已提交待查询」）：
    *   阶段一（video_id 为空）：提交 → 把 submit_id 存进 video_id，状态**保持 queued**，
    *     等下一轮 tick 由 pendingImages() 捞回来查询。之所以不置 in_progress，是因为
@@ -324,6 +377,8 @@ class ImageWorker {
       // 环境 / 合规未就绪：非任务错误，保留 queued 等人工处理后自动续跑（绝不判死）。
       // need-web-confirm = AigcComplianceConfirmationRequired，需先到即梦 Web 端完成首次生成确认。
       if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
+        // v2.6.1：环境/合规不可用 → 优先改投免费档（台账 §七 规则 4：合规闸门「不等它」）
+        if (this.fallbackDreaminaImage(t, r.kind)) return;
         const prev = this.retryUntil.get(t.id);
         this.retryUntil.set(t.id, {
           until: Date.now() + DREAMINA_ENV_BACKOFF_MS,
@@ -338,9 +393,10 @@ class ImageWorker {
         return;
       }
       if (r.kind === 'timeout' || r.kind === 'spawn-error') {
-        return this.backoffOrGiveUp(t, `即梦提交异常（${r.kind}）：${r.error}`);
+        return this.backoffDreaminaOrFallback(t, `即梦提交异常（${r.kind}）：${r.error}`, r.kind);
       }
-      // 参数 / 业务错误：不可恢复
+      // 参数 / 业务错误（含积分不足）：v2.6.1 先尝试改投免费档，改投不了才落 failed
+      if (this.fallbackDreaminaImage(t, r.kind)) return;
       this.retryUntil.delete(t.id);
       tasks.update(t.id, {
         status: 'failed',
@@ -384,13 +440,16 @@ class ImageWorker {
 
     if (!r.ok) {
       if (r.kind === 'not-installed' || r.kind === 'not-logged-in') {
+        // v2.6.1：查询阶段环境不可用 → 改投免费档（不再无限等待人工）
+        if (this.fallbackDreaminaImage(t, r.kind)) return;
         this.retryUntil.set(t.id, { until: Date.now() + DREAMINA_ENV_BACKOFF_MS, attempts: 1 });
         log('warn', `图片任务 #${t.id} 即梦环境未就绪，暂停查询`);
         return;
       }
       if (r.kind === 'timeout' || r.kind === 'spawn-error') {
-        return this.backoffOrGiveUp(t, `即梦查询异常（${r.kind}）：${r.error}`);
+        return this.backoffDreaminaOrFallback(t, `即梦查询异常（${r.kind}）：${r.error}`, r.kind);
       }
+      if (this.fallbackDreaminaImage(t, r.kind)) return;
       this.retryUntil.delete(t.id);
       tasks.update(t.id, {
         status: 'failed',
@@ -409,7 +468,8 @@ class ImageWorker {
     if (genStatus === 'success') {
       const urls = dreamina.extractImageUrls(j);
       if (!urls.length) {
-        // 成功却解析不到地址：落 failed 并保留原始响应，便于按真实字段名补充解析
+        // 成功却解析不到地址：v2.6.1 先改投免费档；改投失败再落 failed 并保留原始响应
+        if (this.fallbackDreaminaImage(t, 'no-result')) return;
         this.retryUntil.delete(t.id);
         tasks.update(t.id, {
           status: 'failed',
@@ -436,6 +496,8 @@ class ImageWorker {
     }
 
     if (genStatus === 'fail' || genStatus === 'failed') {
+      // v2.6.1：即梦侧生成失败 → 改投免费档重做，而不是直接判死
+      if (this.fallbackDreaminaImage(t, 'gen-failed')) return;
       this.retryUntil.delete(t.id);
       tasks.update(t.id, {
         status: 'failed',

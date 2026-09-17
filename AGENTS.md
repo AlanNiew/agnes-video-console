@@ -6,7 +6,7 @@
 
 ```bash
 npm test              # = jest 单测 + e2e 冒烟（提交前必跑）
-npm run test:unit     # 仅 74 项单测
+npm run test:unit     # 仅单测（jest，13 套件；不触网、不 spawn CLI、不扣积分）
 npm run test:mock     # 仅 e2e（自建 mock 上游 :8392，应用拉起于 :8391，约 2–4min：含全自动成片闭环 + 3 次真实 ffmpeg 渲染）
 npx jest test/unit/payloads.test.js   # 跑单个测试文件
 npm run lint          # eslint（0 errors 才算过；11 个既有 warning 勿需修）
@@ -32,8 +32,8 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 
 - **Node ≥ 22.13**（`node:sqlite`，API Key 存 SQLite，零原生编译）。
 - **e2e 需要本机装 ffmpeg + ffprobe 且在 PATH**：渲染用例跑真实 ffmpeg 合成（含响度补偿与封面）；ffprobe 用于 TTS 时长探测，缺失时该用例静默跳过。
-- **即梦为可选上游**：需本机装官方 `dreamina` CLI 并完成登录（`curl -fsSL https://jimeng.jianying.com/cli | bash`，Windows 落到 `~/bin/dreamina.exe`，可用 `DREAMINA_CLI_PATH` 覆盖）。缺失时即梦任务保留 queued 走 5 分钟退避（`not-installed` / `not-logged-in` / `need-web-confirm`），**Agnes 主链路不受任何影响**。登录为 OAuth Device Flow（`login --headless` + `login checklogin --device_code=…`），授权码有效期约 10 分钟。
-- **即梦两条运维约束（官方《即梦 CLI 体验指南》）**：① **合规**——视频生成须先在即梦 Web 端用该模型完成一次生成，否则 CLI 返回 `AigcComplianceConfirmationRequired`（本系统归类为 `need-web-confirm`：保留入队等人工处理，**绝不判死**）；② **登录**——官方明确「不要通过 Agent 完成登录」（Agent 启动 CLI 时 `dreamina login` 打印的授权 URL 有误），应先在浏览器登录即梦 Web 端，再手动执行 `dreamina login` 并点授权。
+- **即梦为可选上游**：需本机装官方 `dreamina` CLI 并完成登录（`curl -fsSL https://jimeng.jianying.com/cli | bash`，Windows 落到 `~/bin/dreamina.exe`，可用 `DREAMINA_CLI_PATH` 覆盖）。**v2.6.1 起默认自动回退**：`not-installed` / `not-logged-in` / `need-web-confirm` 等原因触发即改投 Agnes 免费档继续制作（设 `dreamina_fallback='0'` 才回到旧的「保留 queued 走 5 分钟退避」行为），**Agnes 主链路始终不受影响**。登录为 OAuth Device Flow（`login --headless` + `login checklogin --device_code=…`），授权码有效期约 10 分钟。
+- **即梦两条运维约束（官方《即梦 CLI 体验指南》）**：① **合规**——视频生成须先在即梦 Web 端用该模型完成一次生成，否则 CLI 返回 `AigcComplianceConfirmationRequired`（本系统归类为 `need-web-confirm`；**v2.6.1 默认不等它**——直接改投免费档出片，人工解锁后再补拍）；② **登录**——官方明确「不要通过 Agent 完成登录」（Agent 启动 CLI 时 `dreamina login` 打印的授权 URL 有误），应先在浏览器登录即梦 Web 端，再手动执行 `dreamina login` 并点授权。
 - **db.js import 即副作用**：require 时就 mkdir 数据目录并打开 SQLite。任何单测须先设 `DATA_DIR`/`DB_PATH` 指向临时目录（见 `test/unit/setup.js`，jest `setupFiles` 已处理，勿改为 `setupFilesAfterEach`）。
 - 429 退避单测加速：设 `SUBMIT_RATE_LIMIT_BASE_MS`（e2e 用 500 代替默认 60s）。
 
@@ -68,13 +68,14 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
 - 74 条 API 路由（路径 × 方法）的路径/状态码/响应结构是公开契约（`/api/openapi.json` 自描述 + e2e 全覆盖），重构时零容忍变更。
 - 上游 API 校验逻辑集中在 `services/payloads.js`（buildV25Payload / buildV2Payload / buildImagePayload / buildDreaminaPayload / buildDreaminaImagePayload）。
 - **多上游 provider 分发（零 schema 变更）**：模型 → 上游由 `core/constants.js` 的 `providerOf(model)` 推导（查 `DREAMINA_MODELS` / `DREAMINA_IMAGE_MODELS`，未命中即 Agnes）。submitter / poller / task-queue / image-worker / routes 均据此分流。即梦 `submit_id` 复用 `tasks.video_id` 列承载（poller 的 `active()` 靠它判定「已提交」，故 `activeTasks` 已加 `kind` 过滤，避免抢走即梦图片任务）。
-- **即梦实测标定（成本护栏依据）**：图片 `jimeng-image-3.1` / 1k = **1 积分**，且一次请求返回 **4 张候选**（即便传 `generate_num:1`）；视频 5s/720p = **25 积分**。成功响应结构统一为 `result_json.images[].image_url` / `result_json.videos[].video_url`（提取器：`clients/dreamina.js` 的 `extractImageUrls` / `extractVideoUrls`，含多层兜底）。standard 会员 `priority:3` 偏低，实测视频排队超过 1 小时。
+- **即梦实测标定（成本护栏依据）**：图片 `jimeng-image-3.1` / 1k = **1 积分**，且一次请求返回 **4 张候选**（即便传 `generate_num:1`）；视频 5s/720p = **25 积分**。**⚠️ 单价按模型不同**：实测 `seedance2.0` 720p = **8 积分/秒**（10s 实扣 80），而 `seedance2.0fast` = 5 积分/秒——故价目表用 `DREAMINA_CREDIT_COST.videoByModel` 做模型覆盖档，**勿再按分辨率取单一值**（曾因此低报 60%）。成功响应结构统一为 `result_json.images[].image_url` / `result_json.videos[].video_url`（提取器：`clients/dreamina.js` 的 `extractImageUrls` / `extractVideoUrls`，含多层兜底）。standard 会员 `priority:3` 偏低，实测视频排队超过 1 小时。
 - **即梦模型清单以 CLI help 的「公开支持集」为准**（`dreamina <子命令> -h`）：图片 text2image 共 9 档（3.0/3.1/4.0/4.1/4.5/4.6/4.7/5.0/5.0Pro），视频**因各子命令支持集不同**故用 `specs` 按子命令声明（text2video 6 个；image2video 8 个，多出 `seedance1.0fast` / `seedance1.5pro` 两个仅图生的老代际）。后端白名单更宽（实测含 `3.0_fast`/`3.5pro`/`seedance1.0` 等未公开项），但官方明确「listed model values are the CLI's public support set」，故**不采用未公开项**。
 - **`image2video` 的 `--image` 只接受本地文件路径**（官方 help 原文「local first-frame image path」）：`workers/submitter.js` 的 `ensureLocalImage` 负责在提交前把远端 URL / `/artifacts/xxx` 落成本地绝对路径，取不到则任务落 `submit_error`（不静默降级）。子命令由「有无首帧图」自动推导：有 → image2video，无 → text2video。
-- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产：
-  · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选），CLI 不可用时自动回退 Agnes；
+- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（**会过期的每日额度优先花在封面/关键镜头上**）：
+  · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；
   · **封面 / 关键镜头**可手动升级（任务中心的「⬆ 升级即梦」按钮，需 `retry_count ≥ 3` 且当前为 Agnes）。
-  · 成本护栏三档（`dreamina_confirm_threshold`，默认 10 积分）：预估 ≤ 阈值静默提交 / > 阈值弹窗确认 / > 剩余积分强阻断；仅作用于即梦，Agnes 零打扰。
+  · **回退规则（v2.6.1，设置项 `dreamina_fallback` 默认开）**：积分不足 / 生成失败 / 非 VIP / 环境未就绪 / 合规闸门 → 由 `core/provider-policy.js` 判定后**自动改投免费档**（原地改 `tasks.model` + `request_json`，状态回 `queued`），**不新增状态与路由**；关闭该设置项即回到「退避并等人工处理」。
+  · 成本护栏三档（`dreamina_confirm_threshold`，默认 10 积分）：预估 ≤ 阈值静默提交 / > 阈值弹窗确认 / > 剩余积分给出**回退建议**（`fallback` 字段，前端改为告知"将继续并自动改用免费档"）；仅作用于即梦，Agnes 零打扰。
   · 即梦模型**不混入** `/api/meta` 的 `models`（避免污染 Agnes 下拉契约），而是走独立的 `dreamina` 字段供前端分组展示（含按子命令的 `specs`）。
 - **e2e 必须隔离即梦**：`test/mock-e2e.js` 在 `require('../server')` 之前把 `DREAMINA_CLI_PATH` 指向不存在的路径，使 `isInstalled()` 返回 false——否则在**本机装了 CLI 且已登录**的环境中，全自动成片的角色图会真实调用即梦并**扣会员积分**。
 - **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。

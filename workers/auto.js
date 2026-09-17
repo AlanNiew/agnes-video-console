@@ -43,7 +43,21 @@ const {
   ensureCharacterRefPrefix,
   isMechanicalPromptFix,
 } = require('../services/prompts');
-const { buildPayload, buildDreaminaImagePayload } = require('../services/payloads');
+const { buildPayload, buildDreaminaImagePayload, estimateDreaminaCost } = require('../services/payloads');
+const { dreaminaUsable, fallbackReasonText } = require('../core/provider-policy');
+
+/**
+ * v2.6.1 即梦状态缓存（60s）：`dreamina.credit()` 要 spawn CLI（约 1s），
+ * 而本阶段每轮 tick 都会跑，故必须缓存而不是每轮都问一次。
+ */
+let dreaminaStatusCache = { at: 0, data: null };
+async function cachedDreaminaStatus(ttlMs = 60_000) {
+  if (dreaminaStatusCache.data && Date.now() - dreaminaStatusCache.at < ttlMs) return dreaminaStatusCache.data;
+  const r = await dreamina.credit();
+  const data = r.ok ? r.data : null;
+  dreaminaStatusCache = { at: Date.now(), data };
+  return data;
+}
 const { submitTask } = require('../services/task-queue');
 const { createPipelineService } = require('../services/pipeline');
 const renderer = require('./render'); // 仅用 hasFfmpeg 做渲染前置预检（渲染动作仍由 render worker 单实例执行）
@@ -395,11 +409,37 @@ class AutoPipeline {
     const prompt = `角色立绘：${charDesc}。全身或半身构图，干净背景，正面站立，电影级写实，高细节`;
 
     // 阶段 6：角色图优先走**即梦主力档**（高性价比：实测 1 积分/次 ≈ 4 张候选），
-    // 未安装 CLI（含开关关闭）时**自动回退** Agnes 免费档，全自动流程不中断。
+    // 但 v2.6.1 起**提交前先判可用性**——未安装 / 未登录 / 非 VIP / 积分不足 / 开关关闭
+    // 一律直接走免费档，不再"先提交即梦、再由 worker 回退"（少绕一圈，也不白占队列）。
     // 注意：即梦不需要 Agnes API Key，故仅在回退分支校验 Key。
-    const useDreamina =
-      settings.get('dreamina_auto_character', DEFAULT_SETTINGS.dreamina_auto_character) === '1' &&
-      dreamina.isInstalled();
+    const dreaminaEnabled = settings.get('dreamina_auto_character', DEFAULT_SETTINGS.dreamina_auto_character) === '1';
+    let useDreamina = false;
+    let skipReason = null;
+    if (!dreaminaEnabled) {
+      skipReason = 'disabled';
+    } else if (!dreamina.isInstalled()) {
+      skipReason = 'not-installed';
+    } else {
+      const status = await cachedDreaminaStatus();
+      const usable = dreaminaUsable({
+        installed: true,
+        loggedIn: status?.logged_in,
+        vipLevel: status?.vip_level,
+        enabled: true,
+      });
+      const est = estimateDreaminaCost(DREAMINA_IMAGE_DEFAULT_MODEL, { size: '1k', count: 1 });
+      const credit = Number(status?.total_credit);
+      if (!usable.usable) {
+        skipReason = usable.reason;
+      } else if (est?.points != null && Number.isFinite(credit) && est.points > credit) {
+        skipReason = 'insufficient-credit'; // 积分不足：不提交即梦，直接用免费档
+      } else {
+        useDreamina = true;
+      }
+    }
+    if (!useDreamina) {
+      log('info', `项目 #${projectId} 自动成片：角色图走免费档（${fallbackReasonText(skipReason)}）`);
+    }
     let model;
     let size;
     let requestJson;

@@ -36,5 +36,6 @@ const DEFAULT_SETTINGS = {
   character_library: '[]', // v2.5 角色库（JSON 数组：跨项目复用的角色资产——名/图/服色锚/提示词/所属系列）
   dreamina_confirm_threshold: '10', // 即梦成本护栏：预估积分 > 此阈值时前端需弹窗确认（0 = 每次即梦调用都确认）
   dreamina_auto_character: '1', // 全自动成片的角色图阶段用即梦主力档（1 积分/次 ≈ 4 张候选）；'0' = 用 Agnes 免费档
+  dreamina_fallback: '1', // v2.6.1 即梦不可用/失败时**自动改投免费档**（积分不足 / 生成失败 / 非 VIP / 环境未就绪）；'0' = 保留旧的退避等人工
 };
 module.exports = { settings, DEFAULT_SETTINGS };

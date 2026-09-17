@@ -27,14 +27,42 @@
 - e2e：发布包归档产物（B站/抖音 各 3 件 + README、封面画幅、竖屏时长与成片一致）+ 新路由契约
   （201 / 幂等 / 404）+ 真实 ffmpeg 竖屏切片（4:3 → 720×1280、音轨流拷贝）。
 
-## [Unreleased]
+## [2.6.1] - 2026-09-17
 
 ### Added
+
+- **即梦不可用 / 失败 → 自动回退免费档**（新增纯策略模块 `core/provider-policy.js`，
+  由 `workers/submitter.js`（视频）与 `workers/image-worker.js`（图片）接线）：
+  命中任一条件即**原地改投免费档（Agnes）**——只改 `tasks` 行的 `model` + `request_json` 并清掉即梦
+  `submit_id`，状态回到 `queued` 交给免费路径继续，**不新增状态、不新增路由、前端列表无需改动**：
+  - 环境未就绪（未装 CLI / 未登录）、**合规闸门 `need-web-confirm`**（按台账 §七「不等它」）、
+    参数错、CLI 业务错（**含积分不足**）→ **立即回退**；
+  - 超时 / 进程异常 → 先退避重试，**重试耗尽再回退**（避免把制作卡死在等人工上）；
+  - 首帧图取不到本地文件（即梦 CLI 的 `--image` 只吃本地路径）→ 回退（Agnes 可直接引用远端 URL）。
+    改投时**提示词原样保留**；时长钳到免费档 4–12s、分辨率落到 720P；首帧仅在是公网 http(s) URL 时保留
+    （转 `keyframe` 模式），本地路径则降级纯文生并在任务备注写明原因。
+- **`dreamina_fallback` 设置项**（默认 `'1'` = 开）：关闭后保留旧的「退避并等人工处理」行为，
+  便于排查与回溯对比；`GET/PUT /api/settings` 已暴露。
+- **全自动成片角色图阶段增加「提交前预检」**（`workers/auto.js`）：未安装 / 未登录 / 非 VIP / 积分不足
+  → **直接走免费档**并记录原因（不再"先提交即梦、再由 worker 回退"，少绕一圈也不白占队列）；
+  即梦状态带 60s 缓存，避免每轮 tick 都 spawn CLI。
+- 单元测试 `test/unit/provider-fallback.test.js`（价目表分档 / 护栏回退建议 / 可用性 / 回退决策 /
+  即梦→免费档映射，共 24 例）。**全部纯函数校验：不 spawn CLI、不消耗积分。**
 
 - **分支治理规范与机械护栏**：`docs/BRANCHING.md`（分支模型 / 路径归属 / 会话纪律 / `git worktree` 并行手册 /
   `DATA_DIR` 与单实例工作锁约定）+ `tools/branch-guard.js`（按当前分支校验提交路径，越界拦截）+
   `.githooks/pre-commit`（启用：`git config core.hooksPath .githooks`）+ 单元测试。
   动机：创作与平台提交在同一支线上交织，且共享工作区里 `git add -A` 会把别人的未提交改动卷进提交。
+
+### Changed
+
+- **即梦价目表按模型分档**（`core/constants.js` 新增 `videoByModel`）：实测 `seedance2.0` 720p =
+  **8 积分/秒**（E06 英雄镜头 10s 实扣 **80 积分**），而 `seedance2.0fast` 仍为 5 积分/秒（沿用分辨率默认档）
+  —— **同一分辨率相差 60%**，此前只按分辨率取单一值会低报 60%，而该数字正是成本护栏弹给用户看的。
+- **成本护栏返回「回退建议」**（`services/payloads.js`）：三档语义（`pass` / `confirm` / `block`）**保持不变**，
+  以 additive 字段新增 `kind` / `free_model` / `fallback { model, reason }`；**非 VIP 账户**不再默认消费付费档。
+- **前端护栏不再硬拦**（`public/task-meta.js`）：额度不足时改为明确告知"继续将自动改用免费档"，由用户决定，
+  避免"以为提交了即梦、其实永远排不上"。
 
 ### Fixed
 

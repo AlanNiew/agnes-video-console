@@ -7,7 +7,7 @@
  * - 429 / 网络错误 / 5xx 自动指数退避重试，重试耗尽才落 submit_error
  * - 其余 4xx（鉴权/参数等）不可恢复，直接 submit_error
  */
-const { settings, tasks } = require('../db');
+const { settings, tasks, DEFAULT_SETTINGS } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
 const dreamina = require('../clients/dreamina');
@@ -17,6 +17,8 @@ const fs = require('node:fs');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
 const { providerOf } = require('../core/constants');
+const { dreaminaToAgnes } = require('../services/payloads');
+const { shouldFallbackFromDreamina, fallbackReasonText } = require('../core/provider-policy');
 
 /**
  * 即梦 CLI 的 `--image` 只接受**本地文件路径**（官方 help 原文「local first-frame image path」）。
@@ -138,6 +140,60 @@ class Submitter {
     log('error', `任务 #${taskId} 提交失败：${message}`);
   }
 
+  /**
+   * v2.6.1 即梦视频不可用 / 失败 → **改投免费档（Agnes）**。
+   *
+   * 命中条件（core/provider-policy.js）：积分不足 / 生成失败 / 非 VIP / 环境未就绪 / 合规闸门 / 首帧取不到本地文件。
+   * 原地改写任务行（model + request_json + 清掉即梦 submit_id 与退避），状态回到 queued，
+   * 下一轮 tick 由 Agnes HTTP 路径提交——不新增状态、不新增路由。
+   *
+   * @returns {boolean} true=已改投（调用方直接 return）；false=未改投（调用方按原逻辑处理）
+   */
+  fallbackDreaminaVideo(t, reason) {
+    if (settings.get('dreamina_fallback', DEFAULT_SETTINGS.dreamina_fallback) !== '1') return false;
+    const why = fallbackReasonText(reason);
+    const mapped = dreaminaToAgnes('video', t);
+    if (!mapped) {
+      log('warn', `任务 #${t.id} ${why}，但没有可映射的提示词，无法改投免费档`);
+      return false;
+    }
+    if (!settings.get('api_key', '')) {
+      log('warn', `任务 #${t.id} ${why}，但未配置 Agnes API Key，回退路径不可用`);
+      return false;
+    }
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      model: mapped.model,
+      seconds: mapped.seconds,
+      size: mapped.size,
+      aspect_ratio: mapped.aspect_ratio,
+      request_json: mapped.request_json,
+      status: 'queued',
+      progress: 0,
+      task_id: null, // 清掉即梦 submit_id
+      video_id: null, // poller 靠它判定「已提交」，必须清空才会走 Agnes 轮询
+      submit_response: null,
+      error_message: `已回退免费档（${why}${mapped.notes.length ? '；' + mapped.notes.join('；') : ''}）`,
+    });
+    log(
+      'warn',
+      `任务 #${t.id} ${why} → 改投免费档 ${mapped.model}（创意提示词不变${mapped.notes.length ? '；' + mapped.notes.join('；') : ''}），继续制作`,
+    );
+    return true;
+  }
+
+  /**
+   * 即梦分支的「瞬时错误退避重试 → 重试耗尽改投免费档」统一入口。
+   * @returns {boolean} 恒为 true（本轮已处理）
+   */
+  backoffDreaminaOrFallback(t, detail, kind, attempts) {
+    const decision = shouldFallbackFromDreamina(kind, { attempts, maxAttempts: MAX_ATTEMPTS });
+    if (decision.fallback && this.fallbackDreaminaVideo(t, kind)) return true;
+    this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
+    log('warn', `任务 #${t.id} 即梦提交异常（第 ${attempts} 次，${kind}）：${detail}`);
+    return true;
+  }
+
   async submitOne(t) {
     // provider 分流：即梦走本地 CLI（无 apiKey 概念，登录态由 CLI 保管），Agnes 走 HTTP
     if (providerOf(t.model) === 'dreamina') {
@@ -238,6 +294,8 @@ class Submitter {
     if (payload.image) {
       const local = await ensureLocalImage(payload.image);
       if (!local) {
+        // v2.6.1：即梦 CLI 只吃本地首帧 —— Agnes 可直接引用远端 URL，故改投免费档而不是判死
+        if (this.fallbackDreaminaVideo(t, 'bad-args')) return;
         this.fail(
           t.id,
           `首帧图无法落到本地（即梦 CLI 的 --image 只接受本地文件）：${String(payload.image).slice(0, 120)}`,
@@ -254,6 +312,8 @@ class Submitter {
       r = await dreamina.submitVideo(payload);
     } catch (e) {
       if (attempts >= MAX_ATTEMPTS) {
+        // v2.6.1：重试耗尽 → 改投免费档，而不是把制作卡死
+        if (this.fallbackDreaminaVideo(t, 'spawn-error')) return;
         this.fail(t.id, `即梦提交异常（自动重试 ${attempts - 1} 次）：${e.message}`);
         return;
       }
@@ -268,6 +328,8 @@ class Submitter {
       // need-web-confirm 对应 AigcComplianceConfirmationRequired —— 官方文档明确：
       // 为满足合规要求，视频必须先到即梦 Web 端用该模型完成一次生成，CLI 才允许提交。
       if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
+        // v2.6.1：环境/合规不可用 → 优先改投免费档（台账 §七 规则 4：合规闸门「不等它」）
+        if (this.fallbackDreaminaVideo(t, r.kind)) return;
         this.backoff(t.id, DREAMINA_ENV_BACKOFF_MS, attempts);
         const reason =
           r.kind === 'need-web-confirm'
@@ -282,15 +344,10 @@ class Submitter {
       }
       // 超时 / 进程异常：瞬时错误，退避重试
       if (r.kind === 'timeout' || r.kind === 'spawn-error') {
-        if (attempts >= MAX_ATTEMPTS) {
-          this.fail(t.id, `即梦提交超时或进程异常（重试 ${attempts - 1} 次）：${r.error}`);
-          return;
-        }
-        this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
-        log('warn', `任务 #${t.id} 即梦提交异常（第 ${attempts} 次，${r.kind}）：${r.error}`);
-        return;
+        return this.backoffDreaminaOrFallback(t, r.error, r.kind, attempts);
       }
-      // 参数错误 / CLI 业务错误：不可恢复
+      // 参数错误 / CLI 业务错误（含积分不足）：v2.6.1 先尝试改投免费档，改投不了才判失败
+      if (this.fallbackDreaminaVideo(t, r.kind)) return;
       this.fail(t.id, `即梦提交失败：${r.error || r.kind}`, r.data);
       return;
     }
@@ -298,6 +355,8 @@ class Submitter {
     const j = r.data || {};
     const submitId = j.submit_id || null;
     if (!submitId) {
+      // v2.6.1：拿不到 submit_id 说明即梦侧没有可追踪的任务 → 改投免费档重做
+      if (this.fallbackDreaminaVideo(t, 'no-result')) return;
       this.fail(t.id, '即梦提交未返回 submit_id，无法追踪任务', j);
       return;
     }
