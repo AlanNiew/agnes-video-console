@@ -56,9 +56,12 @@ function check(branch, paths) {
 
 function stagedPaths() {
   try {
-    return execSync('git diff --cached --name-only --diff-filter=ACMR', { encoding: 'utf8' })
-      .split('\n')
-      .map((s) => s.trim())
+    // 用 -z（NUL 分隔）：git 对非 ASCII 路径默认做八进制转义并加引号（core.quotepath=true），
+    // 例如 docs/stories/幻灯屋-台账.md → "docs/stories/\345\271\273…"。按行读会把引号与反斜杠
+    // 一并带进来，前缀匹配全部失效 → 所有中文文件名被判"越界"（E06 实战踩到：docs/stories 两个
+    // 中文文件被误拦）。-z 输出原样 UTF-8、不转义，路径可安全前缀匹配。
+    return execSync('git diff --cached --name-only --diff-filter=ACMR -z', { encoding: 'utf8' })
+      .split('\0')
       .filter(Boolean);
   } catch {
     return [];
