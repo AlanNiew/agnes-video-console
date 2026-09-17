@@ -487,26 +487,18 @@ async function fillAspect({ src, dest, w, h, isVideo = true, cwd = undefined }) 
     `gblur=sigma=${sigma},setsar=1[bg];` +
     `[0:v]scale=${w}:${h}:force_original_aspect_ratio=decrease,setsar=1[fg];` +
     `[bg][fg]overlay=(W-w)/2:(H-h)/2,format=${isVideo ? 'yuv420p' : 'rgb24'}[v]`;
-  const common = [
-    '-i',
-    src,
-    '-filter_complex',
-    vf,
-    '-map',
-    '[v]',
-    '-c:v',
-    'libx264',
-    '-preset',
-    'medium',
-    '-crf',
-    '18',
-  ];
-  if (!isVideo) return runFfmpeg([...common, '-frames:v', '1', dest], { cwd });
-  const first = await runFfmpeg([...common, '-map', '0:a?', '-c:a', 'copy', '-movflags', '+faststart', dest], {
+  const common = ['-i', src, '-filter_complex', vf, '-map', '[v]'];
+  // v2.6.2 修复：图片分支此前沿用 `-c:v libx264` + `.png` 后缀 —— ffmpeg 按后缀选 image2 封装却用
+  // H.264 编码，产出「扩展名 .png、内容是裸 H.264 流」的坏文件（打不开、平台不认）。
+  // 实测《幻灯屋》S1E05/E06 的 `发布包/抖音/封面-竖屏.png` 均已中招（文件头为 00 00 00 01 67）。
+  // 图片分支必须显式指定 png 编码器；视频分支保持 libx264 不变。
+  if (!isVideo) return runFfmpeg([...common, '-frames:v', '1', '-c:v', 'png', dest], { cwd });
+  const enc = ['-c:v', 'libx264', '-preset', 'medium', '-crf', '18'];
+  const first = await runFfmpeg([...common, ...enc, '-map', '0:a?', '-c:a', 'copy', '-movflags', '+faststart', dest], {
     cwd,
   });
   if (first.ok) return first;
-  return runFfmpeg([...common, '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', dest], {
+  return runFfmpeg([...common, ...enc, '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', dest], {
     cwd,
   });
 }

@@ -1726,6 +1726,14 @@ async function waitCompleted(id, timeoutMs = 30_000) {
         const cd = streamOf(path.join(pkgDir, '抖音/封面-竖屏.png'), 'v:0');
         if (cb.width !== 1280 || cb.height !== 720) err(`B站封面画幅异常: ${cb.width}x${cb.height}`);
         if (cd.width !== 720 || cd.height !== 1280) err(`竖屏封面画幅异常: ${cd.width}x${cd.height}`);
+        // v2.6.2 回归护栏：封面必须是真 PNG —— 曾因 fillAspect 图片分支沿用 libx264 + `.png` 后缀，
+        // 产出「.png 扩展名 + 裸 H.264 流」的坏文件，而 ffprobe 只读宽高照样通过（E05/E06 实际中招）。
+        for (const f of ['B站/封面.png', '抖音/封面-竖屏.png']) {
+          const head = fs.readFileSync(path.join(pkgDir, f)).subarray(0, 8);
+          if (!head.equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+            err(`${f} 不是合法 PNG（文件头 ${head.toString('hex')}）`);
+          }
+        }
         ok(`发布包：B站/抖音 各 3 件 + README（竖屏 ${v.width}x${v.height} · 时长 ${dDy?.toFixed?.(1)}s ≈ 成片）`);
       }
       // v2.6 发布包路由：手动重生成（幂等）+ 404 契约
