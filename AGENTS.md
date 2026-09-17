@@ -19,8 +19,9 @@ CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后�
 
 ## 本机开发环境（Windows）
 
-- **shell = PowerShell 7（`pwsh`）**：opencode 全局配置已设 `"shell": "pwsh"`。**勿回退 Windows PowerShell 5.1**——5.1 无 `&&`/`||`、无 `rg`，且中文经管道必乱码（历史事故：中文 JSON 走 PS5.1 乱码致删库重建）。pwsh 7 实测支持 `&&`、中文参数与含空格参数的原生传递（`$PSNativeCommandArgumentPassing=Windows`，`node -e "…"` 无损）。
-- **UTF-8 基线写在 `$PROFILE`**（`~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`）：`[Console]::OutputEncoding` 与 `$OutputEncoding` 强制 utf-8。本机默认代码页为 **GBK(936)**，不设必乱码。若中文输出异常，先查 `pwsh -Command '$PROFILE; [Console]::OutputEncoding.WebName'` 确认 profile 已加载。
+- **shell = PowerShell 7（`pwsh`），经 `~/bin/pwsh-utf8.exe` 包装**：opencode 全局配置 `"shell": "C:/Users/AlanNiew/bin/pwsh-utf8.exe"`。**勿回退 Windows PowerShell 5.1**——5.1 无 `&&`/`||`、无 `rg`，且中文经管道必乱码（历史事故：中文 JSON 走 PS5.1 乱码致删库重建）。pwsh 7 实测支持 `&&`、中文参数与含空格参数的原生传递。
+- **为什么需要包装器**：opencode 以 `-NoProfile -NonInteractive -Command` 启动 shell，**会绕过 `$PROFILE`**（实测：profile 里设的 `HTTP_PROXY` 在会话中不可见）。包装器在 pwsh 启动前把控制台代码页切到 65001，并在 `-Command` 脚本文本前注入 `[Console]::OutputEncoding`/`$OutputEncoding` 的 UTF-8 设置——否则中文输出是 GBK 字节、opencode 按 UTF-8 解码必乱码。源码 `~/bin/pwsh-utf8.cs`（`csc /target:exe` 编译），可用 `PWSH_UTF8_TARGET` 覆盖真实 pwsh 路径。
+- **手工开 pwsh 终端时** UTF-8 基线来自 `$PROFILE`（`~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`）；本机默认代码页 **GBK(936)**，中文输出异常时先核对这两处。
 - **`rg`（ripgrep 15）/ `fd` 已装且入 PATH**：检索用 `rg`、找文件用 `fd`；`grep`/`find` 在本机不存在。
 - **跨 shell 传参一律「写脚本文件」**（`tools/` 既有约定，如 `tools/agnes-api.js`），不要依赖多级引号转义。
 - **中文 JSON 勿走 `curl.exe`**：一律 Node fetch，详见 `docs/CREATION_PLAYBOOK.md` 第五节。
