@@ -76,6 +76,8 @@ async function loadSettings() {
     $('#setAutoDownload').checked = settingsState.settings.video_auto_download === true;
     // 即梦成本确认阈值（积分）
     $('#setDmThreshold').value = settingsState.settings.dreamina_confirm_threshold ?? 10;
+    // 全自动成片的角色图是否用即梦（默认开）
+    $('#setDmAutoChar').checked = settingsState.settings.dreamina_auto_character === true;
     // 即梦 CLI 状态（独立端点，失败不影响设置面板其余部分）
     loadDreaminaStatus();
   } catch (e) {
@@ -120,6 +122,8 @@ async function saveSettings() {
     // 即梦成本确认阈值（积分；0 = 每次即梦调用都确认）
     const dmThreshold = $('#setDmThreshold').value.trim();
     if (dmThreshold !== '') body.dreamina_confirm_threshold = Number(dmThreshold);
+    // 全自动成片的角色图是否用即梦（PUT 按布尔处理）
+    body.dreamina_auto_character = $('#setDmAutoChar').checked;
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;

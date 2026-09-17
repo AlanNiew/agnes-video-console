@@ -60,7 +60,12 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
 - **即梦实测标定（成本护栏依据）**：图片 `jimeng-image-3.1` / 1k = **1 积分**，且一次请求返回 **4 张候选**（即便传 `generate_num:1`）；视频 5s/720p = **25 积分**。成功响应结构统一为 `result_json.images[].image_url` / `result_json.videos[].video_url`（提取器：`clients/dreamina.js` 的 `extractImageUrls` / `extractVideoUrls`，含多层兜底）。standard 会员 `priority:3` 偏低，实测视频排队超过 1 小时。
 - **即梦模型清单以 CLI help 的「公开支持集」为准**（`dreamina <子命令> -h`）：图片 text2image 共 9 档（3.0/3.1/4.0/4.1/4.5/4.6/4.7/5.0/5.0Pro），视频**因各子命令支持集不同**故用 `specs` 按子命令声明（text2video 6 个；image2video 8 个，多出 `seedance1.0fast` / `seedance1.5pro` 两个仅图生的老代际）。后端白名单更宽（实测含 `3.0_fast`/`3.5pro`/`seedance1.0` 等未公开项），但官方明确「listed model values are the CLI's public support set」，故**不采用未公开项**。
 - **`image2video` 的 `--image` 只接受本地文件路径**（官方 help 原文「local first-frame image path」）：`workers/submitter.js` 的 `ensureLocalImage` 负责在提交前把远端 URL / `/artifacts/xxx` 落成本地绝对路径，取不到则任务落 `submit_error`（不静默降级）。子命令由「有无首帧图」自动推导：有 → image2video，无 → text2video。
-- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（角色图 / 封面；关键镜头可手动升级）。即梦模型**刻意不进** `/api/meta` 模型清单，故前端下拉不变，仅可经 API 直接指定调用。
+- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产：
+  · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选），CLI 不可用时自动回退 Agnes；
+  · **封面 / 关键镜头**可手动升级（任务中心的「⬆ 升级即梦」按钮，需 `retry_count ≥ 3` 且当前为 Agnes）。
+  · 成本护栏三档（`dreamina_confirm_threshold`，默认 10 积分）：预估 ≤ 阈值静默提交 / > 阈值弹窗确认 / > 剩余积分强阻断；仅作用于即梦，Agnes 零打扰。
+  · 即梦模型**不混入** `/api/meta` 的 `models`（避免污染 Agnes 下拉契约），而是走独立的 `dreamina` 字段供前端分组展示（含按子命令的 `specs`）。
+- **e2e 必须隔离即梦**：`test/mock-e2e.js` 在 `require('../server')` 之前把 `DREAMINA_CLI_PATH` 指向不存在的路径，使 `isInstalled()` 返回 false——否则在**本机装了 CLI 且已登录**的环境中，全自动成片的角色图会真实调用即梦并**扣会员积分**。
 - **ffmpeg 调用必须经 `workers/render.js` 的 `runFfmpeg`**（已内置 `-y -nostdin`）：缺失时输出同名文件已存在会触发 `Overwrite? [y/N]` 并永久阻塞等待 stdin（v2.0 踩过，渲染永久卡在 rendering）。
 - 全自动成片编排在 `workers/auto.js`（状态机落 `projects.auto_state`）：阶段动作复刻对应路由的核心逻辑，新增阶段须同步 `STAGE_META` 与前端 `AUTO_STAGES`。
 

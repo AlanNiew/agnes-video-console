@@ -418,6 +418,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   process.env.DB_PATH = TEST_DB;
   process.env.DATA_DIR = TEST_ARTIFACTS;
   process.env.SUBMIT_RATE_LIMIT_BASE_MS = '500'; // v1.3：加速 429 退避（默认 60s 对齐真实免费档）
+  // 隔离即梦 CLI：把二进制路径指向不存在的文件 → isInstalled() 为 false。
+  // 这样「全自动成片」的角色图阶段会回退免费的 Agnes mock，**绝不消耗真实会员积分**
+  // （若本机恰好装了 CLI 且已登录，不设此项会在 e2e 中真实调用即梦）。
+  process.env.DREAMINA_CLI_PATH = path.join(DATA_DIR_ROOT, 'e2e-no-such-dreamina.exe');
   require('../server');
   // 轮询等待就绪（取代固定 sleep，消除慢机器/CI 上首检 ECONNREFUSED 的 flaky）
   let up = false;

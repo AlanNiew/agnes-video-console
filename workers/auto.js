@@ -16,6 +16,7 @@ const path = require('node:path');
 const { settings, DEFAULT_SETTINGS, projects, tasks, renders } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const dreamina = require('../clients/dreamina');
 const fishTts = require('../clients/fish-tts');
 const { createNetmusicClient, LEVELS } = require('../clients/netmusic');
 const netmusic = createNetmusicClient(settings);
@@ -29,6 +30,7 @@ const {
   SECONDS_OK,
   STYLE_BGM_KEYWORDS,
   STYLE_BGM_DEFAULT_KEYWORD,
+  DREAMINA_IMAGE_DEFAULT_MODEL,
 } = require('../core/constants');
 const { ApiError } = require('../core/errors');
 const {
@@ -41,7 +43,7 @@ const {
   ensureCharacterRefPrefix,
   isMechanicalPromptFix,
 } = require('../services/prompts');
-const { buildPayload } = require('../services/payloads');
+const { buildPayload, buildDreaminaImagePayload } = require('../services/payloads');
 const { submitTask } = require('../services/task-queue');
 const { createPipelineService } = require('../services/pipeline');
 const renderer = require('./render'); // 仅用 hasFfmpeg 做渲染前置预检（渲染动作仍由 render worker 单实例执行）
@@ -390,30 +392,59 @@ class AutoPipeline {
     }
     // 无在途任务 → 入队（角色描述优先用文案中的 character_desc）
     const charDesc = projects.selectedText(projectId, 'character_desc')?.content || p.idea;
-    const apiKey = settings.get('api_key', '');
-    if (!apiKey) throw new Error('尚未配置 API Key');
     const prompt = `角色立绘：${charDesc}。全身或半身构图，干净背景，正面站立，电影级写实，高细节`;
-    const taskId = tasks.insert({
-      kind: 'image',
-      status: 'queued',
-      mode: 'text',
-      model: IMAGE_MODEL,
-      prompt,
-      size: '1K',
-      aspect_ratio: '1:1',
-      request_json: {
+
+    // 阶段 6：角色图优先走**即梦主力档**（高性价比：实测 1 积分/次 ≈ 4 张候选），
+    // 未安装 CLI（含开关关闭）时**自动回退** Agnes 免费档，全自动流程不中断。
+    // 注意：即梦不需要 Agnes API Key，故仅在回退分支校验 Key。
+    const useDreamina =
+      settings.get('dreamina_auto_character', DEFAULT_SETTINGS.dreamina_auto_character) === '1' &&
+      dreamina.isInstalled();
+    let model;
+    let size;
+    let requestJson;
+    if (useDreamina) {
+      // 复用与路由一致的构建器，避免两处参数漂移
+      const built = buildDreaminaImagePayload({
+        model: DREAMINA_IMAGE_DEFAULT_MODEL,
+        prompt,
+        size: '1k',
+        ratio: '1:1',
+        count: 1,
+      });
+      model = DREAMINA_IMAGE_DEFAULT_MODEL;
+      size = '1k';
+      // 图片任务的 request_json 需带 count 与 image_kind（与 routes/images.js 入队时一致）
+      requestJson = { ...built.payload, count: 1, image_kind: 'character' };
+    } else {
+      const apiKey = settings.get('api_key', '');
+      if (!apiKey) throw new Error('尚未配置 API Key（即梦不可用时的回退路径需要它）');
+      model = IMAGE_MODEL;
+      size = '1K';
+      requestJson = {
         model: IMAGE_MODEL,
         prompt,
         size: '1K',
         extra_body: { response_format: 'url' },
         count: 1,
         image_kind: 'character',
-      },
+      };
+    }
+
+    const taskId = tasks.insert({
+      kind: 'image',
+      status: 'queued',
+      mode: 'text',
+      model,
+      prompt,
+      size,
+      aspect_ratio: '1:1',
+      request_json: requestJson,
       project_id: projectId,
     });
     st.image_task_id = taskId;
     this.saveState(projectId, st);
-    log('info', `项目 #${projectId} 自动成片：角色图任务 #${taskId} 已入队`);
+    log('info', `项目 #${projectId} 自动成片：角色图任务 #${taskId} 已入队（${model}）`);
   }
 
   /** ⑤ 提交全部镜头视频（逐镜入队；节流由 submitter 全局队列负责） */

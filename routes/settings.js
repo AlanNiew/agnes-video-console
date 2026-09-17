@@ -47,6 +47,9 @@ module.exports = function registerSettingsRoutes(app) {
       dreamina_confirm_threshold: Number(
         settings.get('dreamina_confirm_threshold', DEFAULT_SETTINGS.dreamina_confirm_threshold),
       ),
+      // 全自动成片的角色图是否用即梦主力档（关闭则用 Agnes 免费档）
+      dreamina_auto_character:
+        settings.get('dreamina_auto_character', DEFAULT_SETTINGS.dreamina_auto_character) === '1',
     });
   });
 
@@ -174,6 +177,11 @@ module.exports = function registerSettingsRoutes(app) {
       }
       settings.set('dreamina_confirm_threshold', String(Math.round(n)));
       changed.push('dreamina_confirm_threshold');
+    }
+    // 全自动成片的角色图是否用即梦主力档（立即生效：auto 每轮 tick 重新读取）
+    if (b.dreamina_auto_character !== undefined) {
+      settings.set('dreamina_auto_character', b.dreamina_auto_character ? '1' : '0');
+      changed.push('dreamina_auto_character');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

@@ -145,8 +145,14 @@ const DREAMINA_MODELS = {
   },
 };
 
-/** 已接入的子命令（其余子命令官方支持但本系统暂未开放，见 docs/DREAMINA_CLI_PLAN.md） */
+/** 即梦视频已接入的子命令（其余官方支持但本系统暂未开放，见 docs/DREAMINA_CLI_PLAN.md） */
 const DREAMINA_VIDEO_COMMANDS = ['text2video', 'image2video'];
+
+/**
+ * 即梦图片**主力档**（高性价比：实测 1 积分/次、一次约 4 张候选）。
+ * 前端图片下拉默认选中它，全自动成片的角色图阶段也用它——两处一致，避免策略漂移。
+ */
+const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-3.1';
 
 /**
  * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
@@ -361,6 +367,7 @@ module.exports = {
   DREAMINA_RESOLUTIONS,
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_VIDEO_COMMANDS,
+  DREAMINA_IMAGE_DEFAULT_MODEL,
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,

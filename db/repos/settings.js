@@ -35,5 +35,6 @@ const DEFAULT_SETTINGS = {
   creation_templates: '[]', // P2-7 创作模板（JSON 数组：创意写法 + 风格 + 画幅/时长 + 成片预设配方）
   character_library: '[]', // v2.5 角色库（JSON 数组：跨项目复用的角色资产——名/图/服色锚/提示词/所属系列）
   dreamina_confirm_threshold: '10', // 即梦成本护栏：预估积分 > 此阈值时前端需弹窗确认（0 = 每次即梦调用都确认）
+  dreamina_auto_character: '1', // 全自动成片的角色图阶段用即梦主力档（1 积分/次 ≈ 4 张候选）；'0' = 用 Agnes 免费档
 };
 module.exports = { settings, DEFAULT_SETTINGS };
