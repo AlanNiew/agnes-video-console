@@ -9,13 +9,22 @@ npm test              # = jest 单测 + e2e 冒烟（提交前必跑）
 npm run test:unit     # 仅 74 项单测
 npm run test:mock     # 仅 e2e（自建 mock 上游 :8392，应用拉起于 :8391，约 2–4min：含全自动成片闭环 + 3 次真实 ffmpeg 渲染）
 npx jest test/unit/payloads.test.js   # 跑单个测试文件
-npm run lint          # eslint（0 errors 才算过；10 个既有 warning 勿需修）
+npm run lint          # eslint（0 errors 才算过；11 个既有 warning 勿需修）
 npm run format        # prettier 写入；format:check 用于 CI 校验
 npm run build         # vite 构建前端 → dist/（M4-B0；dist 已 gitignore）
 npm start             # http://127.0.0.1:8273（仅回环，勿改对外监听）
 ```
 
 CI 顺序 = `lint → format:check → test:unit → test:mock`。改代码后的最小验证：`npm test`。
+
+## 本机开发环境（Windows）
+
+- **shell = PowerShell 7（`pwsh`）**：opencode 全局配置已设 `"shell": "pwsh"`。**勿回退 Windows PowerShell 5.1**——5.1 无 `&&`/`||`、无 `rg`，且中文经管道必乱码（历史事故：中文 JSON 走 PS5.1 乱码致删库重建）。pwsh 7 实测支持 `&&`、中文参数与含空格参数的原生传递（`$PSNativeCommandArgumentPassing=Windows`，`node -e "…"` 无损）。
+- **UTF-8 基线写在 `$PROFILE`**（`~/Documents/PowerShell/Microsoft.PowerShell_profile.ps1`）：`[Console]::OutputEncoding` 与 `$OutputEncoding` 强制 utf-8。本机默认代码页为 **GBK(936)**，不设必乱码。若中文输出异常，先查 `pwsh -Command '$PROFILE; [Console]::OutputEncoding.WebName'` 确认 profile 已加载。
+- **`rg`（ripgrep 15）/ `fd` 已装且入 PATH**：检索用 `rg`、找文件用 `fd`；`grep`/`find` 在本机不存在。
+- **跨 shell 传参一律「写脚本文件」**（`tools/` 既有约定，如 `tools/agnes-api.js`），不要依赖多级引号转义。
+- **中文 JSON 勿走 `curl.exe`**：一律 Node fetch，详见 `docs/CREATION_PLAYBOOK.md` 第五节。
+- CRLF：`.gitattributes`（`* text=auto eol=lf`）已闭环 + 全局 `core.autocrlf=input`，`format:check` 在 Windows 与 CI 结论一致。
 
 ## 硬性要求
 
