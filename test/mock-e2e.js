@@ -1943,6 +1943,15 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     err(`completed 任务重试未被 400 拦截: ${JSON.stringify(retryBad.data)}`);
   }
   ok('校验：重试 404 / completed 任务不可重试');
+
+  // 10.2b 跨上游升级端点（阶段 5）：只校验守卫逻辑，不造失败任务（避免依赖真实上游）
+  const up404 = await api('POST', '/api/tasks/999999/upgrade', { model: 'jimeng-image-3.1' });
+  if (up404.status !== 404) err('升级不存在的任务未被 404 拒绝');
+  const upBad = await api('POST', `/api/tasks/${taskId}/upgrade`, { model: 'jimeng-image-3.1' });
+  if (upBad.status !== 400 || !String(upBad.data.error).includes('仅 failed')) {
+    err(`completed 任务升级未被 400 拦截: ${JSON.stringify(upBad.data)}`);
+  }
+  ok('校验：升级 404 / completed 任务不可升级');
   {
     // v2.1 视频任务原地重试闭环：429 重试耗尽会落 submit_error → retry → 原任务重新流转直至完成
     await mockRateLimit(6); // MAX_ATTEMPTS=5，6 次退避后必然 submit_error

@@ -5,7 +5,7 @@
  */
 import { $, $$, esc, fmtTime, toast, api } from './common.js';
 import { bus } from './state.js';
-import { modelShort } from './task-meta.js';
+import { modelShort, modelInfo, dreaminaUpgradeTarget, passDreaminaGuard } from './task-meta.js';
 import { renderConn } from './settings-panel.js';
 
 // M4-B1-3：任务数据变更信号（workspace/新建任务提交后 emit）→ 刷新任务中心（不切视图）
@@ -25,6 +25,15 @@ const MODE_LABEL = { text: '文生', keyframe: '首尾帧', reference: '参考',
 const KIND_ICON = { video: '🎬', image: '🖼️' };
 const KIND_LABEL = { video: '视频', image: '图片' };
 const taskKind = (t) => (t.kind === 'image' ? 'image' : 'video');
+
+/** 阶段 5：失败任务「升级到即梦」入口的展示条件 —— 重试 ≥ N 次且当前走 Agnes。
+ * 刻意只在失败多次后提示（避免一开始就引导花钱），且必须用户点击 + 过成本护栏。 */
+const UPGRADE_HINT_RETRIES = 3;
+const canUpgrade = (t) =>
+  ['failed', 'submit_error'].includes(t.status) &&
+  (t.retry_count || 0) >= UPGRADE_HINT_RETRIES &&
+  Boolean(modelInfo(t.model)) && // 仅 Agnes 任务需升级（即梦任务本身已在收费档）
+  Boolean(dreaminaUpgradeTarget(taskKind(t)));
 /** v2.1 来源标签：项目名 / 镜头序号与标题 / 角色图·场景图 / 独立创作（看板与列表共用） */
 function taskSourceLabel(t) {
   const kind = taskKind(t);
@@ -150,6 +159,10 @@ function cardHTML(t) {
   }
   if (t.status === 'failed' || t.status === 'submit_error') {
     actions.push(`<button class="act" data-act="retry">重试</button>`);
+    if (canUpgrade(t))
+      actions.push(
+        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+      );
   }
   actions.push(`<button class="act red" data-act="del">删除</button>`);
 
@@ -228,6 +241,10 @@ function rowHTML(t) {
   }
   if (t.status === 'failed' || t.status === 'submit_error') {
     actions.push(`<button class="act" data-act="retry">重试</button>`);
+    if (canUpgrade(t))
+      actions.push(
+        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+      );
   }
   actions.push(`<button class="act red" data-act="del">删除</button>`);
 
@@ -551,6 +568,10 @@ function bindTaskEvents(container) {
       }
       return;
     }
+    if (actName === 'upgrade') {
+      await doUpgrade(id);
+      return;
+    }
     if (actName === 'del') {
       if (confirm(`确认删除任务 #${id}？`)) {
         await act(id, '删除', () => api(`/api/tasks/${id}`, { method: 'DELETE' }));
@@ -559,6 +580,32 @@ function bindTaskEvents(container) {
       return;
     }
     if (actName === 'video') return; // 视频本身可点击播放
+  });
+}
+
+/**
+ * 阶段 5：把失败任务升级到即梦。
+ * 先过成本护栏（pass 静默 / confirm 弹窗 / block 阻断），再由后端按目标模型重建 payload
+ * 原地重试（任务 ID 不变）。**不自动触发**——即梦收费，必须用户显式点击并确认。
+ */
+async function doUpgrade(id) {
+  let t;
+  try {
+    t = await api(`/api/tasks/${id}`);
+  } catch (e) {
+    return toast('读取任务失败：' + e.message, 'err');
+  }
+  const kind = taskKind(t);
+  const target = dreaminaUpgradeTarget(kind);
+  if (!target) return toast('即梦不可用（未安装或未登录 CLI），无法升级', 'err');
+  // 成本护栏：视频属大额会弹窗确认，图片小额静默通过
+  if (!(await passDreaminaGuard({ model: target, size: t.size, seconds: t.seconds }, kind))) return;
+  await act(id, '升级', async () => {
+    const r = await api(`/api/tasks/${id}/upgrade`, { method: 'POST', body: { model: target } });
+    return (
+      `任务 #${r.task.id} 已升级：${modelShort(r.upgraded_from)} → ${modelShort(r.upgraded_to)}` +
+      `（第 ${r.task.retry_count} 次重试）`
+    );
   });
 }
 
@@ -679,8 +726,13 @@ async function refreshDetail() {
   // 操作栏：仅按钮集合变化时重建，避免每 2s 替换节点吃掉点击
   const acts = [];
   if (t.video_id) acts.push(`<button class="btn ghost" id="dPoll">立即查询</button>`);
-  if (t.status === 'failed' || t.status === 'submit_error')
+  if (t.status === 'failed' || t.status === 'submit_error') {
     acts.push(`<button class="btn primary" id="dRetry">重试（重新排队）</button>`);
+    if (canUpgrade(t))
+      acts.push(
+        `<button class="btn ghost" id="dUpgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+      );
+  }
   if (t.status === 'completed' && (t.video_local_url || t.metadata_url)) {
     const dl = t.video_local_url || t.metadata_url;
     acts.push(
@@ -720,6 +772,10 @@ async function refreshDetail() {
       } catch (e) {
         toast(e.message, 'err');
       }
+    });
+    bind('dUpgrade', async () => {
+      await doUpgrade(id);
+      await refreshDetail(); // doUpgrade 内部已 loadTasks
     });
     bind('dDel', async () => {
       if (!confirm(`确认删除任务 #${id}？`)) return;

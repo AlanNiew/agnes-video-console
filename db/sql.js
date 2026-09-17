@@ -96,6 +96,21 @@ const stmts = {
       retry_count = COALESCE(retry_count, 0) + 1
     WHERE id = ? AND status IN ('failed', 'submit_error')
   `),
+  // v2.6 跨上游升级（docs/DREAMINA_CLI_PLAN.md 阶段 5）：与 retryTask 同语义
+  // （原地重置为 queued、保留 project/shot 溯源、retry_count 自增），
+  // 但额外改写 model 与 request_json —— 两个上游的 payload 结构完全不同，
+  // 故由服务端用 buildPayload / buildImagePayload 重建后传入，不在数据层拼装。
+  upgradeTask: db.prepare(`
+    UPDATE tasks SET
+      model = ?, request_json = ?,
+      status = 'queued', task_id = NULL, video_id = NULL, progress = 0,
+      updated_at = ?, completed_at = NULL, submit_response = NULL, last_poll_response = NULL,
+      metadata_url = NULL, error_message = NULL, poll_count = 0, last_polled_at = NULL,
+      submitted_at = NULL, video_local_path = NULL,
+      images = CASE WHEN kind = 'image' THEN '[]' ELSE images END,
+      retry_count = COALESCE(retry_count, 0) + 1
+    WHERE id = ? AND status IN ('failed', 'submit_error')
+  `),
   insertProject: db.prepare(`
     INSERT INTO projects (name, idea, style, aspect_ratio, seconds, status, created_at, updated_at)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?)

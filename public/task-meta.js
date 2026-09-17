@@ -121,6 +121,19 @@ function onImageModelChange() {
 }
 
 /**
+ * 失败任务「升级到即梦」的目标模型（阶段 5）。
+ * 视频优先取非 VIP 模型（standard 会员可用）；图片取最省的首档（3.1）。
+ * 未安装 CLI 时返回 null（调用方据此隐藏入口）。
+ */
+function dreaminaUpgradeTarget(kind) {
+  const dm = dreaminaMeta();
+  if (!dm?.installed) return null;
+  if (kind === 'image') return dm.image?.[0]?.id || null;
+  const v = (dm.video || []).find((m) => !m.vip_only) || (dm.video || [])[0];
+  return v?.id || null;
+}
+
+/**
  * 工作台角色图（第③步）的模型联动：切换 size 白名单
  * （即梦 1k/2k 与 Agnes 1K–4K 不同），即梦按次计费时禁用候选张数。
  */
@@ -231,5 +244,6 @@ export {
   dreaminaVideoInfo,
   dreaminaImageInfo,
   dreaminaAvailable,
+  dreaminaUpgradeTarget,
   loadMeta,
 };

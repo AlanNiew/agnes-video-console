@@ -243,6 +243,18 @@ const tasks = {
     return this.get(id);
   },
 
+  /**
+   * v2.6 跨上游升级：改写 model + request_json 后原地重新入队（任务 ID 不变，retry_count 自增）。
+   * 仅 failed / submit_error 可命中（SQL 层守卫）。返回新的任务行，未命中返回 null。
+   * @param {{model: string, request_json: object}} patch 由服务端重建的 payload
+   */
+  upgrade(id, { model, request_json }) {
+    const changed =
+      stmts.upgradeTask.run(String(model), JSON.stringify(request_json), Date.now(), Number(id)).changes > 0;
+    if (!changed) return null;
+    return this.get(id);
+  },
+
   touchPoll(id) {
     const now = Date.now();
     stmts.touchPoll.run(now, now, Number(id));

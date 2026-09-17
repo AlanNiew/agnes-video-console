@@ -36,6 +36,9 @@ const paths = {
   '/api/tasks/{id}/metrics': {
     get: 'v2.5 镜头级客观指标（luma_mean 亮度 / luma_std 亮度波动 / flash_ratio 闪烁帧占比 / motion_mean 帧间差≈运动幅度）——AI 与人工可据此优先复核可疑镜头',
   },
+  '/api/tasks/{id}/upgrade': {
+    post: 'v2.6 跨上游升级 {model}：把失败任务改用另一上游重试（如 Agnes → 即梦），任务 ID 不变、project/shot 溯源保留，payload 由服务端按目标模型重建；仅 failed/submit_error 可升级，目标必须是另一 provider（同上游请用 retry）',
+  },
   '/api/tasks/{id}/poll': { post: '立即强制轮询一次（需已有 video_id）' },
   '/api/tasks/bulk/clear-completed': { post: '清空已完成' },
   '/api/tasks/bulk/clear-failed': { post: '清空 failed 与 submit_error' },
