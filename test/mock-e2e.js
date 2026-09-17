@@ -1055,6 +1055,39 @@ async function waitCompleted(id, timeoutMs = 30_000) {
   if (typeof listWithImg.data.total !== 'number') err('列表接口缺少 total 字段（P0 分页）');
   ok(`异步图片任务 #${imgTaskId} 完成（2 张产物 · 本地归档 · 列表 kind=image 可见 · total=${listWithImg.data.total}）`);
 
+  // 17.15b v2.6.1：即梦不可用 → 自动改投免费档（本用例已把 DREAMINA_CLI_PATH 指向不存在路径，
+  // 故即梦必然 not-installed，正是回退规则要覆盖的场景；同时验证任务备注留痕与模型改写）
+  const dmTask = await api('POST', '/api/images/tasks', {
+    model: 'jimeng-image-3.1',
+    prompt: '回退验证：雪山日出',
+    size: '1k',
+    ratio: '16:9',
+    count: 1,
+  });
+  if (dmTask.status !== 201) err(`即梦图片任务创建失败: ${JSON.stringify(dmTask.data).slice(0, 200)}`);
+  if (dmTask.data.model !== 'jimeng-image-3.1') err(`即梦任务初始 model 错误: ${dmTask.data.model}`);
+  let dmDone = null;
+  let sawNote = null; // 回退留痕：改写那轮的 error_message（Agnes 完成后会被清空，故轮询时抓取）
+  const dmDl = Date.now() + 25_000;
+  while (Date.now() < dmDl) {
+    await sleep(300);
+    dmDone = (await api('GET', `/api/tasks/${dmTask.data.id}`)).data;
+    if (/回退免费档/.test(dmDone.error_message || '')) sawNote = dmDone.error_message;
+    if (dmDone.status === 'completed' || dmDone.status === 'failed') break;
+  }
+  if (!dmDone || dmDone.status !== 'completed') {
+    err(`即梦不可用应回退免费档并完成，实际 ${dmDone?.status}: ${dmDone?.error_message || ''}`);
+  }
+  if (dmDone.model !== 'agnes-image-2.5-flash') err(`回退后应改写为免费档模型，实际 ${dmDone.model}`);
+  if (!dmDone.images?.length) err('回退后未产出图片产物');
+  if (!sawNote) err('未观察到回退留痕（改写那轮的任务备注应含「已回退免费档」）');
+  ok(`即梦不可用自动回退：#${dmDone.id} jimeng-image-3.1 → ${dmDone.model} 并出图（留痕「${sawNote.slice(0, 40)}…」）`);
+
+  // 17.15c 回退开关默认开启（前端/接口可见）
+  const stFb = await api('GET', '/api/settings');
+  if (stFb.data.dreamina_fallback !== true) err(`dreamina_fallback 应默认开启，实际 ${stFb.data.dreamina_fallback}`);
+  ok('即梦回退开关默认开启（设置接口已暴露 dreamina_fallback）');
+
   // 17.16 P1：挂项目的图片任务 —— 完成后落 project_images 并首张自动定稿
   const imgsBefore = ((await api('GET', `/api/projects/${pid}`)).data.images || []).length;
   const imgTask2 = await api('POST', '/api/images/tasks', {
