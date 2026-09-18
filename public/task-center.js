@@ -161,7 +161,7 @@ function cardHTML(t) {
     actions.push(`<button class="act" data-act="retry">重试</button>`);
     if (canUpgrade(t))
       actions.push(
-        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗积分，会先弹窗确认；⚠️ 实测即梦视频排队可达数天，非必要建议优先用免费 Agnes）">⬆ 升级即梦</button>`,
       );
   }
   actions.push(`<button class="act red" data-act="del">删除</button>`);
@@ -243,7 +243,7 @@ function rowHTML(t) {
     actions.push(`<button class="act" data-act="retry">重试</button>`);
     if (canUpgrade(t))
       actions.push(
-        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+        `<button class="act" data-act="upgrade" title="改用即梦模型重试（消耗积分，会先弹窗确认；⚠️ 实测即梦视频排队可达数天，非必要建议优先用免费 Agnes）">⬆ 升级即梦</button>`,
       );
   }
   actions.push(`<button class="act red" data-act="del">删除</button>`);
@@ -730,7 +730,7 @@ async function refreshDetail() {
     acts.push(`<button class="btn primary" id="dRetry">重试（重新排队）</button>`);
     if (canUpgrade(t))
       acts.push(
-        `<button class="btn ghost" id="dUpgrade" title="改用即梦模型重试（消耗会员积分，会先弹窗确认）">⬆ 升级即梦</button>`,
+        `<button class="btn ghost" id="dUpgrade" title="改用即梦模型重试（消耗积分，会先弹窗确认；⚠️ 实测即梦视频排队可达数天，非必要建议优先用免费 Agnes）">⬆ 升级即梦</button>`,
       );
   }
   if (t.status === 'completed' && (t.video_local_url || t.metadata_url)) {

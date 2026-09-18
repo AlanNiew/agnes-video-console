@@ -212,12 +212,21 @@ async function passDreaminaGuard(body, kind) {
       );
     }
     if (g.level === 'confirm') {
+      // 视频排队风险实测提醒：standard 会员并发上限 = 1，一个卡住的任务会占满额度，
+      // 导致后续提交报 ExceedConcurrencyLimit（实测 2026-09：排队以「天」计且队列净增长）。
+      const risk =
+        kind === 'video'
+          ? '\n⚠️ 实测提醒：standard 会员的即梦视频排队可达数天（并发上限 1），' +
+            '且卡住的任务会占满额度、令后续提交报「并发超限」。\n' +
+            '若非必要，建议改用免费的 Agnes 视频（实测 5–9 分钟稳定出片）。\n'
+          : '';
       const conf =
         '即梦生成确认\n\n' +
         `预估消耗：${g.points} 积分` +
         `${g.confidence === 'estimated' ? '（推断值，实际以扣费为准）' : '（实测标定）'}\n` +
         `明细：${g.breakdown}\n` +
         (g.remaining != null ? `当前剩余：${g.remaining} 积分\n` : '') +
+        risk +
         '\n确认提交？';
       return window.confirm(conf);
     }
