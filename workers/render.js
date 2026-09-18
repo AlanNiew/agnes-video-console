@@ -573,7 +573,7 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, p
   const filmSize = probeSize(filmPath);
   if (portraitPath && fs.existsSync(portraitPath) && fs.statSync(portraitPath).size > 0) {
     fs.copyFileSync(portraitPath, dyFilm);
-    notes.push('竖屏版来自渲染期独立合成（画面上 + 字幕底部安全区，背景无字幕重影）。');
+    notes.push('竖屏版来自渲染期独立合成（画面上 + 字幕紧贴画面下方，背景无字幕重影）。');
   } else if (filmSize && filmSize.w === DY.w && filmSize.h === DY.h) {
     fs.copyFileSync(filmPath, dyFilm);
     notes.push('原成片即 9:16 竖屏，竖屏版本为直接复制（零重编码，音画与成片一致）。');
