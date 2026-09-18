@@ -498,9 +498,12 @@ async function fillAspect({ src, dest, w, h, isVideo = true, cwd = undefined }) 
     cwd,
   });
   if (first.ok) return first;
-  return runFfmpeg([...common, ...enc, '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', dest], {
-    cwd,
-  });
+  return runFfmpeg(
+    [...common, ...enc, '-map', '0:a?', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', dest],
+    {
+      cwd,
+    },
+  );
 }
 
 /**
