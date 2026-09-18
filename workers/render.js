@@ -512,12 +512,22 @@ async function fillAspect({ src, dest, w, h, isVideo = true, cwd = undefined }) 
  * 字幕另烧在**底部安全区**（h×0.15，避开手机底部 UI）——不与画面条带重叠。
  * @param {{w?:number,h?:number}} o
  */
-function portraitLayout({ w = 720, h = 1280 } = {}) {
+function portraitLayout({ w = 720, h = 1280, gap = 26 } = {}) {
+  const picH = Math.round((w * 9) / 16); // 16:9 条带高度（居中放置，内容不裁切）
+  const picTop = Math.round((h - picH) / 2);
+  const picBottom = picTop + picH;
   return {
     w,
     h,
     sigma: Math.max(8, Math.round(Math.min(w, h) * 0.03)),
-    marginV: Math.round(h * 0.15),
+    picH,
+    picTop,
+    picBottom,
+    gap,
+    // v2.6.4 字幕用 Alignment=8（顶对齐）：MarginV 语义为「距画布顶部」→ 字幕顶边紧贴画面下方、
+    // 多行向下自然延伸，位置不随文本行数跳动（底部锚定会因行数变化而上下浮动）。
+    marginVTop: picBottom + gap,
+    fontsize: Math.round(w * 0.058), // 字幕字号 ≈ 画布宽 5.8%（比成片字号更大，手机端更易读）
   };
 }
 
@@ -1229,11 +1239,12 @@ class Renderer {
           fs.writeFileSync(
             path.join(tmpDir, 'portrait.ass'),
             buildSubtitleAss(subLines, {
-              fontsize: Math.max(24, Math.round(subFontsize * (L.w / OUT_W) * 1.35)), // 跟随成片字号按画布宽度换算（略放大保手机可读）
+              fontsize: L.fontsize, // v2.6.4：≈ 画布宽 5.8%（比成片字号更大，手机端更易读）
               family: font?.family || 'Arial',
               playResX: L.w,
               playResY: L.h,
-              marginV: L.marginV,
+              marginV: L.marginVTop, // Alignment=8 时语义为「距画布顶部」= 画面底 + gap
+              alignment: 8, // 顶部锚定：字幕紧贴画面下方，多行向下延伸
               style: subStyle,
               position: subPosition,
             }),

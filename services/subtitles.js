@@ -88,7 +88,8 @@ const SUBTITLE_STYLE_DEFS = {
  * 生成 ASS 字幕文件内容（纯函数，供渲染与 e2e 断言）
  * @param {{start:number,end:number,text:string}[]} lines 时间轴（秒）
  * @param {{fontsize?:number, family?:string, playResX?:number, playResY?:number, marginV?:number,
- *          style?:string, position?:string}} [opts] v2.0：style=字幕样式预设，position=bottom|center
+ *          style?:string, position?:string, alignment?:number|null}} [opts] v2.0：style=字幕样式预设，
+ *   position=bottom|center；v2.6.4：alignment=显式 numpad 对齐（8=顶部锚定 → 竖屏字幕紧贴画面下方）
  */
 function buildSubtitleAss(
   lines,
@@ -100,10 +101,18 @@ function buildSubtitleAss(
     marginV = 52,
     style = 'white-outline',
     position = 'bottom',
+    alignment = null,
   } = {},
 ) {
   const sd = SUBTITLE_STYLE_DEFS[SUBTITLE_STYLES.includes(style) ? style : 'white-outline'];
-  const alignment = SUBTITLE_POSITIONS.includes(position) && position === 'center' ? 5 : 2; // numpad：2=底部居中 5=屏幕居中
+  // numpad 对齐：2=底部居中（MarginV 距底）· 5=屏幕居中 · 8=顶部居中（**MarginV 语义变为距顶**）
+  // v2.6.4：alignment 可显式覆盖——竖屏字幕顶锚定在画面下方，多行向下延伸、位置不随行数跳动
+  const align =
+    Number.isInteger(alignment) && alignment >= 1 && alignment <= 9
+      ? alignment
+      : SUBTITLE_POSITIONS.includes(position) && position === 'center'
+        ? 5
+        : 2;
   const header = `[Script Info]
 ScriptType: v4.00+
 PlayResX: ${playResX}
@@ -113,7 +122,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Narr,${family},${fontsize},${sd.primary},&H000000FF,${sd.outline},${sd.back},${sd.bold},0,0,0,100,100,0,0,${sd.borderStyle},${sd.outlineW},${sd.shadow},${alignment},60,60,${marginV},1
+Style: Narr,${family},${fontsize},${sd.primary},&H000000FF,${sd.outline},${sd.back},${sd.bold},0,0,0,100,100,0,0,${sd.borderStyle},${sd.outlineW},${sd.shadow},${align},60,60,${marginV},1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text`;

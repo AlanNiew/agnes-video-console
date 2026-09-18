@@ -17,6 +17,24 @@ describe('buildSubtitleAss', () => {
     expect(ass).toContain('[Events]');
   });
 
+  test('v2.6.4 显式 alignment：8 = 顶部锚定（竖屏字幕紧贴画面下方）', () => {
+    const ass = buildSubtitleAss([{ start: 0, end: 2, text: '测试' }], {
+      playResX: 720,
+      playResY: 1280,
+      marginV: 869,
+      alignment: 8,
+    });
+    expect(ass).toContain('ScriptType: v4.00+');
+    expect(ass).toMatch(/,8,60,60,869,1/); // Alignment=8 + MarginV=869（距画布顶部）
+  });
+
+  test('未传 alignment 时按 position 推导（bottom→2 / center→5）', () => {
+    const bottom = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { marginV: 52 });
+    const center = buildSubtitleAss([{ start: 0, end: 1, text: 'x' }], { position: 'center' });
+    expect(bottom).toMatch(/,2,60,60,52,1/);
+    expect(center).toMatch(/,5,60,60,52,1/);
+  });
+
   test('时间格式 H:MM:SS.cc（跨小时/进位）', () => {
     const ass = buildSubtitleAss([
       { start: 0, end: 1, text: 'a' },

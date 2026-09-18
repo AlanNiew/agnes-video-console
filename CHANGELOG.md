@@ -2,6 +2,17 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.4] - 2026-09-18
+
+### Changed
+
+- **竖屏字幕排版调优**（依 E07 实看反馈）：字幕由「底部锚定」改为「**顶部锚定**」（ASS `Alignment=8`）——
+  字幕顶边固定紧贴画面下方（默认 gap 26px），多行向下自然延伸，**位置不随文本行数跳动**
+  （底部锚定会因行数变化而上下浮动）；字号由"跟随成片字号换算"改为**画布宽 5.8%**
+  （720×1280 下 42px，比原来更大更清晰）。
+- 字幕生成器 `buildSubtitleAss` 新增 `alignment` 参数（显式 numpad 对齐；null 时仍按 `position` 推导，
+  既有行为与契约不变）。竖屏布局函数 `portraitLayout` 相应返回 `picH/picTop/picBottom/gap/marginVTop/fontsize`。
+
 ## [2.6.3] - 2026-09-18
 
 ### Added
