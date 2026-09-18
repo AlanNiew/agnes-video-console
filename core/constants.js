@@ -236,15 +236,17 @@ const DREAMINA_IMAGE_MODELS = {
 /**
  * 即梦积分单价表（成本护栏的数据基础）。
  *
- * source 语义：
+ * source 语义（图片为**档位级**，视频为分辨率级）：
  *   'measured'  —— 实测标定，可信
  *   'estimated' —— 推断值，UI 必须提示「实际以扣费为准」
  *
  * 计费模式差异（实测确认）：
  *   视频按**秒**计费；图片按**次**计费 —— 一次请求返回 4 张候选，故图片成本与 count 无关。
  *
- * 已知实测：图片 3.1/1k = 1 积分；视频 720p = 5 积分/秒（5s 共 25 积分）。
- * 其余为推断，待用最低规格各跑一次后升级为 measured（见 docs/DREAMINA_CLI_PLAN.md 4.1）。
+ * 实测来源：CLI 本地任务库 `~/.dreamina_cli/tasks.db` 的 `commerce_info.credit_count`
+ * （每笔生成都记录了扣费档位与积分，是比"跑一次最低规格"更省力的标定途径）。
+ * 已知实测：图片 3.1/1k = 1（档位 image_basic_generate_plus）、5.0Pro/2k = 8
+ * （image_basic_v50_pro_2k）；视频 720p = 5 积分/秒（seedance2.0fast 5s = 25）。
  */
 const DREAMINA_CREDIT_COST = {
   video: {
@@ -268,18 +270,64 @@ const DREAMINA_CREDIT_COST = {
     'seedance2.0': { '720p': { perSecond: 8, source: 'measured' } },
   },
   image: {
-    // 实测：3.1/1k = 1 积分（一次请求返回 4 张候选，按「次」计费）
-    'jimeng-image-3.1': { perRequest: { '1k': 1, '2k': 2 }, source: 'measured' },
-    // 以下为推断值（同代际/同档位类比），UI 会提示「以实际扣费为准」；
-    // 待用最低规格各跑一次后逐步升级为 measured（见 docs/DREAMINA_CLI_PLAN.md 4.1）
-    'jimeng-image-3.0': { perRequest: { '1k': 1, '2k': 2 }, source: 'estimated' },
-    'jimeng-image-4.0': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-4.1': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-4.5': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-4.6': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-4.7': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-5.0': { perRequest: { '2k': 3, '4k': 6 }, source: 'estimated' },
-    'jimeng-image-5.0pro': { perRequest: { '1.5k': 4, '2k': 6, '4k': 10 }, source: 'estimated' },
+    // 实测来源：CLI 本地任务库 ~/.dreamina_cli/tasks.db 的 commerce_info.credit_count
+    // （按「次」计费：一次请求返回 4 张候选，与 count 无关）
+    'jimeng-image-3.1': {
+      perRequest: {
+        '1k': { points: 1, source: 'measured' }, // 档位 image_basic_generate_plus
+        '2k': { points: 2, source: 'estimated' },
+      },
+    },
+    'jimeng-image-3.0': {
+      perRequest: {
+        '1k': { points: 1, source: 'estimated' },
+        '2k': { points: 2, source: 'estimated' },
+      },
+    },
+    'jimeng-image-4.0': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-4.1': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-4.5': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-4.6': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-4.7': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-5.0': {
+      perRequest: {
+        '2k': { points: 3, source: 'estimated' },
+        '4k': { points: 6, source: 'estimated' },
+      },
+    },
+    'jimeng-image-5.0pro': {
+      perRequest: {
+        '1.5k': { points: 4, source: 'estimated' },
+        // 档位 image_basic_v50_pro_2k 实测 8 积分/次（此前推断 6，偏低 33%）
+        '2k': { points: 8, source: 'measured' },
+        '4k': { points: 12, source: 'estimated' },
+      },
+    },
   },
 };
 

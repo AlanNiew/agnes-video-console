@@ -519,12 +519,13 @@ function estimateDreaminaCost(model, params = {}) {
   const iInfo = DREAMINA_IMAGE_MODELS[model];
   if (iInfo) {
     const resolution = String(b.resolution_type || b.size || iInfo.resolutions[0]).toLowerCase();
-    const row = DREAMINA_CREDIT_COST.image[model];
-    const per = row?.perRequest?.[resolution];
-    if (!per) return { points: null, confidence: 'estimated', breakdown: `未知规格 ${resolution}` };
+    const entry = DREAMINA_CREDIT_COST.image[model]?.perRequest?.[resolution];
+    if (!entry) return { points: null, confidence: 'estimated', breakdown: `未知规格 ${resolution}` };
+    // 单价表按「档位」记录 {points, source}——source 精确到分辨率，
+    // 便于逐步把实测值替换掉推断值，而不影响同模型其它档位的置信标记
     return {
-      points: per,
-      confidence: row.source,
+      points: entry.points,
+      confidence: entry.source,
       breakdown: `${resolution} · 按次计费（1 次约 4 张候选）`,
     };
   }
