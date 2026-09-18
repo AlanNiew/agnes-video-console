@@ -74,6 +74,7 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
 - **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（**会过期的每日额度优先花在封面/关键镜头上**）：
   · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；
   · **封面 / 关键镜头**可手动升级（任务中心的「⬆ 升级即梦」按钮，需 `retry_count ≥ 3` 且当前为 Agnes）。
+  · **即梦视频默认主力 = `seedance2.0mini`**（模型清单首位 → 前端默认选中）：官方定位「极致性价比 · 相近体验 · 比 Fast 快 2 倍」，且单模型覆盖多种模式（文生 / 首尾帧 / 智能多帧 / 全能参考）；`seedance2.0fast` 降为备选同档。⚠️ Mini 的**积分**单价尚未单独实测（官方公开的是火山方舟 API 现金价，Mini ≈ Fast 的 62%），当前按 Fast 同档 720p = 5 积分/秒**保守高估**，实测后写进 `DREAMINA_CREDIT_COST.videoByModel` 覆盖。
   · **回退规则（v2.6.1，设置项 `dreamina_fallback` 默认开）**：积分不足 / 生成失败 / 非 VIP / 环境未就绪 / 合规闸门 → 由 `core/provider-policy.js` 判定后**自动改投免费档**（原地改 `tasks.model` + `request_json`，状态回 `queued`），**不新增状态与路由**；关闭该设置项即回到「退避并等人工处理」。
   · 成本护栏三档（`dreamina_confirm_threshold`，默认 10 积分）：预估 ≤ 阈值静默提交 / > 阈值弹窗确认 / > 剩余积分给出**回退建议**（`fallback` 字段，前端改为告知"将继续并自动改用免费档"）；仅作用于即梦，Agnes 零打扰。
   · 即梦模型**不混入** `/api/meta` 的 `models`（避免污染 Agnes 下拉契约），而是走独立的 `dreamina` 字段供前端分组展示（含按子命令的 `specs`）。

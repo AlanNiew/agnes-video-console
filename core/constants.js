@@ -50,23 +50,19 @@ const MODELS = {
  *   image2video : 上述全部 + **seedance1.0fast / 1.5pro**（老代际仅支持图生视频）
  * 未列出的子命令 = 该模型不支持（服务端据此拒绝，不静默降级）。
  *
- * 主力/备用：主链路是 Agnes 免费档；即梦视频里 `seedance2.0fast` 最省（标准会员可用），
- * 置于列表首位作为默认；其余按能力/成本递增备用。
+ * 主力/备用：整体主链路是 Agnes 免费档；即梦视频的**默认主力为 `seedance2.0mini`**
+ * （置于列表首位：官方定位极致性价比 + 相近体验 + 比 Fast 快 2 倍，且单模型覆盖多种模式），
+ * 其余按能力/成本递增作为备用。
  */
 const DREAMINA_VIDEO_RATIOS = ['1:1', '3:4', '16:9', '4:3', '9:16', '21:9'];
 const DREAMINA_RESOLUTIONS = ['480p', '720p', '1080p', '4k']; // 全局并集；各模型/子命令实际支持见 specs
 const DREAMINA_MODELS = {
-  // —— 标准档（standard 会员可用；720p） ——
-  'seedance2.0fast': {
-    provider: 'dreamina',
-    modelVersion: 'seedance2.0fast',
-    vipOnly: false,
-    specs: {
-      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
-      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
-    },
-    label: 'Seedance 2.0 Fast（720p · 4-15s · 即梦内最省）',
-  },
+  // —— 主力档（列表首位 = 前端默认选中） ——
+  // Seedance 2.0 Mini：官方定位「极致性价比 · 相近体验 · 比 Fast 快 2 倍」，
+  // 且单模型覆盖多种模式（文生 / 首尾帧 / 智能多帧 / 全能参考），故设为默认主力。
+  // ⚠️ 其**积分**单价尚未单独实测（官方公开的是火山方舟 API 的现金价），
+  // 当前按 Fast 同档（720p = 5 积分/秒）保守估计——官方称 Mini 更便宜，故属高估，
+  // 护栏只会更早提示，偏安全。实测后可在 DREAMINA_CREDIT_COST.videoByModel 中覆盖。
   'seedance2.0mini': {
     provider: 'dreamina',
     modelVersion: 'seedance2.0mini',
@@ -75,7 +71,18 @@ const DREAMINA_MODELS = {
       text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
     },
-    label: 'Seedance 2.0 Mini（720p · 4-15s）',
+    label: 'Seedance 2.0 Mini（720p · 4-15s · 主力 · 极致性价比）',
+  },
+  // —— 备选同档（与 Mini 规格相同；若实测 Mini 反而更贵，可切回此项） ——
+  'seedance2.0fast': {
+    provider: 'dreamina',
+    modelVersion: 'seedance2.0fast',
+    vipOnly: false,
+    specs: {
+      text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+    },
+    label: 'Seedance 2.0 Fast（720p · 4-15s · 备选）',
   },
   'seedance2.0': {
     provider: 'dreamina',
