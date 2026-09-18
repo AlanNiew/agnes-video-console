@@ -507,13 +507,28 @@ async function fillAspect({ src, dest, w, h, isVideo = true, cwd = undefined }) 
 }
 
 /**
+ * v2.6.3 竖屏合成布局（方案 A）：画面等比缩放居中（16:9 内容完整保留、不裁切），
+ * 背景为同画面放大模糊（来自**无字幕净版**，因此不会出现字幕重影），
+ * 字幕另烧在**底部安全区**（h×0.15，避开手机底部 UI）——不与画面条带重叠。
+ * @param {{w?:number,h?:number}} o
+ */
+function portraitLayout({ w = 720, h = 1280 } = {}) {
+  return {
+    w,
+    h,
+    sigma: Math.max(8, Math.round(Math.min(w, h) * 0.03)),
+    marginV: Math.round(h * 0.15),
+  };
+}
+
+/**
  * v2.6 生成多平台发布包（阶段一交付物）：
  *   作品目录/发布包/{B站,抖音}/ + README.md，平台文案来自 tools/publish/*.json（缺失自动降级）。
  * **幂等**：整包删除重建，重渲后再生成不堆积。
  * @param {{project:object, job:object, filmPath:string, coverPath?:string|null, workDir:string}} o
  * @returns {Promise<{dir:string, files:Array<{platform:string,name:string,path:string,role:string}>, notes:string[]}>}
  */
-async function buildPublishPackage({ project, job, filmPath, coverPath = null, workDir }) {
+async function buildPublishPackage({ project, job, filmPath, coverPath = null, portraitPath = null, workDir }) {
   const pkgDir = path.join(workDir, '发布包');
   const notes = [];
   const meta = findPublishMeta(project) || {};
@@ -542,15 +557,20 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, w
     notes.push('未找到封面.png（片头卡抽帧失败或未启用片头卡），B 站封面需自行补图。');
   }
 
-  // ---- 抖音 / 快手：9:16 竖屏切片（画幅已一致则直接复制，零重编码）----
+  // ---- 抖音 / 快手：9:16 竖屏（v2.6.3 优先用渲染期独立合成的竖屏版：画面上 + 字幕底部安全区，
+  //      背景取自无字幕净版 → 无字幕重影；缺失时回退「模糊填充含字幕成片」的旧路径）----
   const dyFilm = path.join(dyDir, '成片-竖屏.mp4');
   const filmSize = probeSize(filmPath);
-  if (filmSize && filmSize.w === DY.w && filmSize.h === DY.h) {
+  if (portraitPath && fs.existsSync(portraitPath) && fs.statSync(portraitPath).size > 0) {
+    fs.copyFileSync(portraitPath, dyFilm);
+    notes.push('竖屏版来自渲染期独立合成（画面上 + 字幕底部安全区，背景无字幕重影）。');
+  } else if (filmSize && filmSize.w === DY.w && filmSize.h === DY.h) {
     fs.copyFileSync(filmPath, dyFilm);
     notes.push('原成片即 9:16 竖屏，竖屏版本为直接复制（零重编码，音画与成片一致）。');
   } else {
     const r = await fillAspect({ src: filmPath, dest: dyFilm, w: DY.w, h: DY.h, isVideo: true });
     if (!r.ok) throw new Error(`竖屏切片失败：${r.err.slice(0, 160) || 'ffmpeg 未安装或不在 PATH'}`);
+    notes.push('未找到渲染期竖屏产物，已回退「模糊填充含字幕成片」——字幕可能落在画面条带下缘、背景可能带字幕重影。');
   }
   const dyCover = path.join(dyDir, '封面-竖屏.png');
   if (coverPath && fs.existsSync(coverPath)) {
@@ -585,12 +605,36 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, w
  * v2.5：追加「制作档案-N.md」自动草稿。
  * v2.6：追加「发布包/」（B 站 16:9 + 抖音 9:16 竖屏）——失败不影响成片归档。
  * @returns {Promise<string|null>} 作品目录绝对路径（失败返回 null，不影响成片状态） */
-async function archiveWork({ job, project, segments, subLines, outPath, titleCardFile = null }) {
+async function archiveWork({
+  job,
+  project,
+  segments,
+  subLines,
+  outPath,
+  titleCardFile = null,
+  cleanPath = null,
+  portraitPath = null,
+}) {
   try {
     const { dir } = workDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
     // 成片（版本化：同项目多次渲染共存）
     fs.copyFileSync(outPath, path.join(dir, `成片-${job.id}.mp4`));
+    // v2.6.3 净版成片（无字幕：人工改字幕 / 二次剪辑备用）与竖屏版（发布包抖音分支直接用）
+    if (cleanPath && fs.existsSync(cleanPath)) {
+      try {
+        fs.copyFileSync(cleanPath, path.join(dir, `成片-净版-${job.id}.mp4`));
+      } catch {
+        /* 净版归档失败不影响成片 */
+      }
+    }
+    if (portraitPath && fs.existsSync(portraitPath)) {
+      try {
+        fs.copyFileSync(portraitPath, path.join(dir, `成片-竖屏-${job.id}.mp4`));
+      } catch {
+        /* 竖屏归档失败不影响成片 */
+      }
+    }
     // SRT 字幕（时间轴与成片一致；无字幕行时也落空文件占位说明）
     const srt = subLines.length ? buildSrt(subLines) : '1\n00:00:00,000 --> 00:00:02,000\n（本片无旁白字幕）\n';
     fs.writeFileSync(path.join(dir, `字幕-${job.id}.srt`), `\ufeff${srt}`, 'utf8'); // BOM：Windows 记事本正确识别 UTF-8
@@ -637,6 +681,7 @@ async function archiveWork({ job, project, segments, subLines, outPath, titleCar
         job,
         filmPath: path.join(dir, `成片-${job.id}.mp4`),
         coverPath: path.join(dir, '封面.png'),
+        portraitPath: portraitPath && fs.existsSync(portraitPath) ? portraitPath : null,
         workDir: dir,
       });
       if (r.notes.length) log('warn', `渲染任务 #${job.id} 发布包降级项：${r.notes.join('；')}`);
@@ -765,6 +810,11 @@ class Renderer {
     const narrVolume = Math.min(Math.max(Number(params.narration_volume) || 1.4, 0.5), 3);
     // v1.6 字幕烧录：默认开启（有旁白文案时生效），字号 24–72；v2.0 样式与位置
     const wantSubs = params.burn_subtitles !== false;
+    // v2.6.3 交付产物（均默认开启）：
+    //   emit_clean    净版成片（同画面不烧字幕）——竖屏合成输入 + 人工改字幕/二次剪辑备用
+    //   emit_portrait 竖屏版（净版 + 模糊背景 + 底部安全区字幕），发布包抖音分支直接复制
+    const emitClean = params.emit_clean !== false;
+    const emitPortrait = params.emit_portrait !== false;
     const subFontsize = Math.min(Math.max(Number(params.subtitle_fontsize) || 42, 24), 72);
     const subStyle = SUBTITLE_STYLES.includes(params.subtitle_style) ? params.subtitle_style : 'white-outline';
     const subPosition = SUBTITLE_POSITIONS.includes(params.subtitle_position) ? params.subtitle_position : 'bottom';
@@ -953,12 +1003,25 @@ class Renderer {
       let cum = seqs[0].duration;
       for (let k = 1; k < seqs.length; k++) {
         const offset = (cum - fade).toFixed(3);
-        const out = k === seqs.length - 1 ? (needSubFilter ? '[vpre]' : '[vout]') : `[vx${k}]`;
+        const out = k === seqs.length - 1 ? '[vpre]' : `[vx${k}]`;
         fl.push(`${prev}[${k}:v]xfade=transition=${transitionType}:duration=${fade}:offset=${offset}${out}`);
         prev = out;
         cum += seqs[k].duration - fade;
       }
-      if (needSubFilter) fl.push('[vpre]subtitles=subs.ass[vout]');
+      // v2.6.3 画面链收尾：需要净版时 split 双路（[vout] 含字幕 / [vclean] 无字幕），
+      // 一次 filtergraph 双编码避免重复合成；无字幕内容时净版与成片同源，不重复输出。
+      let cleanLabel = null;
+      if (needSubFilter) {
+        if (emitClean) {
+          fl.push('[vpre]split=2[vsub][vclean]');
+          fl.push('[vsub]subtitles=subs.ass[vout]');
+          cleanLabel = '[vclean]';
+        } else {
+          fl.push('[vpre]subtitles=subs.ass[vout]');
+        }
+      } else {
+        fl.push('[vpre]null[vout]');
+      }
       // 旁白时间轴：镜头起幅点 = 片头卡后累计（每镜步进 = 本镜时长 - 叠化）
       // v1.5 旁白链（专业口播处理）：90Hz 高通去低频浊音 → 轻压缩平衡句间动态
       //   → 增益（默认 1.4×）→ 按镜头起幅点延迟对齐
@@ -1046,44 +1109,46 @@ class Renderer {
         );
         aout = '[aout]';
       }
+      // v2.6.3 双输出：同一标签不能映射到两个输出文件 → 音频 asplit 一分为二（成片 / 净版）
+      let aoutClean = null;
+      if (cleanLabel) {
+        fl.push('[aout]asplit=2[aoutMain][aoutCleanSplit]');
+        aout = '[aoutMain]';
+        aoutClean = '[aoutCleanSplit]';
+      }
 
       const outName = `render-${job.id}-${Date.now()}.mp4`;
       const outPath = path.join(ARTIFACTS_DIR, outName);
+      const cleanPath = cleanLabel ? path.join(ARTIFACTS_DIR, `render-clean-${job.id}-${Date.now()}.mp4`) : null;
       fs.mkdirSync(ARTIFACTS_DIR, { recursive: true });
       const totalMs = total * 1000;
-      const r = await runFfmpeg(
-        [
-          ...inputs,
-          '-filter_complex',
-          fl.join(';'),
-          '-map',
-          '[vout]',
-          '-map',
-          aout,
-          '-t',
-          total.toFixed(2),
-          '-c:v',
-          'libx264',
-          '-preset',
-          'medium',
-          '-crf',
-          '18',
-          '-c:a',
-          'aac',
-          '-b:a',
-          '192k',
-          '-movflags',
-          '+faststart',
-          '-progress',
-          'pipe:1',
-          outPath,
-        ],
-        {
-          totalMs,
-          cwd: tmpDir, // subtitles=subs.ass 相对路径 + libass 字体目录
-          onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
-        },
-      );
+      // v2.6.3：多输出（成片 + 净版）共享同一 filtergraph；编码参数两路一致
+      const encArgs = [
+        '-t',
+        total.toFixed(2),
+        '-c:v',
+        'libx264',
+        '-preset',
+        'medium',
+        '-crf',
+        '18',
+        '-c:a',
+        'aac',
+        '-b:a',
+        '192k',
+        '-movflags',
+        '+faststart',
+      ];
+      // 注意：ffmpeg 的输出选项在「输出文件名」处消费并重置 —— 每个输出必须自成一组
+      // （-map/编码参数 + 文件名），-progress 作为全局选项前置；否则第二个输出会拿不到参数。
+      const ffArgs = ['-progress', 'pipe:1', ...inputs, '-filter_complex', fl.join(';')];
+      ffArgs.push('-map', '[vout]', '-map', aout, ...encArgs, outPath);
+      if (cleanPath && aoutClean) ffArgs.push('-map', cleanLabel, '-map', aoutClean, ...encArgs, cleanPath);
+      const r = await runFfmpeg(ffArgs, {
+        totalMs,
+        cwd: tmpDir, // subtitles=subs.ass 相对路径 + libass 字体目录
+        onProgress: (pct) => renders.update(job.id, { progress: 40 + Math.round(55 * pct) }),
+      });
       if (!r.ok) {
         log('error', `渲染任务 #${job.id} 终混失败（stderr）：${r.err.slice(0, 1200)}`);
         return this.fail(
@@ -1095,52 +1160,124 @@ class Renderer {
       const outDur = probeDuration(outPath) || total;
 
       /* ---- 5.5) 响度补偿（v1.8.1）：单遍 loudnorm 在稀疏人声内容上会欠校准，
-       * 实测综合响度与 -16 LUFS 目标偏差 >1.5dB 时，音轨直补（视频流免重编码），至多两轮 ---- */
+       * 实测综合响度与 -16 LUFS 目标偏差 >1.5dB 时，音轨直补（视频流免重编码），至多两轮
+       * v2.6.3：成片与净版分别校准（两版内容同源、结果一致；竖屏版由净版派生） ---- */
+      const measureLoudness = (file) => {
+        const probe = spawnSync(
+          'ffmpeg',
+          ['-hide_banner', '-nostats', '-i', file, '-af', 'ebur128', '-f', 'null', '-'],
+          { encoding: 'utf8', timeout: 180_000, windowsHide: true },
+        );
+        const m = /Integrated loudness:\s*I:\s*(-?\d+\.?\d*)\s*LUFS/.exec(probe.stderr || '');
+        return m ? Number(m[1]) : null;
+      };
+      const applyLoudnessFix = async (file, delta) => {
+        const tmpA = `${file}.loud.mp4`;
+        const r2 = await runFfmpeg([
+          '-i',
+          file,
+          '-c:v',
+          'copy',
+          '-af',
+          `volume=${delta.toFixed(1)}dB,alimiter=limit=0.95`,
+          '-c:a',
+          'aac',
+          '-b:a',
+          '192k',
+          '-movflags',
+          '+faststart',
+          tmpA,
+        ]);
+        if (!r2.ok) {
+          log('warn', `响度补偿失败：${r2.err.slice(0, 120)}`);
+          return false;
+        }
+        fs.rmSync(file, { force: true });
+        fs.renameSync(tmpA, file);
+        return true;
+      };
       let finalLoudness = null; // P3 质检报告：最终实测响度
       try {
-        for (let pass = 0; pass < 2; pass++) {
-          const probe = spawnSync(
-            'ffmpeg',
-            ['-hide_banner', '-nostats', '-i', outPath, '-af', 'ebur128', '-f', 'null', '-'],
-            { encoding: 'utf8', timeout: 180_000, windowsHide: true },
-          );
-          const m = /Integrated loudness:\s*I:\s*(-?\d+\.?\d*)\s*LUFS/.exec(probe.stderr || '');
-          if (!m) break;
-          finalLoudness = Math.round(Number(m[1]) * 10) / 10;
-          const delta = -16 - Number(m[1]);
-          if (Math.abs(delta) <= 1.5) {
-            log('info', `渲染任务 #${job.id} 响度达标：${Number(m[1])} LUFS`);
-            break;
+        for (const file of [outPath, cleanPath].filter(Boolean)) {
+          for (let pass = 0; pass < 2; pass++) {
+            const cur = measureLoudness(file);
+            if (cur === null) break;
+            if (file === outPath) finalLoudness = Math.round(cur * 10) / 10;
+            const delta = -16 - cur;
+            if (Math.abs(delta) <= 1.5) {
+              log('info', `渲染任务 #${job.id} 响度达标（${path.basename(file)}）：${cur} LUFS`);
+              break;
+            }
+            if (!(await applyLoudnessFix(file, delta))) break;
+            log(
+              'info',
+              `渲染任务 #${job.id} 响度补偿（${path.basename(file)}） ${delta > 0 ? '+' : ''}${delta.toFixed(1)}dB（实测 ${cur} LUFS → 目标 -16）`,
+            );
           }
-          const tmpA = outPath + '.loud.mp4';
-          const r2 = await runFfmpeg([
-            '-i',
-            outPath,
-            '-c:v',
-            'copy',
-            '-af',
-            `volume=${delta.toFixed(1)}dB,alimiter=limit=0.95`,
-            '-c:a',
-            'aac',
-            '-b:a',
-            '192k',
-            '-movflags',
-            '+faststart',
-            tmpA,
-          ]);
-          if (!r2.ok) {
-            log('warn', `响度补偿失败：${r2.err.slice(0, 120)}`);
-            break;
-          }
-          fs.rmSync(outPath, { force: true });
-          fs.renameSync(tmpA, outPath);
-          log(
-            'info',
-            `渲染任务 #${job.id} 响度补偿 ${delta > 0 ? '+' : ''}${delta.toFixed(1)}dB（实测 ${Number(m[1])} LUFS → 目标 -16）`,
-          );
         }
       } catch (e) {
         log('warn', `响度补偿异常（不影响成片）：${e.message}`);
+      }
+
+      /* ---- 5.6) 竖屏版（v2.6.3 方案 A）：以**净版**为输入（因此背景无字幕重影）----
+       * 布局：画面等比缩放居中（16:9 内容完整保留）+ 背景同画面放大模糊 + 字幕烧在底部安全区。
+       * 发布包抖音分支直接复制该产物（零重编码）；失败不影响成片与归档。 ---- */
+      let portraitPath = null;
+      if (emitPortrait && cleanPath && needSubFilter) {
+        try {
+          const L = portraitLayout(DIMS['9:16']);
+          fs.writeFileSync(
+            path.join(tmpDir, 'portrait.ass'),
+            buildSubtitleAss(subLines, {
+              fontsize: Math.max(24, Math.round(subFontsize * (L.w / OUT_W) * 1.35)), // 跟随成片字号按画布宽度换算（略放大保手机可读）
+              family: font?.family || 'Arial',
+              playResX: L.w,
+              playResY: L.h,
+              marginV: L.marginV,
+              style: subStyle,
+              position: subPosition,
+            }),
+          );
+          portraitPath = path.join(ARTIFACTS_DIR, `render-portrait-${job.id}-${Date.now()}.mp4`);
+          const pvf =
+            `[0:v]scale=${L.w}:${L.h}:force_original_aspect_ratio=increase,crop=${L.w}:${L.h},` +
+            `gblur=sigma=${L.sigma},setsar=1[bg];` +
+            `[0:v]scale=${L.w}:-2,setsar=1[fg];` +
+            `[bg][fg]overlay=(W-w)/2:(H-h)/2,subtitles=portrait.ass,format=yuv420p[v]`;
+          const rp = await runFfmpeg(
+            [
+              '-i',
+              cleanPath,
+              '-filter_complex',
+              pvf,
+              '-map',
+              '[v]',
+              '-map',
+              '0:a?',
+              '-c:v',
+              'libx264',
+              '-preset',
+              'medium',
+              '-crf',
+              '18',
+              '-c:a',
+              'copy',
+              '-movflags',
+              '+faststart',
+              portraitPath,
+            ],
+            { cwd: tmpDir },
+          );
+          if (!rp.ok) {
+            log('warn', `渲染任务 #${job.id} 竖屏合成失败：${rp.err.slice(0, 200)}`);
+            portraitPath = null;
+          } else {
+            log('info', `渲染任务 #${job.id} 竖屏版已合成（${L.w}×${L.h}，字幕底部安全区 ${L.marginV}px）`);
+          }
+        } catch (e) {
+          log('warn', `渲染任务 #${job.id} 竖屏合成异常：${e.message}`);
+          portraitPath = null;
+        }
       }
 
       /* ---- 6) 封面候选（v1.8：3 张关键帧，第一张叠片名；best-effort 不影响成片） ---- */
@@ -1208,6 +1345,8 @@ class Renderer {
         subLines,
         outPath,
         titleCardFile: titleCardCover,
+        cleanPath,
+        portraitPath,
       });
       renders.update(job.id, {
         status: 'completed',
@@ -1355,4 +1494,5 @@ module.exports.titleCardFilters = titleCardFilters; // 片头卡/封面预览共
 module.exports.splitEpisodeLabel = splitEpisodeLabel;
 module.exports.buildPublishPackage = buildPublishPackage; // v2.6 多平台发布包（路由手动重生成共用）
 module.exports.fillAspect = fillAspect; // v2.6 画幅模糊填充（竖屏切片/封面互转共用）
+module.exports.portraitLayout = portraitLayout; // v2.6.3 竖屏合成布局（单测/预览共用）
 module.exports.probeSize = probeSize;

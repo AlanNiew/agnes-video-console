@@ -178,6 +178,9 @@ module.exports = function registerRenderRoutes(app) {
           : p.aspect_ratio === '9:16'
             ? '9:16'
             : '16:9',
+        // v2.6.3 交付产物：净版成片（改字幕/二次剪辑备用）+ 竖屏版（发布包抖音分支直接用），默认均开启
+        emit_clean: b.emit_clean === undefined ? true : Boolean(b.emit_clean),
+        emit_portrait: b.emit_portrait === undefined ? true : Boolean(b.emit_portrait),
       };
       const collected = renderer.collectSegments(p.id);
       const ready = collected ? collected.segments.length : 0;
