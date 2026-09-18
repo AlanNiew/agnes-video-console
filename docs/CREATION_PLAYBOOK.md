@@ -63,6 +63,16 @@
 15. **服务进程周期性掉线（ECONNREFUSED）→ 重启自愈**：本环境实测 node server.js 周期性掉线（原因未查明）→ 重启（`FISH_PROXY=127.0.0.1:7897` + Start-Process）后自愈；**渲染中崩溃遗留任务由 start() 自愈复位续跑**（实测重启后 3 部 queued/rendering 自动跑完）。长渲染期间轮询出现 fetch failed 先重启再查。
 16. **声音广场（listWebModels）需走 FISH_PROXY 隧道**：原实现用 Node 原生 fetch（不走代理），配了代理的机器上必 fetch failed（与早前 TTS 代理问题同源）。改为走隧道（新增通用 requestJson：CONNECT + TLS + createConnection，注意不传 agent:false），实测 `/api/tts/market` 恢复正常。市场音色须先 `POST /api/tts/pool {id,title,...}` 入池才能用于生成。
 
+17. **即梦（Dreamina）图片 URL 是短时效签名，实测约 1 小时即 403**：以即梦图作视频**参考图**跨时段提交会报
+    `media URL could not be downloaded`（400，`param: images`）——E07 两次实撞（`preflight` 的 CDN 测速项也会因它误报：
+    `platform-outputs.agnes-ai.space` = Agnes 有效样本，`*-dreamina-sign.byteimg.com` = 即梦签名图，忽略该项）。
+    **需跨时段复用的参考图一律用 Agnes 版**（URL 长期有效）；即梦图只用于「生成后立即提交」。
+18. **竖屏版 ≠ 把横屏成片塞进 9:16 画布**：早期做法（模糊填充**含字幕**成片）会让**字幕落在画面条带下缘**、
+    **模糊背景里带字幕重影**。v2.6.3+ 正确做法：渲染产出 **`成片-净版-N.mp4`（不烧字幕）** → 竖屏以净版为输入
+    （画面上 + 同画面放大模糊作背景）+ 字幕**顶锚定**重烧（ASS `Alignment=8`：顶边紧贴画面下方 gap 26px、
+    位置不随行数跳动；字号 ≈ 画布宽 5.8%）。渲染一次产三件：`成片` / `成片-净版` / `成片-竖屏`；
+    发布包 `抖音/成片-竖屏.mp4` 直接复制该产物（零重编码）。
+
 ## 三、成片自检清单（交付前必查）
 
 - [ ] 每镜旁白：`tts.duration + 0.5 ≤ 实际镜头时长`（`GET /api/projects/:id` 比对 tts 与 shots）
