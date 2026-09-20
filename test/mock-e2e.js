@@ -1644,7 +1644,9 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       const wkName = path.basename(renJob.work_dir);
       if (!wkName.includes(`-${pid}`) || !wkName.startsWith('《'))
         err(`作品目录名异常: ${wkName}（应为《项目名》-id）`);
-      const fmp4 = path.join(renJob.work_dir, `成片-${renJob.id}.mp4`);
+      // v2.6.5 成片文件名用作品名（作品目录名《项目名》-pid → 去掉《》与 -pid）
+      const projName = wkName.slice(1).replace(/》-\d+$/, '');
+      const fmp4 = path.join(renJob.work_dir, `${projName}-${renJob.id}.mp4`);
       const fsrt = path.join(renJob.work_dir, `字幕-${renJob.id}.srt`);
       const ftxt = path.join(renJob.work_dir, '旁白台词.txt');
       if (!fs.existsSync(fmp4)) err(`作品目录缺成片: ${fmp4}`);
@@ -1691,13 +1693,18 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       const streamOf = (file, sel) =>
         (probeMeta(file, ['-select_streams', sel, '-show_entries', 'stream']).streams || [])[0] || {};
       const durOf = (file) => Number(probeMeta(file, ['-show_entries', 'format=duration']).format?.duration);
+      // v2.6.5 发布包内文件名同样用作品名（上传时即标题）
+      const projName = path
+        .basename(renJob.work_dir)
+        .slice(1)
+        .replace(/》-\d+$/, '');
       if (!fs.existsSync(pkgDir)) err('渲染归档未生成发布包目录 发布包/');
       else {
         const need = [
-          'B站/成片.mp4',
+          `B站/${projName}.mp4`,
           'B站/封面.png',
           'B站/文案.txt',
-          '抖音/成片-竖屏.mp4',
+          `抖音/${projName}-竖屏.mp4`,
           '抖音/封面-竖屏.png',
           '抖音/文案.txt',
           'README.md',
@@ -1713,10 +1720,10 @@ async function waitCompleted(id, timeoutMs = 30_000) {
           err('发布包 README 缺上传步骤');
         }
         // 竖屏发布片：720×1280 且时长与成片一致（音频流拷贝，只做视频滤镜）
-        const dyFilm = path.join(pkgDir, '抖音/成片-竖屏.mp4');
+        const dyFilm = path.join(pkgDir, `抖音/${projName}-竖屏.mp4`);
         const v = streamOf(dyFilm, 'v:0');
         if (v.width !== 720 || v.height !== 1280) err(`竖屏发布片画幅异常: ${v.width}x${v.height}`);
-        const dFilm = durOf(path.join(renJob.work_dir, `成片-${renJob.id}.mp4`));
+        const dFilm = durOf(path.join(renJob.work_dir, `${projName}-${renJob.id}.mp4`));
         const dDy = durOf(dyFilm);
         if (Number.isFinite(dFilm) && Number.isFinite(dDy) && Math.abs(dFilm - dDy) > 0.2) {
           err(`竖屏切片时长与成片不一致: ${dFilm}s vs ${dDy}s`);
@@ -1740,7 +1747,7 @@ async function waitCompleted(id, timeoutMs = 30_000) {
       const pp = await api('POST', `/api/projects/${pid}/publish-package`, { render_job_id: renJob.id });
       if (pp.status !== 201 || !pp.data.path) err(`发布包路由返回异常: ${JSON.stringify(pp.data).slice(0, 160)}`);
       const names = (pp.data.files || []).map((f) => f.name);
-      for (const n of ['成片.mp4', '成片-竖屏.mp4', '文案.txt']) {
+      for (const n of [`${projName}.mp4`, `${projName}-竖屏.mp4`, '文案.txt']) {
         if (!names.includes(n)) err(`发布包清单缺 ${n}`);
       }
       if ((await api('POST', '/api/projects/999999/publish-package')).status !== 404) {

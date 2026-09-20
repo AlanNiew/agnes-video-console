@@ -15,7 +15,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { projects, renders, settings } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
-const { ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
+const { ARTIFACTS_DIR, workDirFor, safeProjectName } = require('../lib/artifacts');
 const { createNetmusicClient } = require('../clients/netmusic');
 const netmusic = createNetmusicClient(settings);
 const { log } = require('../core/logger');
@@ -541,6 +541,7 @@ function portraitLayout({ w = 720, h = 1280, gap = 26 } = {}) {
 async function buildPublishPackage({ project, job, filmPath, coverPath = null, portraitPath = null, workDir }) {
   const pkgDir = path.join(workDir, '发布包');
   const notes = [];
+  const base = safeProjectName(project, '成片'); // v2.6.5 发布包内文件用作品名（上传时即标题）
   const meta = findPublishMeta(project) || {};
   const copy = buildPlatformCopy({ project, meta, job });
   const biliDir = path.join(pkgDir, PLATFORMS[0].dir);
@@ -553,7 +554,7 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, p
   fs.mkdirSync(dyDir, { recursive: true });
 
   // ---- B 站：成片直接可用（不重编码）----
-  fs.copyFileSync(filmPath, path.join(biliDir, '成片.mp4'));
+  fs.copyFileSync(filmPath, path.join(biliDir, `${base}.mp4`));
   // B 站封面：16:9（源封面画幅不合时用同款模糊填充，满足 ≥1146×717 的画幅要求）
   const biliCover = path.join(biliDir, '封面.png');
   if (coverPath && fs.existsSync(coverPath)) {
@@ -569,7 +570,7 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, p
 
   // ---- 抖音 / 快手：9:16 竖屏（v2.6.3 优先用渲染期独立合成的竖屏版：画面上 + 字幕底部安全区，
   //      背景取自无字幕净版 → 无字幕重影；缺失时回退「模糊填充含字幕成片」的旧路径）----
-  const dyFilm = path.join(dyDir, '成片-竖屏.mp4');
+  const dyFilm = path.join(dyDir, `${base}-竖屏.mp4`);
   const filmSize = probeSize(filmPath);
   if (portraitPath && fs.existsSync(portraitPath) && fs.statSync(portraitPath).size > 0) {
     fs.copyFileSync(portraitPath, dyFilm);
@@ -596,8 +597,9 @@ async function buildPublishPackage({ project, job, filmPath, coverPath = null, p
   const files = [];
   for (const p of PLATFORMS) {
     const dir = path.join(pkgDir, p.dir);
-    fs.writeFileSync(path.join(dir, '文案.txt'), `\ufeff${renderCopyText(p.key, copy[p.key], p.files)}`, 'utf8');
-    for (const f of p.files) {
+    const items = p.files(base); // v2.6.5 交付物名用作品名
+    fs.writeFileSync(path.join(dir, '文案.txt'), `\ufeff${renderCopyText(p.key, copy[p.key], items)}`, 'utf8');
+    for (const f of items) {
       const abs = path.join(dir, f.name);
       if (fs.existsSync(abs)) files.push({ platform: p.dir, name: f.name, path: abs, role: f.role });
     }
@@ -628,19 +630,20 @@ async function archiveWork({
   try {
     const { dir } = workDirFor(project);
     fs.mkdirSync(dir, { recursive: true });
-    // 成片（版本化：同项目多次渲染共存）
-    fs.copyFileSync(outPath, path.join(dir, `成片-${job.id}.mp4`));
+    // v2.6.5 成片文件名用作品名（如「幻灯屋 S1E07 忘れ傘-125.mp4」）；项目名为空时回退「成片」
+    const base = safeProjectName(project, '成片');
+    fs.copyFileSync(outPath, path.join(dir, `${base}-${job.id}.mp4`));
     // v2.6.3 净版成片（无字幕：人工改字幕 / 二次剪辑备用）与竖屏版（发布包抖音分支直接用）
     if (cleanPath && fs.existsSync(cleanPath)) {
       try {
-        fs.copyFileSync(cleanPath, path.join(dir, `成片-净版-${job.id}.mp4`));
+        fs.copyFileSync(cleanPath, path.join(dir, `${base}-净版-${job.id}.mp4`));
       } catch {
         /* 净版归档失败不影响成片 */
       }
     }
     if (portraitPath && fs.existsSync(portraitPath)) {
       try {
-        fs.copyFileSync(portraitPath, path.join(dir, `成片-竖屏-${job.id}.mp4`));
+        fs.copyFileSync(portraitPath, path.join(dir, `${base}-竖屏-${job.id}.mp4`));
       } catch {
         /* 竖屏归档失败不影响成片 */
       }
@@ -689,7 +692,7 @@ async function archiveWork({
       const r = await buildPublishPackage({
         project,
         job,
-        filmPath: path.join(dir, `成片-${job.id}.mp4`),
+        filmPath: path.join(dir, `${base}-${job.id}.mp4`), // v2.6.5 与归档同名（作品名）
         coverPath: path.join(dir, '封面.png'),
         portraitPath: portraitPath && fs.existsSync(portraitPath) ? portraitPath : null,
         workDir: dir,
@@ -1283,7 +1286,7 @@ class Renderer {
             log('warn', `渲染任务 #${job.id} 竖屏合成失败：${rp.err.slice(0, 200)}`);
             portraitPath = null;
           } else {
-            log('info', `渲染任务 #${job.id} 竖屏版已合成（${L.w}×${L.h}，字幕底部安全区 ${L.marginV}px）`);
+            log('info', `渲染任务 #${job.id} 竖屏版已合成（${L.w}×${L.h}，字幕顶距 ${L.marginVTop}px）`);
           }
         } catch (e) {
           log('warn', `渲染任务 #${job.id} 竖屏合成异常：${e.message}`);

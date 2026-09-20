@@ -50,9 +50,18 @@ const takeOk = (t) => Boolean(t && t.status === 'completed' && t.video_local_pat
   const items = []; // {seq,label,file,seconds}
 
   if (args.tasks) {
-    for (const id of String(args.tasks).split(',').map((x) => x.trim()).filter(Boolean)) {
+    for (const id of String(args.tasks)
+      .split(',')
+      .map((x) => x.trim())
+      .filter(Boolean)) {
       const t = await fetch(`${API}/api/tasks/${id}`).then((r) => r.json());
-      if (takeOk(t)) items.push({ seq: t.shot_seq ?? 0, label: `镜${t.shot_seq ?? '?'} · #${t.id}`, file: t.video_local_path, seconds: t.seconds });
+      if (takeOk(t))
+        items.push({
+          seq: t.shot_seq ?? 0,
+          label: `镜${t.shot_seq ?? '?'} · #${t.id}`,
+          file: t.video_local_path,
+          seconds: t.seconds,
+        });
       else console.error(`跳过任务 #${id}（无本地视频：${t.status}）`);
     }
   } else if (args.project) {
@@ -72,10 +81,17 @@ const takeOk = (t) => Boolean(t && t.status === 'completed' && t.video_local_pat
         console.error(`跳过镜${s.seq}（无可用视频）`);
         continue;
       }
-      items.push({ seq: s.seq, label: `镜${s.seq}${s.title ? ` ${s.title}` : ''}`, file: t.video_local_path, seconds: t.seconds || s.seconds });
+      items.push({
+        seq: s.seq,
+        label: `镜${s.seq}${s.title ? ` ${s.title}` : ''}`,
+        file: t.video_local_path,
+        seconds: t.seconds || s.seconds,
+      });
     }
   } else {
-    console.error('用法：node tools/contact-sheet.js --project <id> [--shots 1-5,8] [--cols 4] [--at 0.55] [--out sheet.png]');
+    console.error(
+      '用法：node tools/contact-sheet.js --project <id> [--shots 1-5,8] [--cols 4] [--at 0.55] [--out sheet.png]',
+    );
     console.error('  或：node tools/contact-sheet.js --tasks <id,id,...>');
     process.exit(1);
   }
@@ -101,7 +117,17 @@ const takeOk = (t) => Boolean(t && t.status === 'completed' && t.video_local_pat
     const rows = Math.ceil(items.length / COLS);
     execFileSync(
       'ffmpeg',
-      ['-y', '-nostdin', '-framerate', '1', '-i', path.join(tmp, 'f-%03d.png'), '-vf', `tile=${COLS}x${rows}:padding=4:color=black`, OUT],
+      [
+        '-y',
+        '-nostdin',
+        '-framerate',
+        '1',
+        '-i',
+        path.join(tmp, 'f-%03d.png'),
+        '-vf',
+        `tile=${COLS}x${rows}:padding=4:color=black`,
+        OUT,
+      ],
       { stdio: 'ignore' },
     );
     console.log(`\n✅ 抽帧网格已生成（${items.length} 帧 · ${COLS} 列）→ ${OUT}`);

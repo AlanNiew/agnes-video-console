@@ -2,6 +2,20 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.5] - 2026-09-18
+
+### Changed
+
+- **成片文件名改用作品名**（依用户反馈）：作品目录内的交付物由通用的「成片-<渲染号>.mp4」改为
+  「**<作品名>-<渲染号>.mp4**」（如 `幻灯屋 S1E07 忘れ傘-125.mp4`），净版与竖屏同理
+  （`-净版-` / `-竖屏-` 中缀）；发布包内亦改为 `<作品名>.mp4` / `<作品名>-竖屏.mp4`（上传时文件名即标题）。
+  项目名为空时回退「成片」，保持旧行为。
+- 抽取 `lib/artifacts.js` 的 `safeProjectName()`（原先内联在 `workDirFor` 内），供渲染器与发布物料复用；
+  `lib/publish-package.js` 的 `PLATFORMS[].files` 由静态数组改为 `files(filmName)` 函数。
+- **向后兼容（旧产物不动、仍可用）**：作品库扫描（`/api/works`）改为「`-<数字>.mp4` 结尾且非净版/竖屏」匹配，
+  旧命名（`成片-125.mp4`）与新命名一并入库；`POST /api/projects/:id/publish-package` 定位成片时
+  优先新名、回退旧名、最后回退渲染产物路径。
+
 ## [2.6.4] - 2026-09-18
 
 ### Changed

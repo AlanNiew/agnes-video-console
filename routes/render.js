@@ -11,7 +11,7 @@ const { log } = require('../core/logger');
 const { RENDER_PARAMS_DEFAULTS, probeDuration } = require('../core/config');
 const { RENDER_TRANSITIONS, SUBTITLE_STYLES, SUBTITLE_POSITIONS } = require('../core/constants');
 const { ApiError, ah } = require('../core/errors');
-const { WORKS_DIR, ARTIFACTS_DIR, workDirFor } = require('../lib/artifacts');
+const { WORKS_DIR, ARTIFACTS_DIR, workDirFor, safeProjectName } = require('../lib/artifacts');
 const { buildPublishKit } = require('../lib/publish-kit'); // v2.5 发布物料（B站一键复制文案）
 const { decorateRenderJob } = require('../lib/render-stage'); // v2.5.1 渲染阶段文案（进度 → 人话）
 const { streamDuration, computeVideoMetrics } = require('../lib/video-metrics'); // v2.5 客观指标（与镜头级筛查共用）
@@ -43,8 +43,10 @@ module.exports = function registerRenderRoutes(app) {
       } catch {
         continue;
       }
+      // v2.6.5 成片名改为「作品名-渲染号.mp4」；沿用 -<数字>.mp4 匹配以兼容旧产物，
+      // 并排除净版/竖屏变体（同一渲染的附属产物，不作为独立版本展示）
       const films = files
-        .filter((f) => /^成片-.*\.mp4$/.test(f))
+        .filter((f) => /-\d+\.mp4$/.test(f) && !/-(?:净版|竖屏)-\d+\.mp4$/.test(f))
         .map((f) => fileEntry(dir, dirName, f))
         .sort((a, b) => b.mtime - a.mtime);
       if (!films.length) continue; // 无成片的半成品目录不入库
@@ -59,7 +61,7 @@ module.exports = function registerRenderRoutes(app) {
       let latestRenderAt = null;
       try {
         const job = (renders.listByProject(projectId) || []).find(
-          (j) => j.status === 'completed' && films.some((f) => f.name === `成片-${j.id}.mp4`),
+          (j) => j.status === 'completed' && films.some((f) => f.name.endsWith(`-${j.id}.mp4`)),
         );
         if (job) {
           quality = job.quality;
@@ -324,8 +326,14 @@ module.exports = function registerRenderRoutes(app) {
       const job = wantId ? done.find((j) => j.id === wantId) : done.sort((a, b) => b.id - a.id)[0];
       if (!job) throw new ApiError(400, '还没有已完成的成片，无法生成发布包（请先渲染成片）');
       const { dir } = workDirFor(p);
-      // 作品目录里的版本化成片优先，回退渲染产物路径（工作目录被清理时仍可用）
-      const filmPath = [path.join(dir, `成片-${job.id}.mp4`), job.output_path].find((f) => f && fs.existsSync(f));
+      // 作品目录里的版本化成片优先（v2.6.5 起名为「作品名-渲染号.mp4」，旧产物回退「成片-渲染号.mp4」），
+      // 再回退渲染产物路径（工作目录被清理时仍可用）
+      const base = safeProjectName(p, '成片');
+      const filmPath = [
+        path.join(dir, `${base}-${job.id}.mp4`),
+        path.join(dir, `成片-${job.id}.mp4`),
+        job.output_path,
+      ].find((f) => f && fs.existsSync(f));
       if (!filmPath) throw new ApiError(400, `找不到渲染 #${job.id} 的成片文件，请重新渲染后再试`);
       let r;
       try {

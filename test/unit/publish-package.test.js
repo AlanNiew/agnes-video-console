@@ -80,15 +80,15 @@ describe('文案推导（buildPlatformCopy）', () => {
 describe('文案.txt / README', () => {
   test('B 站文案.txt 含标题/简介/标签/分区合集/置顶评论章节', () => {
     const copy = buildPlatformCopy({ project, meta, job });
-    const txt = renderCopyText('bilibili', copy.bilibili, PLATFORMS[0].files);
+    const txt = renderCopyText('bilibili', copy.bilibili, PLATFORMS[0].files(project.name));
     for (const k of ['标题', '简介', '标签', '分区 / 合集', '置顶评论', '上传文件']) expect(txt).toContain(k);
     expect(txt).toContain('原创动画,动画短片');
   });
 
   test('抖音文案.txt 含短标题/话题/上传文件，话题带 # 前缀', () => {
     const copy = buildPlatformCopy({ project, meta, job });
-    const txt = renderCopyText('douyin', copy.douyin, PLATFORMS[1].files);
-    for (const k of ['短标题', '话题标签', '上传文件', '成片-竖屏.mp4']) expect(txt).toContain(k);
+    const txt = renderCopyText('douyin', copy.douyin, PLATFORMS[1].files(project.name));
+    for (const k of ['短标题', '话题标签', '上传文件', `${project.name}-竖屏.mp4`]) expect(txt).toContain(k);
     expect(txt).toContain('#原创动画');
   });
 
