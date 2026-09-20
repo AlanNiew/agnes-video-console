@@ -59,12 +59,18 @@ function createPipelineService(deps) {
     aspectRatio,
     shotId = null,
     model = null,
+    mode: modeOverride = null,
   }) {
     const p = projects.get(projectId);
     if (!p) throw new ApiError(404, '项目不存在');
     const secondsFinal = String(seconds || p.seconds || '5');
     const ratioFinal = String(aspectRatio || p.aspect_ratio || '16:9');
-    const { mode, prompt: finalPrompt, refs } = composeSubmission({ p, shot, prompt });
+    // v2.6.6：允许**提交时覆盖 mode**（当前仅支持 'text'）。
+    // 动机：agnes-video-v2.0 的 multi_reference 实测「未给 background_image 时至少需 2 张图」，
+    // 而大量镜头只引用 1 个角色 → 那些镜只能走文生（提示词里已带完整角色文字锚）。
+    // 用提交时覆盖而非改镜头数据：镜头仍保留 ref_image_ids，将来用 flash 生成时照样能引用角色图。
+    const effShot = modeOverride === 'text' ? { ...(shot || {}), mode: 'text' } : shot;
+    const { mode, prompt: finalPrompt, refs } = composeSubmission({ p, shot: effShot, prompt });
     // v2.6.6：允许**逐镜指定模型**（默认仍是免费档 flash）。
     // 动机：flash 队列长期 `video_queue_full`，而 v2.0 队列可用；需要能把个别镜头切到 v2.0 出片。
     // 未知模型名一律回落到默认档（与 buildPayload 的兜底一致，不静默用错模型）。

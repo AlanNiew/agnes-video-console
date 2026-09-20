@@ -457,6 +457,7 @@ module.exports = function registerProjectRoutes(app) {
         aspectRatio: b.aspect_ratio,
         shotId: shot.id,
         model: b.model || null, // v2.6.6：可选逐镜模型覆盖（如切 agnes-video-v2.0 绕开 flash 队列）
+        mode: b.mode || null, // v2.6.6：可选提交时模式覆盖（'text' 用于 v2.0 单参考图镜——multi_reference 至少需 2 张图）
       });
       res.status(201).json(task);
     }),
