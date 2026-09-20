@@ -456,6 +456,7 @@ module.exports = function registerProjectRoutes(app) {
         seconds: b.seconds || shot.seconds,
         aspectRatio: b.aspect_ratio,
         shotId: shot.id,
+        model: b.model || null, // v2.6.6：可选逐镜模型覆盖（如切 agnes-video-v2.0 绕开 flash 队列）
       });
       res.status(201).json(task);
     }),
@@ -485,6 +486,7 @@ module.exports = function registerProjectRoutes(app) {
           seconds: b.seconds || shot.seconds,
           aspectRatio: b.aspect_ratio,
           shotId: shot.id,
+          model: b.model || null, // v2.6.6：重拍同样支持逐镜模型覆盖
         });
         created.push({ id: task.id, status: task.status });
       }

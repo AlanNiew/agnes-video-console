@@ -9,6 +9,7 @@
  * 依赖由 server.js 注入（避免循环 require）。
  */
 const { ensureCharacterRefPrefix, ensureStyleAnchor } = require('./prompts');
+const { MODELS } = require('../core/constants');
 
 function createPipelineService(deps) {
   const { projects, buildPayload, submitTask, ApiError, log } = deps;
@@ -50,14 +51,26 @@ function createPipelineService(deps) {
     return { mode: 'reference', prompt: ensureCharacterRefPrefix(anchored, refs.length), refs };
   }
 
-  async function submitVideoTask({ projectId, shot = null, prompt, seconds, aspectRatio, shotId = null }) {
+  async function submitVideoTask({
+    projectId,
+    shot = null,
+    prompt,
+    seconds,
+    aspectRatio,
+    shotId = null,
+    model = null,
+  }) {
     const p = projects.get(projectId);
     if (!p) throw new ApiError(404, '项目不存在');
     const secondsFinal = String(seconds || p.seconds || '5');
     const ratioFinal = String(aspectRatio || p.aspect_ratio || '16:9');
     const { mode, prompt: finalPrompt, refs } = composeSubmission({ p, shot, prompt });
+    // v2.6.6：允许**逐镜指定模型**（默认仍是免费档 flash）。
+    // 动机：flash 队列长期 `video_queue_full`，而 v2.0 队列可用；需要能把个别镜头切到 v2.0 出片。
+    // 未知模型名一律回落到默认档（与 buildPayload 的兜底一致，不静默用错模型）。
+    const pickedModel = model && MODELS[model] ? String(model) : 'agnes-video-2.5-flash';
     const base = {
-      model: 'agnes-video-2.5-flash',
+      model: pickedModel,
       prompt: finalPrompt,
       mode,
       seconds: secondsFinal,

@@ -335,6 +335,15 @@ module.exports = function registerRenderRoutes(app) {
         job.output_path,
       ].find((f) => f && fs.existsSync(f));
       if (!filmPath) throw new ApiError(400, `找不到渲染 #${job.id} 的成片文件，请重新渲染后再试`);
+      // v2.6.6：必须把**渲染期独立合成的竖屏产物**传下去。
+      // 此前这里漏传 portraitPath，于是独立调用 publish-package 时永远走"模糊填充含字幕成片"的旧分支
+      // （notes 里会自陈"未找到渲染期竖屏产物"），把 v2.6.3「方案 A」的竖屏静默降级——
+      // 字幕可能落进画面条带、背景带字幕重影（E07 复盘 ⑭ 用户反馈的正是这个）。
+      // 而渲染归档路径（workers/render.js）是**会传**的，故两条路径行为不一致。
+      const portraitPath =
+        [path.join(dir, `${base}-竖屏-${job.id}.mp4`), path.join(dir, `成片-竖屏-${job.id}.mp4`)].find(
+          (f) => f && fs.existsSync(f),
+        ) || null;
       let r;
       try {
         r = await renderer.buildPublishPackage({
@@ -342,6 +351,7 @@ module.exports = function registerRenderRoutes(app) {
           job,
           filmPath,
           coverPath: path.join(dir, '封面.png'),
+          portraitPath,
           workDir: dir,
         });
       } catch (e) {

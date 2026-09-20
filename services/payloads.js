@@ -90,6 +90,18 @@ function gcd(a, b) {
 }
 
 /**
+ * v2.6.6：秒 → 合法帧数（上游 v2.0 要求 9–441 且满足 8n+1）
+ * 就近吸附并保证**不小于**请求时长（宁可多 1 帧，也不要少——渲染是按素材实际时长铺时间轴的）。
+ * 例：10s@24fps → 241 帧（10.04s）· 12s → 289（12.04s）· 6s → 145（6.04s）· 5s → 121（5.04s）
+ */
+function snapNumFrames(seconds, frameRate = 24) {
+  const raw = Math.round(Number(seconds) * Number(frameRate));
+  if (!Number.isFinite(raw)) return 121;
+  const snapped = Math.round((raw - 1) / 8) * 8 + 1;
+  return Math.max(9, Math.min(441, snapped));
+}
+
+/**
  * agnes-video-v2.0 参数构建（对照官方文档）
  * 模式：text（文生）/ image（图生，单图）/ keyframes（关键帧，extra_body.image 数组）
  * 时长由 num_frames / frame_rate 决定；尺寸由 width/height 决定（服务端会标准化到 480p/720p/1080p）
@@ -101,17 +113,23 @@ function buildV2Payload(b) {
 
   const mode = b.mode !== undefined ? String(b.mode) : 'text';
 
-  const numFrames = Number(b.num_frames ?? 121);
-  if (!Number.isInteger(numFrames) || numFrames < 9 || numFrames > 441) {
-    throw new ApiError(400, `num_frames 需为 9–441 的整数，收到：${b.num_frames}`);
-  }
-  if ((numFrames - 1) % 8 !== 0) {
-    throw new ApiError(400, `num_frames 必须满足 8n+1 规则（如 81/121/241/441），收到：${numFrames}`);
-  }
-
   const frameRate = Number(b.frame_rate ?? 24);
   if (!Number.isFinite(frameRate) || frameRate < 1 || frameRate > 60) {
     throw new ApiError(400, `frame_rate 需在 1–60 之间，收到：${b.frame_rate}`);
+  }
+
+  // v2.6.6：上游 v2.0 **只认帧数**（且必须满足 8n+1）。调用方若只给了 seconds（POST /api/tasks，
+  // 或将来把镜头链路切到 v2.0），这里按 seconds × fps 就近吸附到合法帧数。
+  // ⚠️ 缺这层映射的后果：静默退回默认 121 帧 ≈ 5.04s，而本系列镜头是 10–12s——渲染按素材**实际时长**走，
+  // 成片会整体缩短（已识别的毁片路径）。
+  const hasFrames = b.num_frames !== undefined && b.num_frames !== null && b.num_frames !== '';
+  const hasSeconds = b.seconds !== undefined && b.seconds !== null && b.seconds !== '';
+  const numFrames = hasFrames ? Number(b.num_frames) : hasSeconds ? snapNumFrames(b.seconds, frameRate) : 121;
+  if (!Number.isInteger(numFrames) || numFrames < 9 || numFrames > 441) {
+    throw new ApiError(400, `num_frames 需为 9–441 的整数，收到：${b.num_frames ?? numFrames}`);
+  }
+  if ((numFrames - 1) % 8 !== 0) {
+    throw new ApiError(400, `num_frames 必须满足 8n+1 规则（如 81/121/241/441），收到：${numFrames}`);
   }
 
   const seed = b.seed === undefined || b.seed === null || b.seed === '' ? null : Number(b.seed);
@@ -127,7 +145,12 @@ function buildV2Payload(b) {
   }
   const negativePrompt = b.negative_prompt ? String(b.negative_prompt).trim() : '';
 
-  const payload = { model, prompt, num_frames: numFrames, frame_rate: frameRate };
+  // v2.6.6：上游 v2.0 的 mode 枚举是 **ti2vid / keyframes / multi_reference**（没有 text/image）。
+  // 不传顶层 mode 会被上游判为路由失败——实测返回 503 `fail_to_fetch_task`「no available server」，
+  // 而带 mode:'ti2vid' 的文生请求实测 **200 受理**。图生/关键帧同样归到 keyframes
+  //（keyframes 分支另在 extra_body.mode 里重复声明，保持既有行为）。
+  const upstreamMode = mode === 'text' ? 'ti2vid' : 'keyframes';
+  const payload = { model, prompt, mode: upstreamMode, num_frames: numFrames, frame_rate: frameRate };
   if (seed !== null) payload.seed = seed;
   if (width !== null && height !== null) {
     payload.width = width;
@@ -137,6 +160,7 @@ function buildV2Payload(b) {
 
   let imageUrl = '';
   const images = [];
+  const upstreamModes = { text: 'ti2vid', image: 'keyframes', keyframes: 'keyframes', reference: 'multi_reference' };
   if (mode === 'text') {
     const hasMedia = (b.image && String(b.image).trim()) || (Array.isArray(b.images) && b.images.length);
     if (hasMedia) throw new ApiError(400, 'v2.0 文生视频模式不允许携带图片（image / images）');
@@ -144,8 +168,18 @@ function buildV2Payload(b) {
     imageUrl = String(b.image || '').trim();
     if (!isHttpUrl(imageUrl)) throw new ApiError(400, '图生视频模式需要提供可公开访问的 image URL');
     payload.image = imageUrl;
+    payload.mode = upstreamModes.image;
+  } else if (mode === 'reference') {
+    // v2.6.6：角色参考图（"保持一致外观"）走上游的 **multi_reference**——
+    // 实测：顶层 mode='multi_reference' + extra_body {image:[...], mode:'multi_reference'} → 200 受理；
+    // 而 keyframes 是"首尾帧插值"，语义不同（不要混用）。至少 1 张即可。
+    const refs = cleanUrlList(b.images, '角色参考图');
+    if (!refs.length) throw new ApiError(400, 'reference 模式至少需要 1 张参考图 URL');
+    payload.mode = upstreamModes.reference;
+    payload.extra_body = { image: refs, mode: 'multi_reference' };
+    images.push(...refs);
   } else {
-    // keyframes
+    // keyframes（首尾帧插值）
     const frames = cleanUrlList(b.images, '关键帧图片');
     if (frames.length < 2) throw new ApiError(400, '关键帧动画至少需要 2 张关键帧图片 URL');
     payload.extra_body = { image: frames, mode: 'keyframes' };
@@ -657,6 +691,7 @@ module.exports = {
   cleanUrlList,
   cleanVideoList,
   gcd,
+  snapNumFrames,
   buildV2Payload,
   buildV25Payload,
   buildPayload,

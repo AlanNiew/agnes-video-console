@@ -12,6 +12,7 @@ const {
   isHttpUrl,
   safeUrl,
   gcd,
+  snapNumFrames,
 } = require('../../services/payloads');
 const { ApiError } = require('../../core/errors');
 
@@ -225,6 +226,44 @@ describe('buildV2Payload（V2.0 家族）', () => {
   test('text 模式不允许携带图片', () => {
     expectApiError(400, () => buildV2Payload({ ...base, image: 'https://a.com/i.jpg' }));
     expectApiError(400, () => buildV2Payload({ ...base, images: ['https://a.com/i.jpg'] }));
+  });
+
+  // v2.6.6 修复：上游只认帧数，且顶层 mode 必须是 ti2vid/keyframes/multi_reference
+  test('v2.6.6：只给 seconds 时按 8n+1 就近吸附，不再静默退回 121 帧', () => {
+    expect(snapNumFrames(10, 24)).toBe(241); // 10.04s
+    expect(snapNumFrames(12, 24)).toBe(289); // 12.04s
+    expect(snapNumFrames(6, 24)).toBe(145); // 6.04s
+    expect(snapNumFrames(4, 24)).toBe(97); // 4.04s
+    expect(snapNumFrames(999, 24)).toBe(441); // 上限夹紧
+    const { payload, meta } = buildV2Payload({ ...base, seconds: '10' });
+    expect(payload.num_frames).toBe(241);
+    expect((payload.num_frames - 1) % 8).toBe(0);
+    expect(meta.seconds).toBe('10.04');
+    // 显式 num_frames 优先，不被 seconds 覆盖
+    expect(buildV2Payload({ ...base, seconds: '10', num_frames: 121 }).payload.num_frames).toBe(121);
+  });
+
+  test('v2.6.6：顶层 mode 用上游枚举（text→ti2vid，其余→keyframes）', () => {
+    expect(buildV2Payload(base).payload.mode).toBe('ti2vid');
+    expect(buildV2Payload({ ...base, mode: 'image', image: 'https://a.com/i.jpg' }).payload.mode).toBe('keyframes');
+    const kf = buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] });
+    expect(kf.payload.mode).toBe('keyframes');
+  });
+
+  test('v2.6.6：reference（角色参考图）走上游 multi_reference，至少 1 张即可', () => {
+    const one = buildV2Payload({ ...base, mode: 'reference', images: ['https://a.com/1.jpg'] });
+    expect(one.payload.mode).toBe('multi_reference');
+    expect(one.payload.extra_body).toEqual({ image: ['https://a.com/1.jpg'], mode: 'multi_reference' });
+    expect(one.meta.images).toHaveLength(1);
+    const two = buildV2Payload({ ...base, mode: 'reference', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] });
+    expect(two.payload.mode).toBe('multi_reference');
+    expect(two.payload.extra_body.image).toHaveLength(2);
+    expectApiError(400, () => buildV2Payload({ ...base, mode: 'reference' })); // 无参考图
+    // 与 keyframes（首尾帧插值）语义不同，不得混用
+    expect(
+      buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] }).payload
+        .mode,
+    ).toBe('keyframes');
   });
 });
 
