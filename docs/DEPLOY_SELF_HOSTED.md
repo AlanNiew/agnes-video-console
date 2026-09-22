@@ -250,24 +250,30 @@ done
 `deploy/nginx-agnes.conf`。
 
 ```bash
-# ① 证书（DNS-01，不需要占用 80 端口；未备案域名也照签）
-curl https://get.acme.sh | sh -s email=<你的邮箱>
-ls ~/.acme.sh/dnsapi/ | grep -E 'dp|ali|cf|huawei'   # 按你的 DNS 商选 plugin
-export DP_Id='<DNSPod ID>'; export DP_Key='<DNSPod Token>'      # 阿里云用 Ali_Key/Ali_Secret，Cloudflare 用 CF_Token
-~/.acme.sh/acme.sh --issue --dns dns_dp -d <域名>
+# ① 证书：用 **root 自己的 acme.sh**（DNS-01，不占 80 端口，未备案域名也照签）
+#    ⚠ 不要用登录用户的 acme.sh + `--reloadcmd "sudo install ..."`：
+#      续期由用户 cron 以普通身份执行，reloadcmd 里的 sudo 会因需要密码而失败 ——
+#      证书在 ~/.acme.sh 里续上了，nginx 却一直用旧证书，90 天后 HTTPS 静默失效。
+#      root 自持 acme.sh 则续期 cron 与 reloadcmd 都以 root 跑，一次配置长期有效。
+#    （acme.sh 源码已预置在服务器 ~/ai-video/tools/acme.sh/，避免走不稳的 GitHub）
+sudo ~/ai-video/tools/acme.sh/acme.sh --install --home /root/.acme.sh --accountemail <你的邮箱>
 sudo mkdir -p /usr/local/nginx/certs
-~/.acme.sh/acme.sh --install-cert -d <域名> \
-  --key-file /tmp/agnes.key --fullchain-file /tmp/agnes.fullchain.pem \
-  --reloadcmd "sudo install -m600 /tmp/agnes.key /usr/local/nginx/certs/agnes.key && \
-               sudo install -m644 /tmp/agnes.fullchain.pem /usr/local/nginx/certs/agnes.fullchain.pem && \
-               sudo /usr/local/nginx/sbin/nginx -s reload"
-# （acme.sh 自建续期 cron；DNS 商无 API 时用 `--issue --dns -d <域名>` 手动加 TXT，但需手动续期）
 
-# ② Basic Auth 账号（-B = bcrypt）
+# 按 DNS 商选 plugin 与变量名：dns_dp(DNSPod) / dns_ali(阿里云) / dns_cf(Cloudflare) / dns_huaweicloud(华为云)
+sudo env DP_Id='<DNSPod ID>' DP_Key='<DNSPod Token>' \
+  /root/.acme.sh/acme.sh --issue --dns dns_dp -d <域名>
+
+sudo /root/.acme.sh/acme.sh --install-cert -d <域名> \
+  --key-file       /usr/local/nginx/certs/agnes.key \
+  --fullchain-file /usr/local/nginx/certs/agnes.fullchain.pem \
+  --reloadcmd      "/usr/local/nginx/sbin/nginx -s reload"
+# acme.sh --install 已为 root 写好续期 cron（实测 alan 侧为 3 4,10,16,22 * * *）
+
+# ② Basic Auth 账号（-B = bcrypt；交互输入强密码）
 sudo apt-get install -y apache2-utils
-sudo htpasswd -cB /usr/local/nginx/conf/htpasswd-agnes alan     # 交互输入强密码
+sudo htpasswd -cB /usr/local/nginx/conf/htpasswd-agnes alan
 
-# ③ 落 server 块并热加载
+# ③ 落 server 块并热加载（证书必须先就位，否则 nginx -t 会因加载证书失败而报错）
 sudo cp ~/ai-video/app/deploy/nginx-agnes.conf /usr/local/nginx/conf/conf.d/agnes.conf
 sudo sed -i 's/<你的域名>/<域名>/' /usr/local/nginx/conf/conf.d/agnes.conf
 sudo /usr/local/nginx/sbin/nginx -t && sudo /usr/local/nginx/sbin/nginx -s reload
@@ -277,6 +283,10 @@ sudo ufw allow 8443/tcp                        # 服务器 UFW 实测 ENABLED
 # 云控制台 → 安全组 → 入方向放行 8443/TCP       # 华为云必须做，否则外网仍不通
 
 # ⑤ DNS：A 记录 <域名> → 服务器公网 IP
+
+# ⑥ 自检（本机回环，绕过 DNS/防火墙，先确认 nginx 与鉴权真的生效）
+curl -sk -o /dev/null -w '%{http_code}\n' -u alan:<密码> https://127.0.0.1:8443/api/health   # 期望 200
+curl -sk -o /dev/null -w '%{http_code}\n'               https://127.0.0.1:8443/api/health   # 期望 401
 ```
 
 模板里已包含的关键设置：`auth_basic` 全站鉴权、`proxy_buffering off`（大文件流式）、
@@ -383,6 +393,7 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
 | 控制台**零鉴权**且库内存着 API Key            | 任何人可读改设置、烧你的额度             | 只经 HTTPS + Basic Auth 暴露；可选再叠 IP 白名单；**绝不**把 8273 直接对外                                                                              |
 | 18293 上传服务是公开直链（既有，非本次引入）  | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                                                                                         |
 | 未备案域名跑 80/443                           | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                                                                                                      |
+| **证书续期静默失效**                          | 90 天后 HTTPS 中断且无告警               | 用 **root 自持 acme.sh**：续期 cron 与 `--reloadcmd` 都以 root 执行；切勿用登录用户 acme.sh + `--reloadcmd "sudo …"`（续期无 TTY，sudo 要密码必失败）   |
 | 磁盘 19 GB / 内存 1.7 GB                      | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘。**实测**：e2e 连跑 3 次真实 ffmpeg 渲染（含 720×1280 竖屏）未触发 earlyoom，服务常驻内存 ~57 MB |
 | 服务器无配音                                  | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口                                                                              |
 | 两台机器数据分叉（本方案天然如此）            | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运                                                                        |
