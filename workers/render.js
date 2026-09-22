@@ -58,16 +58,37 @@ function splitCardTitle(name) {
   return { title: s, subtitle: '' };
 }
 
+/**
+ * 用户级字体候选（给没有 root 的受限主机用：云主机 / 容器 / 只读系统盘）。
+ * 路径优先级：AGNES_FONT_FILE / AGNES_SERIF_FONT_FILE（显式覆盖）→ ~/.fonts → ~/.local/share/fonts
+ * → 各系统约定路径（Windows / macOS / 发行版包安装位置）。
+ * 无 root 取字体（用发行版自己的包，OFL 授权，无需外网）：
+ *   cd /tmp && apt-get download fonts-noto-cjk fonts-wqy-microhei
+ *   dpkg-deb -x fonts-noto-cjk*.deb ~/.fonts-pkg && mkdir -p ~/.fonts
+ *   cp ~/.fonts-pkg/usr/share/fonts/opentype/noto/*.ttc ~/.fonts/
+ *   cp ~/.fonts-pkg/usr/share/fonts/truetype/wqy/*.ttc ~/.fonts/ 2>/dev/null || true
+ */
+function userFontCandidates(names) {
+  const home = os.homedir();
+  const out = [];
+  for (const dir of [path.join(home, '.fonts'), path.join(home, '.local', 'share', 'fonts')]) {
+    for (const n of names) out.push(path.join(dir, n));
+  }
+  return out;
+}
+
 /** 标题用衬线体（明朝/宋体）——片名主标题的"电影海报"质感；找不到则由主字体降级。
  *  注意：细明体（mingliub.ttc）缺简体与假名字形，会渲染成方块，故排除。 */
 function findSerifFont() {
   const candidates = [
+    process.env.AGNES_SERIF_FONT_FILE,
+    ...userFontCandidates(['NotoSerifCJK-Regular.ttc', 'SourceHanSerifSC-Regular.otf', 'NotoSerifSC-Regular.otf']),
     'C:/Windows/Fonts/STSONG.TTF', // 华文宋体
     'C:/Windows/Fonts/simsun.ttc', // 宋体
     'C:/Windows/Fonts/NotoSerifSC-VF.ttf',
     '/System/Library/Fonts/Songti.ttc',
     '/usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc',
-  ];
+  ].filter(Boolean);
   for (const f of candidates) {
     try {
       if (fs.existsSync(f)) return f;
@@ -81,12 +102,20 @@ function findSerifFont() {
 /** 运行时可用的字体（优先中文字体；找不到返回 null） */
 function findFont() {
   const candidates = [
+    process.env.AGNES_FONT_FILE,
+    ...userFontCandidates([
+      'NotoSansCJK-Bold.ttc',
+      'NotoSansCJK-Regular.ttc',
+      'SourceHanSansSC-Regular.otf',
+      'wqy-microhei.ttc',
+      'msyh.ttc',
+    ]),
     'C:/Windows/Fonts/msyhbd.ttc',
     'C:/Windows/Fonts/msyh.ttc',
     '/System/Library/Fonts/PingFang.ttc',
     '/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc',
     '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc',
-  ];
+  ].filter(Boolean);
   for (const f of candidates) {
     try {
       if (fs.existsSync(f)) return f;
