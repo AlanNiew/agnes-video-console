@@ -69,6 +69,10 @@ function toTaskRow(row) {
   return out;
 }
 
+/** TEXT 列类型护栏：node:sqlite 把 JS number 按 REAL 绑定，写进 TEXT 列会变成 '5.0'，
+ *  而 seconds 白名单只认 '4'..'12' —— 归一化成字符串后再落库（详见 db/repos/projects.js 同款注释）。 */
+const asText = (v) => (v === undefined || v === null ? null : String(v));
+
 const tasks = {
   insert({
     kind,
@@ -104,7 +108,7 @@ const tasks = {
       mode || 'text',
       model || 'agnes-video-2.5-flash',
       prompt || '',
-      seconds ?? null, // 可空字段归一化：undefined 无法绑定 SQLite 参数（图片任务无 seconds）
+      asText(seconds), // 可空字段归一化：undefined 无法绑定 SQLite 参数（图片任务无 seconds）
       size ?? null,
       aspect_ratio ?? null,
       seed === null || seed === undefined ? null : Number(seed),
@@ -196,7 +200,7 @@ const tasks = {
       p.mode !== undefined ? p.mode : cur.mode,
       p.model !== undefined ? p.model : cur.model,
       p.prompt !== undefined ? p.prompt : cur.prompt,
-      p.seconds !== undefined ? p.seconds : cur.seconds,
+      p.seconds !== undefined ? asText(p.seconds) : cur.seconds,
       p.size !== undefined ? p.size : cur.size,
       p.aspect_ratio !== undefined ? p.aspect_ratio : cur.aspect_ratio,
       p.seed !== undefined ? p.seed : cur.seed,

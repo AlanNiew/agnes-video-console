@@ -75,6 +75,13 @@ function shotRowToApi(row) {
   };
 }
 
+/**
+ * TEXT 列的类型护栏：node:sqlite 把 JS number 一律按 REAL 绑定，写进 TEXT 亲和列会变成 '5.0'。
+ * 而 seconds 的白名单只认 '4'..'12'（services/payloads.js），'5.0' 会让这个镜头**永远提交不出去**
+ * （v2.6.6 实测：直接调 API 传数字 seconds 就会踩到）。故写库前统一转成字符串。
+ */
+const asText = (v) => (v === undefined || v === null ? null : String(v));
+
 const projects = {
   insert({ name, idea, style, aspect_ratio, seconds }) {
     const now = Date.now();
@@ -83,7 +90,7 @@ const projects = {
       idea || null,
       style || null,
       aspect_ratio || '16:9',
-      seconds || '5',
+      asText(seconds) || '5',
       'draft',
       now,
       now,
@@ -107,7 +114,7 @@ const projects = {
       patch.idea !== undefined ? patch.idea : cur.idea,
       patch.style !== undefined ? patch.style : cur.style,
       patch.aspect_ratio !== undefined ? patch.aspect_ratio : cur.aspect_ratio,
-      patch.seconds !== undefined ? patch.seconds : cur.seconds,
+      patch.seconds !== undefined ? asText(patch.seconds) : cur.seconds,
       patch.status !== undefined ? patch.status : cur.status,
       Date.now(),
       Number(id),
@@ -268,7 +275,7 @@ const projects = {
       Number(seq) || 0,
       title || null,
       video_prompt || '',
-      seconds || null,
+      asText(seconds) || null,
       mode || 'reference',
       narration || null,
       use_character_ref === undefined || use_character_ref === null ? 1 : use_character_ref ? 1 : 0,
@@ -286,7 +293,7 @@ const projects = {
       patch.seq !== undefined ? Number(patch.seq) : cur.seq,
       patch.title !== undefined ? patch.title : cur.title,
       patch.video_prompt !== undefined ? patch.video_prompt : cur.video_prompt,
-      patch.seconds !== undefined ? patch.seconds : cur.seconds,
+      patch.seconds !== undefined ? asText(patch.seconds) : cur.seconds,
       patch.mode !== undefined ? patch.mode : cur.mode,
       patch.narration !== undefined
         ? String(patch.narration || '')
@@ -318,7 +325,7 @@ const projects = {
             Number(s.seq ?? i + 1) || i + 1,
             s.title || null,
             s.video_prompt || '',
-            s.seconds || null,
+            asText(s.seconds) || null,
             s.mode || 'reference',
             s.narration || null,
             s.use_character_ref === undefined || s.use_character_ref === null ? 1 : s.use_character_ref ? 1 : 0,
@@ -346,7 +353,7 @@ const projects = {
             maxSeq,
             s.title ? String(s.title).slice(0, 100) : null,
             String(s.video_prompt || ''),
-            s.seconds || null,
+            asText(s.seconds) || null,
             s.mode || 'reference',
             s.narration ? String(s.narration).trim() : null,
             s.use_character_ref === undefined || s.use_character_ref === null ? 1 : s.use_character_ref ? 1 : 0,
