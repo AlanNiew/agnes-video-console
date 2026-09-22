@@ -94,6 +94,19 @@ const ts = () => `[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]
   console.log('\n===== 结果 =====');
   console.log('项目/镜头/任务 :', `${pid} / ${sid} / ${tid}`);
   console.log('最终状态       :', task.status);
+
+  // 本地归档是**异步**的：poller 在任务完成后才下载远端产物（实测晚 2–4 秒，弱网更久）。
+  // 完成后立刻读 video_local_path 会拿到空值、把成功误判成失败，故这里留一段宽限期。
+  if (task.status === 'completed' && !task.video_local_path) {
+    const graceEnd = Date.now() + 60 * 1000;
+    while (Date.now() < graceEnd && !task.video_local_path) {
+      await new Promise((r) => setTimeout(r, 3000));
+      task = await api('GET', `/api/tasks/${tid}`);
+    }
+    if (task.video_local_path) console.log(ts(), '  ', `归档完成（异步）: ${task.video_local_path}`);
+    else console.log(ts(), '  ', '等待归档超时（video_auto_download 关闭或下载失败）');
+  }
+
   console.log('远端地址       :', task.metadata_url || '(无)');
   console.log('本地归档       :', task.video_local_path || '(无)');
   if (task.error_message) console.log('错误信息       :', task.error_message);
