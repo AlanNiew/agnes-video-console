@@ -17,23 +17,23 @@
 
 **服务器**（Ubuntu 24.04.3 LTS · x86_64 · 2 vCPU / 1.7 GB RAM / 4 GB swap / 40 GB 盘）
 
-| 检查项       | 实测                                                                                                               | 对部署的含义                                                          |
-| ------------ | ------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------- |
-| 磁盘         | 已用 20 GB，**可用 19 GB**                                                                                         | 装不下本机 21.2 GB 的 data/（works 9.2 + artifacts 12）→ 本方案只迁库 |
-| 内存         | 可用 ~1.2 GB，且 `earlyoom` 在跑                                                                                   | 渲染可行但不宽裕：别并发跑渲染，盯 OOM 日志                           |
-| Node         | `/usr/bin/node` **v22.22.1**，`node:sqlite` 实测可用                                                               | 满足 ≥22.13 硬要求，无需装运行时                                      |
-| ffmpeg       | ✓ 带 `libx264` / `aac` / `drawtext` / `loudnorm`                                                                   | 渲染与字幕全部可用                                                    |
-| **中文字体** | ✗ 渲染 worker 认的三个 Linux 路径**全缺**                                                                          | **必须 sudo 装字体**，否则片头/片尾卡文字静默丢失                     |
-| systemd      | `--user` 可用，`Linger=yes`                                                                                        | 可零 sudo 做到开机自启、崩溃自拉、退出 SSH 不停                       |
-| git/rsync/…  | ✓ git、rsync、sqlite3、tmux、python3、docker                                                                       | 部署与备份工具齐全                                                    |
-| npm registry | ✓ 可达（单次往返 ~4.4 s）                                                                                          | `npm ci` 能跑，就是慢一点                                             |
-| Agnes API    | ✓ `apihub.agnes-ai.com` 301/2.6 s                                                                                  | **主链路在服务器上可用**（这是本方案成立的前提）                      |
-| Agnes CDN    | ✓ `cos-…agnes-ai.cn` 1.11 MB/s；`platform-outputs…space` 0.84 MB/s                                                 | 产物下载/归档速度可用（渲染素材主要瓶颈）                             |
-| 墙外站点     | ✗ google / X / **api.fish.audio 全超时**；服务器自带 ss-local（127.0.0.1:1080 → 境外节点）对这三个目标**同样不通** | 配音无法在服务器闭环 → 按基线停用（第 4 节）                          |
-| nginx        | 自编译 1.24.0，`--prefix=/usr/local/nginx`，已 `include conf.d/*.conf`；**未编译 http_v2 模块**                    | 可加 server 块做反代，但**不能启用 HTTP/2**；8443 空闲                |
-| UFW          | `ENABLED=yes`                                                                                                      | 新端口要 `ufw allow`，另需云控制台安全组放行                          |
-| sudo         | **需要密码**                                                                                                       | 系统级步骤（字体/nginx/防火墙）由你亲自执行，本文已分组               |
-| 已占端口     | 80（nginx）、5432、26739、15001、15002、18293、35722、12345                                                        | 8273 与 8443 均空闲                                                   |
+| 检查项       | 实测                                                                                                               | 对部署的含义                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------- |
+| 磁盘         | 已用 20 GB，**可用 19 GB**                                                                                         | 装不下本机 21.2 GB 的 data/（works 9.2 + artifacts 12）→ 本方案只迁库                              |
+| 内存         | 可用 ~1.2 GB，且 `earlyoom` 在跑                                                                                   | 渲染可行但不宽裕：别并发跑渲染，盯 OOM 日志                                                        |
+| Node         | `/usr/bin/node` **v22.22.1**，`node:sqlite` 实测可用                                                               | 满足 ≥22.13 硬要求，无需装运行时                                                                   |
+| ffmpeg       | ✓ 带 `libx264` / `aac` / `drawtext` / `loudnorm`                                                                   | 渲染与字幕全部可用                                                                                 |
+| **中文字体** | ✗ 渲染 worker 认的三个 Linux 路径**全缺**                                                                          | 必须补字体（**无 sudo 亦可**：解发行版包到 `~/.fonts`，见第 5 步 5A），否则片头/片尾卡文字静默丢失 |
+| systemd      | `--user` 可用，`Linger=yes`                                                                                        | 可零 sudo 做到开机自启、崩溃自拉、退出 SSH 不停                                                    |
+| git/rsync/…  | ✓ git、rsync、sqlite3、tmux、python3、docker                                                                       | 部署与备份工具齐全                                                                                 |
+| npm registry | ✓ 可达（单次往返 ~4.4 s）                                                                                          | `npm ci` 能跑，就是慢一点                                                                          |
+| Agnes API    | ✓ `apihub.agnes-ai.com` 301/2.6 s                                                                                  | **主链路在服务器上可用**（这是本方案成立的前提）                                                   |
+| Agnes CDN    | ✓ `cos-…agnes-ai.cn` 1.11 MB/s；`platform-outputs…space` 0.84 MB/s                                                 | 产物下载/归档速度可用（渲染素材主要瓶颈）                                                          |
+| 墙外站点     | ✗ google / X / **api.fish.audio 全超时**；服务器自带 ss-local（127.0.0.1:1080 → 境外节点）对这三个目标**同样不通** | 配音无法在服务器闭环 → 按基线停用（第 4 节）                                                       |
+| nginx        | 自编译 1.24.0，`--prefix=/usr/local/nginx`，已 `include conf.d/*.conf`；**未编译 http_v2 模块**                    | 可加 server 块做反代，但**不能启用 HTTP/2**；8443 空闲                                             |
+| UFW          | `ENABLED=yes`                                                                                                      | 新端口要 `ufw allow`，另需云控制台安全组放行                                                       |
+| sudo         | **需要密码**                                                                                                       | 只剩公网入口（nginx/证书/防火墙）需要 sudo；字体走第 5 步 5A 即可零 sudo                           |
+| 已占端口     | 80（nginx）、5432、26739、15001、15002、18293、35722、12345                                                        | 8273 与 8443 均空闲                                                                                |
 
 **本机（Windows）**
 
@@ -70,15 +70,15 @@
 
 ## 2. 分阶段总览
 
-| 阶段 | 内容                                     | 执行者   | 预计      |
-| ---- | ---------------------------------------- | -------- | --------- |
-| 1    | 本机：push 代码 + 快照库 + scp           | 你/我    | 5 min     |
-| 2    | 服务器：clone / 依赖 / 构建 / 起服务     | 一条脚本 | 5–10 min  |
-| 3    | 数据库迁入 + 1309 行路径改写             | 你/我    | 5 min     |
-| 4    | 按服务器现实调 4 项设置（停配音等）      | 你/我    | 2 min     |
-| 5    | sudo 装中文字体（唯一必须的系统级依赖）  | **你**   | 2 min     |
-| 6    | 公网入口：nginx 8443 + 证书 + Basic Auth | **你**   | 20–40 min |
-| 7    | 验收：预检 + 浏览器 + 真跑一集           | 你/我    | 30–60 min |
+| 阶段 | 内容                                     | 执行者         | 预计      |
+| ---- | ---------------------------------------- | -------------- | --------- |
+| 1    | 本机：push 代码 + 快照库 + scp           | 你/我          | 5 min     |
+| 2    | 服务器：clone / 依赖 / 构建 / 起服务     | 一条脚本       | 5–10 min  |
+| 3    | 数据库迁入 + 1309 行路径改写             | 你/我          | 5 min     |
+| 4    | 按服务器现实调 4 项设置（停配音等）      | 你/我          | 2 min     |
+| 5    | 装中文字体（**已实测走 5A：无 sudo**）   | 你/我          | 2 min     |
+| 6    | 公网入口：nginx 8443 + 证书 + Basic Auth | **你**（sudo） | 20–40 min |
+| 7    | 验收：预检 + e2e + 浏览器 + 真跑一集     | 你/我          | 30–60 min |
 
 ## 3. 逐步操作
 
@@ -192,17 +192,55 @@ curl -s -X PUT http://127.0.0.1:8273/api/settings \
 > ⚠ 布尔字段必须传 JSON 布尔值。传字符串 `"0"` 会被当 truthy 从而**打开**该功能（`routes/settings.js` 的 `b.x ? '1' : '0'`）。
 > 修改后核对：`curl -s http://127.0.0.1:8273/api/settings`。
 
-### 第 5 步 · 装中文字体（唯一必须的 sudo 依赖）
+### 第 5 步 · 装中文字体（**已实现无 sudo 方案，二选一**）
+
+`workers/render.js` 的 `findFont()` / `findSerifFont()` 若找不到可用字体，会**静默跳过**片头/片尾卡文字
+（除 ffmpeg 报错外没有任何提示），所以这一步不能省。自 v2.6.6 起候选表支持用户级路径，两条路都行：
+
+**5A 无 sudo（推荐用于本服务器，已实测采用）** —— 取发行版自己的包（OFL 授权，不必连外网）：
+
+```bash
+mkdir -p ~/.fonts && cd ~/ai-video && mkdir -p fonts-pkg && cd fonts-pkg
+apt-get download fonts-noto-cjk fonts-wqy-microhei      # 只读包列表+写当前目录，不需要 root
+for d in ./*.deb; do dpkg-deb -x "$d" ./x; done         # 解包，不装进系统
+find ./x -type f \( -name '*.ttc' -o -name '*.otf' \) -exec cp -n {} ~/.fonts/ \;
+
+# 写服务环境文件（EnvironmentFile 已被 agnes-console.service 引用）
+cat > ~/ai-video/agnes-console.env <<EOF
+AGNES_FONT_FILE=$HOME/.fonts/NotoSansCJK-Bold.ttc
+AGNES_SERIF_FONT_FILE=$HOME/.fonts/NotoSerifCJK-Regular.ttc
+EOF
+systemctl --user restart agnes-console
+```
+
+实测：`apt-get download` 走华为云镜像 2.2 MB/s 取回 62.8 MB，解出 NotoSans/NotoSerif CJK 的
+Regular+Bold 与 wqy-microhei；重启后 `findFont()` → `/home/alan/.fonts/NotoSansCJK-Bold.ttc`。
+**注意**：`~/.fonts` 下的文件名同样会被自动发现（不必非写环境变量），环境变量只是显式保险。
+
+**5B 有 sudo（系统级安装，长期更省心）**：
 
 ```bash
 sudo apt-get update && sudo apt-get install -y fonts-noto-cjk fonts-wqy-microhei
-# 校验渲染 worker 认的绝对路径
 ls -l /usr/share/fonts/opentype/noto/NotoSerifCJK-Regular.ttc \
       /usr/share/fonts/truetype/wqy/wqy-microhei.ttc
 ```
 
-`workers/render.js` 的 `findFont()` / `findSerifFont()` 只认固定绝对路径（Windows `C:/Windows/Fonts/*`
-与 Linux 的 noto/wqy 三处），找不到就**静默跳过**片头/片尾卡文字 —— 除脚本报错外没有任何提示，务必装。
+**字体验收（像素级，别只看"没报错"）**：
+
+```bash
+FONT=$(DATA_DIR=/tmp/fontcheck node -e 'console.log(require("./workers/render").findFont())')
+ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=480x140:d=1 -frames:v 1 -y /tmp/no-text.png
+ffmpeg -hide_banner -loglevel error -f lavfi -i color=c=black:s=480x140:d=1 \
+  -vf "drawtext=fontfile='$FONT':text='幻灯屋 風花 123':fontsize=42:fontcolor=white:x=12:y=48" \
+  -frames:v 1 -y /tmp/with-text.png
+for f in /tmp/no-text.png /tmp/with-text.png; do
+  ffmpeg -hide_banner -i "$f" -vf "signalstats,metadata=print:key=lavfi.signalstats.YAVG" -f null - 2>&1 |
+    grep -o 'YAVG=[0-9.]*' | head -1
+done
+```
+
+实测对照：空画布 `295 B / YAVG=16`，写了中文的帧 `5914 B / YAVG=31.5` —— 均值翻倍即字形真的画上去了。
+（`metadata=print` 走 ffmpeg 的 info 日志，**别用 `-v error`**，否则看不到输出。）
 
 ### 第 6 步 · 公网入口（二选一）
 
@@ -247,6 +285,10 @@ sudo ufw allow 8443/tcp                        # 服务器 UFW 实测 ENABLED
 
 **为什么用 8443**：大陆云主机上未备案域名的 80/443 会被拦；非标端口不受影响。
 如果域名已备案，把 `listen 8443 ssl;` 改成 `listen 443 ssl;` 并对应放行 443 即可。
+
+> **实测（2026-09-22）**：从外网探测 `8443` 与 `9999` 均为**超时**（对照：已放行的 `18293` 31 ms 连通），
+> 且 `DEFAULT_INPUT_POLICY="DROP"` —— 说明 **UFW 与云安全组两处都得放行**，只做一处必然不通。
+> 顺序建议：先在云控制台安全组加入方向 `8443/TCP`，再 `sudo ufw allow 8443/tcp`，最后从外网复测连通性。
 
 #### 6B Cloudflare Tunnel（零 sudo、零端口放行、零备案问题）
 
@@ -336,28 +378,29 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
 
 ## 4. 风险与对策
 
-| 风险                                          | 影响                                     | 对策                                                                             |
-| --------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| 控制台**零鉴权**且库内存着 API Key            | 任何人可读改设置、烧你的额度             | 只经 HTTPS + Basic Auth 暴露；可选再叠 IP 白名单；**绝不**把 8273 直接对外       |
-| 18293 上传服务是公开直链（既有，非本次引入）  | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                  |
-| 未备案域名跑 80/443                           | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                               |
-| 磁盘 19 GB / 内存 1.7 GB                      | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘                           |
-| 服务器无配音                                  | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口       |
-| 两台机器数据分叉（本方案天然如此）            | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运 |
-| 更新重启打断在途轮询                          | 少数任务延迟                             | poller 有退避与自愈；尽量在空闲时更新                                            |
-| **服务器→GitHub 链路不稳**（实测 135 s 超时） | clone/pull 失败，代码更新卡住            | 引导脚本已降级为告警；更新走 bundle 快进（第 8 步），或给仓库配国内镜像          |
-| 历史任务/项目在服务器上点开是坏图坏视频       | 观感差（路径已改为不存在的 Linux 路径）  | 预期内；第 9 节 B+ 可一次性救活（627 MB / 2.46 GB 两档）                         |
+| 风险                                          | 影响                                     | 对策                                                                                                                                                    |
+| --------------------------------------------- | ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 控制台**零鉴权**且库内存着 API Key            | 任何人可读改设置、烧你的额度             | 只经 HTTPS + Basic Auth 暴露；可选再叠 IP 白名单；**绝不**把 8273 直接对外                                                                              |
+| 18293 上传服务是公开直链（既有，非本次引入）  | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                                                                                         |
+| 未备案域名跑 80/443                           | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                                                                                                      |
+| 磁盘 19 GB / 内存 1.7 GB                      | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘。**实测**：e2e 连跑 3 次真实 ffmpeg 渲染（含 720×1280 竖屏）未触发 earlyoom，服务常驻内存 ~57 MB |
+| 服务器无配音                                  | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口                                                                              |
+| 两台机器数据分叉（本方案天然如此）            | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运                                                                        |
+| 更新重启打断在途轮询                          | 少数任务延迟                             | poller 有退避与自愈；尽量在空闲时更新                                                                                                                   |
+| **服务器→GitHub 链路不稳**（实测 135 s 超时） | clone/pull 失败，代码更新卡住            | 引导脚本已降级为告警；更新走 bundle 快进（第 8 步），或给仓库配国内镜像                                                                                 |
+| 历史任务/项目在服务器上点开是坏图坏视频       | 观感差（路径已改为不存在的 Linux 路径）  | 预期内；第 9 节 B+ 可一次性救活（627 MB / 2.46 GB 两档）                                                                                                |
 
 ## 5. 本方案交付的文件
 
-| 文件                           | 作用                                                        | 验证情况                                                                                  |
-| ------------------------------ | ----------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
-| `deploy/bootstrap-server.sh`   | 服务器侧幂等引导（clone→依赖→构建→systemd→健康检查）        | 服务器上 `bash -n` 通过                                                                   |
-| `deploy/agnes-console.service` | systemd **用户**服务模板（占位符由脚本替换）                | 服务器上 `systemd-analyze --user verify` 无告警                                           |
-| `deploy/nginx-agnes.conf`      | 8443 + TLS + Basic Auth + Range 透传反代模板                | 在服务器 nginx 1.24.0 上 `nginx -t` **通过**                                              |
-| `tools/db-snapshot.js`         | 跨 WAL 一致性快照（`VACUUM INTO` + 完整性校验）             | 本机对真实库跑通，integrity_check ok                                                      |
-| `tools/db-relocate.js`         | 库内绝对路径 report/rewrite/clear-missing/**assets** 四模式 | 本机对真实库副本跑通：1309 行改写、0 残留、JSON 解析无损、assets 466 文件/627 MB 实拷一致 |
-| `docs/DEPLOY_SELF_HOSTED.md`   | 本文                                                        | —                                                                                         |
+| 文件                            | 作用                                                           | 验证情况                                                                                  |
+| ------------------------------- | -------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| `deploy/bootstrap-server.sh`    | 服务器侧幂等引导（clone→依赖→构建→systemd→健康检查）           | 服务器上 `bash -n` 通过                                                                   |
+| `deploy/agnes-console.service`  | systemd **用户**服务模板（占位符由脚本替换）                   | 服务器上 `systemd-analyze --user verify` 无告警                                           |
+| `deploy/nginx-agnes.conf`       | 8443 + TLS + Basic Auth + Range 透传反代模板                   | 在服务器 nginx 1.24.0 上 `nginx -t` **通过**                                              |
+| `tools/db-snapshot.js`          | 跨 WAL 一致性快照（`VACUUM INTO` + 完整性校验）                | 本机对真实库跑通，integrity_check ok                                                      |
+| `tools/db-relocate.js`          | 库内绝对路径 report/rewrite/clear-missing/**assets** 四模式    | 本机对真实库副本跑通：1309 行改写、0 残留、JSON 解析无损、assets 466 文件/627 MB 实拷一致 |
+| `test/unit/render-font.test.js` | 锁死字体候选优先级（用户级路径 / 显式覆盖 / 不存在值必须跳过） | jest 4 用例通过                                                                           |
+| `docs/DEPLOY_SELF_HOSTED.md`    | 本文                                                           | —                                                                                         |
 
 ## 6. 可选升级路线（按需，不在本次范围）
 
@@ -382,3 +425,18 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
 5. **扩盘**：华为云 EVS 扩容后可全量迁 works + artifacts，服务器成为唯一生产机。
 6. **preflight 的"配音已停用"红项**：可给 `tools/preflight.js` 加一个「TTS 已按设计停用」的判定，
    让预检在这种部署形态下不再报 ❌（小改动，需要时再做）。
+
+## 7. 本次部署实测记录（2026-09-22，服务器 `alan@huawei`）
+
+| 环节         | 结果                                                                        | 证据                                                                                                  |
+| ------------ | --------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 代码传输     | 绕开 GitHub（服务器→github.com:443 两次 135 s 超时），走 git bundle 1.16 MB | `~/ai-video/app` @ `ef3e451`，工作区干净                                                              |
+| 服务上线     | `agnes-console.service`（systemd --user）active，**NRestarts=0**            | `/api/health` ok；5 个 worker 全启；日志含「渲染器已启动（ffmpeg 可用）」；200 行内无 error/warn      |
+| 数据库迁移   | **1309 行**路径改写、**0 残留**、JSON 无损                                  | 抽样 `/home/alan/ai-video/data/artifacts/…`；角色库 17 条完整；tasks 805 / projects 48                |
+| 设置调整     | 4 项按服务器现实改完                                                        | `fish_api_key` 空、`music_api_base=127.0.0.1:15001`、`dreamina_auto_character=false`、自动下载开      |
+| 中文字体     | **无 sudo 装成**（第 5 步 5A）                                              | `findFont() → ~/.fonts/NotoSansCJK-Bold.ttc`；空画布 `YAVG=16` vs 含中文 `YAVG=31.5`                  |
+| 全链路 e2e   | `npm run test:mock` **全部通过**，耗时 4 分 41 秒                           | 「全自动成片闭环完成 🎉 2 镜 · 9.57 s · -15.6 LUFS · **TTS 未配置自动跳过**」+ 竖屏版 + 封面 + 发布包 |
+| 资源压力     | 3 次真实 ffmpeg 渲染**未触发 earlyoom**                                     | `journalctl -u earlyoom` 无记录；磁盘 18 GB 可用                                                      |
+| 网络         | Agnes CDN 实测 1.7–7.6 MB/s；8443/9999 外网超时、18293 31 ms 连通           | 渲染取材不再是瓶颈；公网入口需双放行                                                                  |
+| 备份         | 每日 04:15 cron 已装并试跑                                                  | 4.37 MB / `integrity_check=ok`；acme.sh v3.1.6 已预装（含 dns_huaweicloud/dp/ali/cf）                 |
+| 遗留（用户） | nginx 8443 + HTTPS + Basic Auth                                             | 8443 需 UFW + 云安全组**双放行**；证书需域名与 DNS API 凭据                                           |
