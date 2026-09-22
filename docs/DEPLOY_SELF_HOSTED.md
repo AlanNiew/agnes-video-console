@@ -293,6 +293,15 @@ curl -sk -o /dev/null -w '%{http_code}\n'               https://127.0.0.1:8443/a
 显式透传 `Range`/`If-Range`（成片拖动进度条靠 206 分段）、600 s 超时、`client_max_body_size 8m`。
 **注意**：这台 nginx **没编译 http_v2 模块**，所以模板特意不写 `http2 on;` / `listen … http2`（写了会启动失败）。
 
+> **模板已做行为级预验收（无需 sudo、无需域名）**：把发行版 nginx 解包到用户目录
+> （`apt-get download nginx nginx-common` + `dpkg-deb -x`，noble 的 `nginx-core`/`nginx-light` 只是过渡包，
+> 真二进制在 `nginx` 里）、配自签证书与 `openssl passwd -apr1` 口令文件，在 `127.0.0.1:8443` 上跑
+> **模板本体**（只 sed 掉域名/证书/口令文件路径），实测：
+> 无鉴权 **401** / 带鉴权 **200** / 首页 **200（24450 B，与直连一致）** /
+> **Range 透传 `206 Partial Content` + `Content-Range: bytes 0-99/9370`** /
+> 中文文件名（不编码直传）**200** / 访问日志记录到鉴权用户名 / 错误日志为空。
+> 结论：等 sudo 那步做完，剩余风险只有「域名解析 + 证书签发 + 双放行」，反代配置本身已证明可用。
+
 **为什么用 8443**：大陆云主机上未备案域名的 80/443 会被拦；非标端口不受影响。
 如果域名已备案，把 `listen 8443 ssl;` 改成 `listen 443 ssl;` 并对应放行 443 即可。
 
@@ -459,23 +468,24 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
 
 ## 7. 本次部署实测记录（2026-09-22，服务器 `alan@huawei`）
 
-| 环节                 | 结果                                                                                         | 证据                                                                                                  |
-| -------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| 代码传输             | 绕开 GitHub（服务器→github.com:443 两次 135 s 超时），走 git bundle 1.16 MB                  | `~/ai-video/app`（bundle 快进至 `410fffc`），工作区干净                                               |
-| 服务上线             | `agnes-console.service`（systemd --user）active，**NRestarts=0**                             | `/api/health` ok；5 个 worker 全启；日志含「渲染器已启动（ffmpeg 可用）」；200 行内无 error/warn      |
-| 数据库迁移           | **1309 行**路径改写、**0 残留**、JSON 无损                                                   | 抽样 `/home/alan/ai-video/data/artifacts/…`；角色库 17 条完整；tasks 805 / projects 48                |
-| 设置调整             | 4 项按服务器现实改完                                                                         | `fish_api_key` 空、`music_api_base=127.0.0.1:15001`、`dreamina_auto_character=false`、自动下载开      |
-| 中文字体             | **无 sudo 装成**（第 5 步 5A）                                                               | `findFont() → ~/.fonts/NotoSansCJK-Bold.ttc`；空画布 `YAVG=16` vs 含中文 `YAVG=31.5`                  |
-| 全链路 e2e           | `npm run test:mock` **全部通过**，耗时 4 分 41 秒                                            | 「全自动成片闭环完成 🎉 2 镜 · 9.57 s · -15.6 LUFS · **TTS 未配置自动跳过**」+ 竖屏版 + 封面 + 发布包 |
-| 资源压力             | 3 次真实 ffmpeg 渲染**未触发 earlyoom**                                                      | `journalctl -u earlyoom` 无记录；磁盘 18 GB 可用                                                      |
-| 网络                 | Agnes CDN 实测 1.7–7.6 MB/s；8443/9999 外网超时、18293 31 ms 连通                            | 渲染取材不再是瓶颈；公网入口需双放行                                                                  |
-| 备份                 | 每日 04:15 cron 已装并试跑                                                                   | 4.37 MB / `integrity_check=ok`；acme.sh v3.1.6 已预装（含 dns_huaweicloud/dp/ali/cf）                 |
-| **真上游闭环**       | **通过**（用 `agnes-video-v2.0` 档）                                                         | 提交成功 → 轮询（含 429 退避）→ completed → 异步归档 800 KB；ffprobe：h264 1088×832@24 + aac，5.04 s  |
-| **Linux 侧 CI 平价** | jest **16 套件 231 用例全过**；lint **0 error**（11 个既有 warning）；`format:check` 全绿    | 在部署机上跑仓库自带套件，证明跨平台（路径 / 字体 / 换行）无差异                                      |
-| **Range/206**        | 应用层返回 `206 Partial Content` + `Accept-Ranges: bytes` + `Content-Range: bytes 0-99/9370` | 成片拖动进度条的前置条件在反代之前就已成立（nginx 只需透传）                                          |
-| **单实例工作锁**     | 同 `DATA_DIR` 起第二实例 → 日志「仅提供 API，后台工作器停用」                                | 真实机器上验证；收尾按 PID（不用宽泛 pkill，避免误杀）                                                |
-| **crontab 真执行**   | 临时 1 分钟探针任务在 14:15:01 被触发                                                        | 证明每日 04:15 备份会真的跑（备份任务不会静默失效）                                                   |
-| 回滚点               | `~/ai-video/backup/{agnes-postrelocate,agnes-postdeploy}.db`                                 | 迁移后 / 部署后各一份，`integrity_check=ok`                                                           |
-| 上游排队行为         | `2.5-flash` 返回 **503「队列满」**，同刻 v2.0 立即接单                                       | 503 走 90/180/360/720 s 退避 5 次；v2.0 十秒内进入生成中、90 秒出片（`--model` 可换档）               |
-| **顺带修复**         | `seconds` 数字入参被存成 `'5.0'` → 镜头**永远提交不出去**（v2.6.6 已修）                     | 数据层加 `asText` 护栏；服务器实测数字 `5`/`7` → 读回 `'5'`/`'7'` 且过白名单；16 套件 231 用例全过    |
-| 遗留（用户）         | nginx 8443 + HTTPS + Basic Auth                                                              | 8443 需 UFW + 云安全组**双放行**；证书需域名与 DNS API 凭据                                           |
+| 环节                   | 结果                                                                                         | 证据                                                                                                  |
+| ---------------------- | -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 代码传输               | 绕开 GitHub（服务器→github.com:443 两次 135 s 超时），走 git bundle 1.16 MB                  | `~/ai-video/app`（bundle 快进至 `410fffc`），工作区干净                                               |
+| 服务上线               | `agnes-console.service`（systemd --user）active，**NRestarts=0**                             | `/api/health` ok；5 个 worker 全启；日志含「渲染器已启动（ffmpeg 可用）」；200 行内无 error/warn      |
+| 数据库迁移             | **1309 行**路径改写、**0 残留**、JSON 无损                                                   | 抽样 `/home/alan/ai-video/data/artifacts/…`；角色库 17 条完整；tasks 805 / projects 48                |
+| 设置调整               | 4 项按服务器现实改完                                                                         | `fish_api_key` 空、`music_api_base=127.0.0.1:15001`、`dreamina_auto_character=false`、自动下载开      |
+| 中文字体               | **无 sudo 装成**（第 5 步 5A）                                                               | `findFont() → ~/.fonts/NotoSansCJK-Bold.ttc`；空画布 `YAVG=16` vs 含中文 `YAVG=31.5`                  |
+| 全链路 e2e             | `npm run test:mock` **全部通过**，耗时 4 分 41 秒                                            | 「全自动成片闭环完成 🎉 2 镜 · 9.57 s · -15.6 LUFS · **TTS 未配置自动跳过**」+ 竖屏版 + 封面 + 发布包 |
+| 资源压力               | 3 次真实 ffmpeg 渲染**未触发 earlyoom**                                                      | `journalctl -u earlyoom` 无记录；磁盘 18 GB 可用                                                      |
+| 网络                   | Agnes CDN 实测 1.7–7.6 MB/s；8443/9999 外网超时、18293 31 ms 连通                            | 渲染取材不再是瓶颈；公网入口需双放行                                                                  |
+| 备份                   | 每日 04:15 cron 已装并试跑                                                                   | 4.37 MB / `integrity_check=ok`；acme.sh v3.1.6 已预装（含 dns_huaweicloud/dp/ali/cf）                 |
+| **真上游闭环**         | **通过**（用 `agnes-video-v2.0` 档）                                                         | 提交成功 → 轮询（含 429 退避）→ completed → 异步归档 800 KB；ffprobe：h264 1088×832@24 + aac，5.04 s  |
+| **Linux 侧 CI 平价**   | jest **16 套件 231 用例全过**；lint **0 error**（11 个既有 warning）；`format:check` 全绿    | 在部署机上跑仓库自带套件，证明跨平台（路径 / 字体 / 换行）无差异                                      |
+| **Range/206**          | 应用层返回 `206 Partial Content` + `Accept-Ranges: bytes` + `Content-Range: bytes 0-99/9370` | 成片拖动进度条的前置条件在反代之前就已成立（nginx 只需透传）                                          |
+| **单实例工作锁**       | 同 `DATA_DIR` 起第二实例 → 日志「仅提供 API，后台工作器停用」                                | 真实机器上验证；收尾按 PID（不用宽泛 pkill，避免误杀）                                                |
+| **crontab 真执行**     | 临时 1 分钟探针任务在 14:15:01 被触发                                                        | 证明每日 04:15 备份会真的跑（备份任务不会静默失效）                                                   |
+| **反代模板行为预验收** | 用模板本体在回环 8443 跑通（**无 sudo、无域名**）                                            | 无鉴权 401 / 带鉴权 200 / 首页 24450 B / **Range 206 + Content-Range** / 中文名 200 / 错误日志空      |
+| 回滚点                 | `~/ai-video/backup/{agnes-postrelocate,agnes-postdeploy}.db`                                 | 迁移后 / 部署后各一份，`integrity_check=ok`                                                           |
+| 上游排队行为           | `2.5-flash` 返回 **503「队列满」**，同刻 v2.0 立即接单                                       | 503 走 90/180/360/720 s 退避 5 次；v2.0 十秒内进入生成中、90 秒出片（`--model` 可换档）               |
+| **顺带修复**           | `seconds` 数字入参被存成 `'5.0'` → 镜头**永远提交不出去**（v2.6.6 已修）                     | 数据层加 `asText` 护栏；服务器实测数字 `5`/`7` → 读回 `'5'`/`'7'` 且过白名单；16 套件 231 用例全过    |
+| 遗留（用户）           | nginx 8443 + HTTPS + Basic Auth                                                              | 8443 需 UFW + 云安全组**双放行**；证书需域名与 DNS API 凭据                                           |
