@@ -459,7 +459,7 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
    带 `--include-videos` 时**历史项目也能重渲**。对比一下：全量 data/ 是 21.2 GB，而"被引用的产物"只有 627 MB～2.46 GB。
 
 2. **迁成片作品库**（works 9.2 GB）：`rsync -av --info=progress2` 过去，服务器即可直接播放/下载历史成片。
-3. **服务器配音**：给服务器一条可用出口（现有 ss-local → 47.83.12.16 对 fish.audio 不通），
+3. **服务器配音**：给服务器一条可用出口（服务器自带的 ss-local 出口对 `api.fish.audio` 实测不通），
    写 `~/ai-video/agnes-console.env` 里的 `FISH_PROXY=127.0.0.1:<端口>`，再回填 `fish_api_key` 即可。
 4. **即梦 CLI**：装 CLI + **手动**登录（官方明确「不要通过 Agent 完成登录」），再把 `dreamina_auto_character` 打开。
 5. **扩盘**：华为云 EVS 扩容后可全量迁 works + artifacts，服务器成为唯一生产机。
