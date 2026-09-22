@@ -44,12 +44,27 @@ mkdir -p "$APP_DIR" "$DATA_DIR" "$HOME/ai-video/backup" "$HOME/ai-video/incoming
 printf 'APP_DIR =%s\nDATA_DIR=%s\n' "$APP_DIR" "$DATA_DIR"
 
 say "2/6 取得代码（$BRANCH）"
+# 注意：大陆机器到 github.com 的 443 实测很不稳定（同一分钟内 fetch 成功、pull 超时 130s+）。
+# 代码已经在位时，拉取失败**不应该**连带让「装服务」失败 —— 降级为警告继续。
 if [ -d "$APP_DIR/.git" ]; then
-  git -C "$APP_DIR" fetch --prune origin
+  git -C "$APP_DIR" fetch --prune origin || echo "⚠ fetch 失败（国际链路不稳）——沿用本地已有提交"
   git -C "$APP_DIR" checkout "$BRANCH"
-  git -C "$APP_DIR" pull --ff-only origin "$BRANCH"
+  if ! git -C "$APP_DIR" pull --ff-only origin "$BRANCH"; then
+    echo "⚠ 无法从 origin 拉取（GitHub 不可达）——继续使用当前本地提交："
+    git -C "$APP_DIR" log --oneline -1
+  fi
 else
-  git clone --branch "$BRANCH" "$REPO" "$APP_DIR"
+  if ! git clone --branch "$BRANCH" "$REPO" "$APP_DIR"; then
+    cat <<'EOM'
+✗ clone 失败：服务器连不上 GitHub（本环境常见）。改用本机 bundle 传代码：
+    1) 本机：  cd <仓库目录> && git bundle create agnes-main.bundle main
+               scp agnes-main.bundle <ssh别名>:~/ai-video/incoming/
+    2) 服务器：git clone --branch main ~/ai-video/incoming/agnes-main.bundle ~/ai-video/app
+               cd ~/ai-video/app && git remote set-url origin <仓库地址>
+    3) 重跑本脚本
+EOM
+    exit 1
+  fi
 fi
 git -C "$APP_DIR" log --oneline -1
 

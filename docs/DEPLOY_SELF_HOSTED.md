@@ -111,6 +111,20 @@ bash ~/ai-video/app/deploy/bootstrap-server.sh
 脚本（`deploy/bootstrap-server.sh`，幂等，可重复执行）会：建目录 → clone/pull → `npm ci` → `npm run build`
 → 装并启动 systemd **用户**服务 → 健康检查 → 打印还需你手动做的 sudo 清单。
 
+> **实测坑（重要）**：服务器 → `github.com:443` **很不稳定** —— 同一次执行里 `git fetch` 成功、
+> 紧接着 `git pull` 却 135 s 超时。引导脚本已对此降级：代码在位时拉取失败只告警、不中断装服务；
+> 首次 clone 就失败时给出 bundle 方案。实测 bundle 只有 1.16 MB，秒传：
+>
+> ```bash
+> # 本机
+> cd D:\Programing\AI_Video_Create\agnes-video-console
+> git bundle create ..\.scratch\agnes-main.bundle main
+> scp ..\.scratch\agnes-main.bundle <ssh别名>:~/ai-video/incoming/
+> # 服务器
+> git clone --branch main ~/ai-video/incoming/agnes-main.bundle ~/ai-video/app
+> cd ~/ai-video/app && git remote set-url origin https://github.com/AlanNiew/agnes-video-console.git
+> ```
+
 ```bash
 systemctl --user status agnes-console --no-pager     # active (running)
 journalctl --user -u agnes-console -n 40 --no-pager  # 启动横幅 + 数据库路径
@@ -299,6 +313,11 @@ cd ~/ai-video/app && git pull && npm ci --no-audit --no-fund && npm run build
 systemctl --user restart agnes-console
 # 或者直接重跑引导（幂等）：bash ~/ai-video/app/deploy/bootstrap-server.sh
 
+# ⚠ 若 git pull 超时（服务器→GitHub 链路不稳，实测常态）：改走 bundle 快进，无需 GitHub
+#   本机：git bundle create agnes-patch.bundle main && scp agnes-patch.bundle <ssh别名>:~/ai-video/incoming/
+#   服务器：cd ~/ai-video/app && git pull ~/ai-video/incoming/agnes-patch.bundle main && npm ci && npm run build
+#   （bundle 里的 ref 直接快进到本机 main，工作区保持干净，不会被 origin 落后状态卡住）
+
 # 服务
 systemctl --user status agnes-console
 journalctl --user -u agnes-console -f          # 实时日志（内存环形日志也在页面「日志」面板）
@@ -315,16 +334,17 @@ df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头�
 
 ## 4. 风险与对策
 
-| 风险                                         | 影响                                     | 对策                                                                             |
-| -------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
-| 控制台**零鉴权**且库内存着 API Key           | 任何人可读改设置、烧你的额度             | 只经 HTTPS + Basic Auth 暴露；可选再叠 IP 白名单；**绝不**把 8273 直接对外       |
-| 18293 上传服务是公开直链（既有，非本次引入） | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                  |
-| 未备案域名跑 80/443                          | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                               |
-| 磁盘 19 GB / 内存 1.7 GB                     | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘                           |
-| 服务器无配音                                 | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口       |
-| 两台机器数据分叉（本方案天然如此）           | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运 |
-| 更新重启打断在途轮询                         | 少数任务延迟                             | poller 有退避与自愈；尽量在空闲时更新                                            |
-| 历史任务/项目在服务器上点开是坏图坏视频      | 观感差（路径已改为不存在的 Linux 路径）  | 预期内；第 9 节 B+ 可一次性救活（627 MB / 2.46 GB 两档）                         |
+| 风险                                          | 影响                                     | 对策                                                                             |
+| --------------------------------------------- | ---------------------------------------- | -------------------------------------------------------------------------------- |
+| 控制台**零鉴权**且库内存着 API Key            | 任何人可读改设置、烧你的额度             | 只经 HTTPS + Basic Auth 暴露；可选再叠 IP 白名单；**绝不**把 8273 直接对外       |
+| 18293 上传服务是公开直链（既有，非本次引入）  | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                  |
+| 未备案域名跑 80/443                           | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                               |
+| 磁盘 19 GB / 内存 1.7 GB                      | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘                           |
+| 服务器无配音                                  | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口       |
+| 两台机器数据分叉（本方案天然如此）            | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运 |
+| 更新重启打断在途轮询                          | 少数任务延迟                             | poller 有退避与自愈；尽量在空闲时更新                                            |
+| **服务器→GitHub 链路不稳**（实测 135 s 超时） | clone/pull 失败，代码更新卡住            | 引导脚本已降级为告警；更新走 bundle 快进（第 8 步），或给仓库配国内镜像          |
+| 历史任务/项目在服务器上点开是坏图坏视频       | 观感差（路径已改为不存在的 Linux 路径）  | 预期内；第 9 节 B+ 可一次性救活（627 MB / 2.46 GB 两档）                         |
 
 ## 5. 本方案交付的文件
 
