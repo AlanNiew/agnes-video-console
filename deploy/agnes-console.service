@@ -1,0 +1,57 @@
+# agnes-console.service —— 自托管部署用的 systemd **用户**服务模板
+#
+# 为什么用「用户服务」而不是系统服务：
+#   本服务只需监听 127.0.0.1:8273（非特权端口），数据目录也在 $HOME 下，
+#   用 systemd --user + loginctl enable-linger 即可做到「开机自启、崩溃自拉、退出 SSH 不停」，
+#   全程不需要 sudo。详见 docs/DEPLOY_SELF_HOSTED.md。
+#
+# 模板占位符（由 deploy/bootstrap-server.sh 自动替换；手动安装见 runbook）：
+#   @APP_DIR@   代码目录，例：/home/alan/ai-video/app
+#   @DATA_DIR@  数据目录（DB + artifacts + works），例：/home/alan/ai-video/data
+#   @PORT@      监听端口，默认 8273
+#
+# 安装：
+#   mkdir -p ~/.config/systemd/user
+#   sed -e "s#@APP_DIR@#$HOME/ai-video/app#g" \
+#       -e "s#@DATA_DIR@#$HOME/ai-video/data#g" \
+#       -e "s#@PORT@#8273#g" \
+#       deploy/agnes-console.service > ~/.config/systemd/user/agnes-console.service
+#   systemctl --user daemon-reload && systemctl --user enable --now agnes-console
+
+[Unit]
+Description=Agnes Video 任务控制台（自托管）
+Documentation=https://github.com/AlanNiew/agnes-video-console
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=@APP_DIR@
+# 可选覆盖项（FISH_PROXY / SUBMIT_RATE_LIMIT_BASE_MS 等）；文件不存在时 `-` 前缀让 systemd 忽略
+EnvironmentFile=-%h/ai-video/agnes-console.env
+Environment=NODE_ENV=production
+Environment=PORT=@PORT@
+Environment=DATA_DIR=@DATA_DIR@
+Environment=TZ=Asia/Shanghai
+
+ExecStart=/usr/bin/node server.js
+
+# 常驻后台 worker（提交/轮询/图片/渲染/全自动）要求进程活着；崩溃即拉起
+Restart=always
+RestartSec=5
+# 单实例工作锁心跳 10s/过期 15s：重启太快会与旧锁窗口重叠，5s 已足够
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=agnes-console
+
+# 小内存机器（1.7 GB）上按需启用：
+#   earlyoom 在跑时，正值让本服务成为优先被杀的候选（重启代价小，可保住 Postgres/Redis 等）
+# OOMScoreAdjust=200
+# 硬上限会在渲染峰值时直接 OOM-kill，故默认不设上限，仅留示例
+# MemoryMax=1200M
+
+[Install]
+WantedBy=default.target
