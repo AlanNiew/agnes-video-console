@@ -50,6 +50,21 @@ const api = async (m, p, b) => {
 const t0 = Date.now();
 const ts = () => `[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]`;
 
+/** 轮询专用：容忍瞬时网络抖动（实测一次 fetch failed 就能中断一轮 20 分钟的验收），连续失败 5 次才放弃 */
+async function getTaskTolerant(tid) {
+  let lastErr;
+  for (let i = 0; i < 5; i++) {
+    try {
+      return await api('GET', `/api/tasks/${tid}`);
+    } catch (e) {
+      lastErr = e;
+      console.log(ts(), `  轮询失败（${i + 1}/5），5s 后重试：${e.message}`);
+      await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  throw lastErr;
+}
+
 (async () => {
   const health = await api('GET', '/api/health');
   console.log(ts(), `实例就绪: ${health.app} · ${health.node} · db=${health.db}`);
@@ -81,7 +96,7 @@ const ts = () => `[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]
   let last = '';
   let task = null;
   while (Date.now() < deadline) {
-    task = await api('GET', `/api/tasks/${tid}`);
+    task = await getTaskTolerant(tid);
     const line = `status=${task.status} progress=${task.progress ?? 0} poll=${task.poll_count ?? 0} ${task.error_message || ''}`;
     if (line !== last) {
       console.log(ts(), '  ', line);
@@ -101,7 +116,7 @@ const ts = () => `[${String(Math.round((Date.now() - t0) / 1000)).padStart(4)}s]
     const graceEnd = Date.now() + 60 * 1000;
     while (Date.now() < graceEnd && !task.video_local_path) {
       await new Promise((r) => setTimeout(r, 3000));
-      task = await api('GET', `/api/tasks/${tid}`);
+      task = await getTaskTolerant(tid);
     }
     if (task.video_local_path) console.log(ts(), '  ', `归档完成（异步）: ${task.video_local_path}`);
     else console.log(ts(), '  ', '等待归档超时（video_auto_download 关闭或下载失败）');
