@@ -108,7 +108,8 @@ cat <<EOF
 ────────────────────────────────────────────────────────────
 本地回环已就绪：http://127.0.0.1:$PORT
 日志：systemctl --user status agnes-console | journalctl --user -u agnes-console -f
-预检：cd $APP_DIR && node tools/preflight.js
+预检：cd $APP_DIR && DATA_DIR=$DATA_DIR node tools/preflight.js
+        （★ 必须带 DATA_DIR：db.js 在 import 时就会开库，漏了它会在 app/data 下建一个空库）
 
 还需你手动执行（需要 sudo，脚本不做）：
  1) 中文字体（缺则片头/片尾卡文字静默丢失）：

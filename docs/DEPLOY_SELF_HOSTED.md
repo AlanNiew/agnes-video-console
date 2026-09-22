@@ -284,7 +284,9 @@ ssh -L 8273:127.0.0.1:8273 <ssh别名>     # 然后浏览器开 http://127.0.0.1
 ### 第 7 步 · 验收清单
 
 ```bash
-cd ~/ai-video/app && node tools/preflight.js
+# ★ 必须带 DATA_DIR：db.js 在 import 时就会 mkdir 并打开库，
+#   漏了它 preflight 会在 app/data 下建一个空库、并把「数据目录」检查误导到错误路径
+cd ~/ai-video/app && DATA_DIR=/home/alan/ai-video/data AGNES_BASE=http://127.0.0.1:8273 node tools/preflight.js
 ```
 
 | 检查                            | 期望                                                                       |
