@@ -106,7 +106,7 @@ const DREAMINA_MODELS = {
         omitRatio: true,
       },
     },
-    label: 'Seedance 2.5（480p/720p/1080p · 4-30s · VIP）',
+    label: 'Seedance 2.5（480p=样片模式 / 720p / 1080p · 4-30s · VIP）',
   },
   'seedance2.0_vip': {
     provider: 'dreamina',
@@ -272,6 +272,21 @@ const DREAMINA_CREDIT_COST = {
    */
   videoByModel: {
     'seedance2.0': { '720p': { perSecond: 8, source: 'measured' } },
+    /**
+     * seedance2.5：即梦网页端的「**样片模式**」= 该模型 @ 480p
+     * （网页原文：先生成 480P 样片，确认满意后可升级为高清正片）。
+     * ⚠ **CLI 没有视频升级命令**（子命令里只有 image_upscale），所以走本系统时"升级高清"
+     * 只能回即梦网页操作，或在系统里按 720p/1080p 重新生成一版（会再扣一次积分）。
+     *
+     * 单价来源：即梦网页端显示 5s / 480P / 1 条 = **45 积分** → **9 积分/秒**（2026-09-23 观察）。
+     * 720p / 1080p 未实测 → 取「该模型已知最低档(9)」与「通用分辨率档」的**较大值**，宁可高报不低报
+     * （历史教训：只按分辨率取单一值曾低报 60%）。
+     */
+    'seedance2.5': {
+      '480p': { perSecond: 9, source: 'estimated' },
+      '720p': { perSecond: 9, source: 'estimated' },
+      '1080p': { perSecond: 15, source: 'estimated' },
+    },
   },
   image: {
     // 实测来源：CLI 本地任务库 ~/.dreamina_cli/tasks.db 的 commerce_info.credit_count

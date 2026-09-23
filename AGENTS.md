@@ -73,6 +73,9 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
   → **视频主力必须用 Agnes**；即梦的价值在**图片**（实测 27–32 秒、1 积分/次）。官方宣传的「快」指**推理速度**（Mini 比 Fast 快 2 倍即此意），与**排队**是两个维度——**换任何模型（含 Mini）都不解决排队**（排队由账户 `priority` 决定）。
   → CLI **没有任何取消任务的命令**（`list_task`/`query_result` 只读，`session delete` 删的是会话容器），页面端也只能看排队、不能终止；卡死任务只能等自然结束或联系即梦客服。
 - **即梦模型清单以 CLI help 的「公开支持集」为准**（`dreamina <子命令> -h`）：图片 text2image 共 9 档（3.0/3.1/4.0/4.1/4.5/4.6/4.7/5.0/5.0Pro），视频**因各子命令支持集不同**故用 `specs` 按子命令声明（text2video 6 个；image2video 8 个，多出 `seedance1.0fast` / `seedance1.5pro` 两个仅图生的老代际）。后端白名单更宽（实测含 `3.0_fast`/`3.5pro`/`seedance1.0` 等未公开项），但官方明确「listed model values are the CLI's public support set」，故**不采用未公开项**。
+- **Seedance 2.5「样片模式」= 2.5 @ 480p，不是独立模型**（2026-09-23 核对 CLI v ec1b9fa）：网页端原文「先生成 480P 样片，确认满意后可升级为高清正片」，而 CLI 侧**没有** `sample`/`draft` 旗标，`seedance2.5` 的 `--video_resolution` 本就支持 `480p`。所以本系统里选「即梦 → `seedance2.5` → 480p」即等价于样片模式（前端下拉靠 `label` 提示，已标注「480p=样片模式」）。
+  ⚠ **CLI 没有视频升级命令**（子命令里只有 `image_upscale` 是图片升级），故「满意后升级高清」只能回即梦网页操作，或在系统里按 720p/1080p **重新生成一版（再扣一次积分）**。
+  ⚠ `seedance2.5` 为 **VIP-only**（CLI 原文），`vip_level=standard` 的账号用不了 —— 提交前由 `isVipLevel` 守卫拦截。成本护栏已补 2.5 覆盖档：480p = **9 积分/秒**（网页端 5s/480P/1 条 = 45 积分的观察值），720p/1080p 未实测 → 取「该模型已知最低档」与「通用分辨率档」的较大值（宁可高报不低报）。
 - **`image2video` 的 `--image` 只接受本地文件路径**（官方 help 原文「local first-frame image path」）：`workers/submitter.js` 的 `ensureLocalImage` 负责在提交前把远端 URL / `/artifacts/xxx` 落成本地绝对路径，取不到则任务落 `submit_error`（不静默降级）。子命令由「有无首帧图」自动推导：有 → image2video，无 → text2video。
 - **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（**会过期的每日额度优先花在封面/关键镜头上**）：
   · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；

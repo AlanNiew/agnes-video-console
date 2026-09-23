@@ -421,6 +421,30 @@ describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
   });
 });
 
+describe('即梦 2.5 成本护栏（网页「样片模式」= 2.5 @ 480p）', () => {
+  test('480p 按 9 积分/秒（网页端 5s = 45 积分）', () => {
+    const e = estimateDreaminaCost('seedance2.5', { video_resolution: '480p', duration: 5 });
+    expect(e.points).toBe(45);
+    expect(e.breakdown).toContain('480p');
+  });
+
+  test('720p 未实测 → 不低于该模型已知最低档，避免低报', () => {
+    expect(estimateDreaminaCost('seedance2.5', { video_resolution: '720p', duration: 5 }).points).toBe(45);
+  });
+
+  test('1080p 取通用档 15 积分/秒（高于已知最低档，取较大值）', () => {
+    expect(estimateDreaminaCost('seedance2.5', { video_resolution: '1080p', duration: 5 }).points).toBe(75);
+  });
+
+  test('回归：seedance2.0 720p 仍为 8 积分/秒（10s = 80）', () => {
+    expect(estimateDreaminaCost('seedance2.0', { video_resolution: '720p', duration: 10 }).points).toBe(80);
+  });
+
+  test('标签体现「480p = 样片模式」（前端下拉即靠该 label）', () => {
+    expect(DREAMINA_MODELS['seedance2.5'].label).toContain('样片模式');
+  });
+});
+
 describe('图生视频（image2video）子命令推导与守卫', () => {
   test('提供首帧 → 自动推导 image2video，首帧进入 payload.image', () => {
     const { payload, meta } = buildDreaminaPayload({
