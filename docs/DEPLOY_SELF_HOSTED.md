@@ -690,6 +690,44 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 > ⚠ 订阅链接里带 token，已写入 `~/ai-video/proxy/subscription.url`（600）。若该链接外泄过，
 > 建议在机场面板**重置订阅 token**，然后覆盖该文件即可（`refresh-sub.sh` 下次会用新链接）。
 
+### 9.0 与 Clash Verge 的三点差异（常被问到）
+
+用户本机用 Clash Verge，会自然期待服务器上"一样"：24h 常开、系统代理、按规则分流。逐条对齐：
+
+| 期待             | 服务器上的实际情况                                                                                                                                                                                                                                                         |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **24h 常开**     | ✅ **一样**。mihomo 是 systemd 用户服务（`enabled` + `Restart=always`），`Linger=yes` 已开 → 退出 SSH、重启机器都自起；`watchdog` 每 5 分钟看护控制台本身                                                                                                                  |
+| **「系统代理」** | ❌ **Linux 没有这个概念**。Windows 有全局 WinINET 代理开关（Clash Verge 去翻它，或用 TUN 接管），Linux 下每个程序各自读 `HTTP_PROXY/HTTPS_PROXY/ALL_PROXY` 或自带配置。所以「让某个服务走代理」必须逐个指定：控制台用 `FISH_PROXY`、容器用 env（见 9.1）、git/apt 各自配置 |
+| **按规则分流**   | ✅ **已启用**（见下）。不是订阅原文件的 RULE-SET（依赖 rule-providers），而是自带的 geo 数据规则                                                                                                                                                                           |
+
+**规则（`config.yaml` 的 `rules:`，实测逐条命中）**：
+
+```yaml
+rules:
+  - GEOIP,lan,DIRECT,no-resolve # 局域网/私有地址直连
+  - GEOIP,private,DIRECT,no-resolve
+  - GEOSITE,cn,DIRECT # 国内域名直连
+  - GEOIP,CN,DIRECT # 国内 IP 直连
+  - MATCH,PROXY # 其余走节点
+```
+
+日志证据（临时把 `log-level` 调到 `info` 观察后已恢复 `warning`）：
+
+```
+[TCP] --> www.baidu.com:443   match GeoSite(cn) using DIRECT
+[TCP] --> www.qq.com:443      match GeoSite(cn) using DIRECT
+[TCP] --> www.google.com:443  match Match       using PROXY[🇭🇰HK高倍 …]
+[TCP] --> api.fish.audio:443  match Match       using PROXY[🇭🇰HK高倍 …]
+```
+
+geo 数据（`geoip.metadb` 8.2 MB + `geosite.dat` 4.1 MB）**经本地代理下载**（实测 11.8 MB/s；
+服务器→GitHub 直连时好时坏，曾实测 135 s 超时），由 `refresh-geo.sh` 每周日 05:30 更新，
+只有文件变化才重启 mihomo。
+
+**TUN 模式（Clash Verge 里那个"接管全部流量"）没有启用**，这是刻意的：它需要 root，且会把**整台宿主机**
+（包括控制台的 Agnes 出片流量与我的 SSH）都塞进机场 —— 既烧配额又可能把远程自己关在门外。
+本方案是**按服务选择加入**：控制台只把 Fish TTS 送进代理，Agnes 出片保持直连（实测 1.7–7.6 MB/s）。
+
 ### 9.1 服务器上的 Docker 容器也走这个出口
 
 容器里的 `127.0.0.1` 是容器自己，碰不到宿主机的回环端口 —— 所以**额外在 docker 网桥网关上开了一个
