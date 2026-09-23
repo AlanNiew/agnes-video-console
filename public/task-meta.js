@@ -9,7 +9,7 @@ let META = null;
 const MODEL_NAME_FALLBACK = {
   'agnes-video-2.5-flash': 'Flash',
   'agnes-video-2.5': '2.5',
-  'agnes-video-v2.0': 'V2.0',
+  'agnes-video-v2.0': 'V2.0', // 模型已于 2026-09-25 下线；保留仅为历史任务的展示映射
 };
 const modelInfo = (id) => META?.models.find((m) => m.id === id) || null;
 const modelShort = (id) => modelInfo(id)?.short || MODEL_NAME_FALLBACK[id] || String(id).replace('agnes-video-', '');

@@ -72,7 +72,8 @@ function createPipelineService(deps) {
     const effShot = modeOverride === 'text' ? { ...(shot || {}), mode: 'text' } : shot;
     const { mode, prompt: finalPrompt, refs } = composeSubmission({ p, shot: effShot, prompt });
     // v2.6.6：允许**逐镜指定模型**（默认仍是免费档 flash）。
-    // 动机：flash 队列长期 `video_queue_full`，而 v2.0 队列可用；需要能把个别镜头切到 v2.0 出片。
+    // 动机：flash 队列长期 `video_queue_full`；需要能把个别镜头切到付费档 `agnes-video-2.5` 出片。
+    //（原先的免费替代 agnes-video-v2.0 已于 2026-09-25 下线，故只剩付费档或等队列。）
     // 未知模型名一律回落到默认档（与 buildPayload 的兜底一致，不静默用错模型）。
     const pickedModel = model && MODELS[model] ? String(model) : 'agnes-video-2.5-flash';
     const base = {

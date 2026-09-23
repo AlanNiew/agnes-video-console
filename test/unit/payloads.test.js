@@ -1,18 +1,15 @@
 'use strict';
 /**
  * payloads 单元测试 —— API 参数校验矩阵（上游 payload 正确性的核心防线）
- * 覆盖 buildV25Payload / buildV2Payload / buildImagePayload / URL 清洗工具。
+ * 覆盖 buildV25Payload / buildImagePayload / URL 清洗工具（V2.0 已于 2026-09-25 下线，相关用例移除）。
  */
 const {
   buildV25Payload,
-  buildV2Payload,
   buildImagePayload,
   cleanUrlList,
   cleanVideoList,
   isHttpUrl,
   safeUrl,
-  gcd,
-  snapNumFrames,
 } = require('../../services/payloads');
 const { ApiError } = require('../../core/errors');
 
@@ -28,7 +25,7 @@ function expectApiError(status, fn) {
   expect(err.status).toBe(status);
 }
 
-describe('isHttpUrl / safeUrl / gcd', () => {
+describe('isHttpUrl / safeUrl', () => {
   test('isHttpUrl 只接受 http(s)', () => {
     expect(isHttpUrl('https://a.com/x.jpg')).toBe(true);
     expect(isHttpUrl('http://a.com')).toBe(true);
@@ -42,13 +39,6 @@ describe('isHttpUrl / safeUrl / gcd', () => {
     expect(safeUrl('https://ok.com/a.mp4')).toBe('https://ok.com/a.mp4');
     expect(safeUrl('javascript:alert(1)')).toBeNull();
     expect(safeUrl('data:image/png;base64,xxx')).toBeNull();
-  });
-
-  test('gcd 求最大公约数', () => {
-    expect(gcd(16, 9)).toBe(1);
-    expect(gcd(1280, 720)).toBe(80);
-    expect(gcd(0, 5)).toBe(5);
-    expect(gcd(-8, 12)).toBe(4);
   });
 });
 
@@ -170,100 +160,6 @@ describe('buildV25Payload（2.5 家族）', () => {
   test('seed 合法时进入 payload', () => {
     const { payload } = buildV25Payload({ ...base, seed: 12345 });
     expect(payload.seed).toBe(12345);
-  });
-});
-
-describe('buildV2Payload（V2.0 家族）', () => {
-  const base = { prompt: 'v2 测试提示词' };
-
-  test('text 模式默认 121 帧 24fps，seconds 保留两位', () => {
-    const { payload, meta } = buildV2Payload(base);
-    expect(payload).toMatchObject({ model: 'agnes-video-v2.0', num_frames: 121, frame_rate: 24 });
-    expect(meta.seconds).toBe('5.04');
-    expect(meta.images).toEqual([]);
-  });
-
-  test('num_frames 需满足范围与 8n+1 规则', () => {
-    expectApiError(400, () => buildV2Payload({ ...base, num_frames: 8 }));
-    expectApiError(400, () => buildV2Payload({ ...base, num_frames: 442 }));
-    expectApiError(400, () => buildV2Payload({ ...base, num_frames: 120 })); // 非 8n+1
-    const { payload } = buildV2Payload({ ...base, num_frames: 241 });
-    expect(payload.num_frames).toBe(241);
-  });
-
-  test('frame_rate 边界校验', () => {
-    expectApiError(400, () => buildV2Payload({ ...base, frame_rate: 0 }));
-    expectApiError(400, () => buildV2Payload({ ...base, frame_rate: 61 }));
-    const { meta } = buildV2Payload({ ...base, num_frames: 81, frame_rate: 16 });
-    expect(meta.seconds).toBe('5.06');
-  });
-
-  test('width/height 计算宽高比并进入 meta', () => {
-    const { payload, meta } = buildV2Payload({ ...base, width: 1280, height: 720 });
-    expect(payload.width).toBe(1280);
-    expect(meta.aspect_ratio).toBe('16:9');
-    expect(meta.size).toBe('1280x720');
-  });
-
-  test('image 模式需要合法 image URL', () => {
-    expectApiError(400, () => buildV2Payload({ ...base, mode: 'image' }));
-    expectApiError(400, () => buildV2Payload({ ...base, mode: 'image', image: 'javascript:alert(1)' }));
-    const { payload } = buildV2Payload({ ...base, mode: 'image', image: 'https://a.com/i.jpg' });
-    expect(payload.image).toBe('https://a.com/i.jpg');
-  });
-
-  test('keyframes 模式至少 2 张关键帧', () => {
-    expectApiError(400, () => buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg'] }));
-    const { payload, meta } = buildV2Payload({
-      ...base,
-      mode: 'keyframes',
-      images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'],
-    });
-    expect(payload.extra_body).toEqual({ image: ['https://a.com/1.jpg', 'https://a.com/2.jpg'], mode: 'keyframes' });
-    expect(meta.images).toHaveLength(2);
-  });
-
-  test('text 模式不允许携带图片', () => {
-    expectApiError(400, () => buildV2Payload({ ...base, image: 'https://a.com/i.jpg' }));
-    expectApiError(400, () => buildV2Payload({ ...base, images: ['https://a.com/i.jpg'] }));
-  });
-
-  // v2.6.6 修复：上游只认帧数，且顶层 mode 必须是 ti2vid/keyframes/multi_reference
-  test('v2.6.6：只给 seconds 时按 8n+1 就近吸附，不再静默退回 121 帧', () => {
-    expect(snapNumFrames(10, 24)).toBe(241); // 10.04s
-    expect(snapNumFrames(12, 24)).toBe(289); // 12.04s
-    expect(snapNumFrames(6, 24)).toBe(145); // 6.04s
-    expect(snapNumFrames(4, 24)).toBe(97); // 4.04s
-    expect(snapNumFrames(999, 24)).toBe(441); // 上限夹紧
-    const { payload, meta } = buildV2Payload({ ...base, seconds: '10' });
-    expect(payload.num_frames).toBe(241);
-    expect((payload.num_frames - 1) % 8).toBe(0);
-    expect(meta.seconds).toBe('10.04');
-    // 显式 num_frames 优先，不被 seconds 覆盖
-    expect(buildV2Payload({ ...base, seconds: '10', num_frames: 121 }).payload.num_frames).toBe(121);
-  });
-
-  test('v2.6.6：顶层 mode 用上游枚举（text→ti2vid，其余→keyframes）', () => {
-    expect(buildV2Payload(base).payload.mode).toBe('ti2vid');
-    expect(buildV2Payload({ ...base, mode: 'image', image: 'https://a.com/i.jpg' }).payload.mode).toBe('keyframes');
-    const kf = buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] });
-    expect(kf.payload.mode).toBe('keyframes');
-  });
-
-  test('v2.6.6：reference（角色参考图）走上游 multi_reference，至少 1 张即可', () => {
-    const one = buildV2Payload({ ...base, mode: 'reference', images: ['https://a.com/1.jpg'] });
-    expect(one.payload.mode).toBe('multi_reference');
-    expect(one.payload.extra_body).toEqual({ image: ['https://a.com/1.jpg'], mode: 'multi_reference' });
-    expect(one.meta.images).toHaveLength(1);
-    const two = buildV2Payload({ ...base, mode: 'reference', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] });
-    expect(two.payload.mode).toBe('multi_reference');
-    expect(two.payload.extra_body.image).toHaveLength(2);
-    expectApiError(400, () => buildV2Payload({ ...base, mode: 'reference' })); // 无参考图
-    // 与 keyframes（首尾帧插值）语义不同，不得混用
-    expect(
-      buildV2Payload({ ...base, mode: 'keyframes', images: ['https://a.com/1.jpg', 'https://a.com/2.jpg'] }).payload
-        .mode,
-    ).toBe('keyframes');
   });
 });
 

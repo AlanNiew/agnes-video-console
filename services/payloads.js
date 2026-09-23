@@ -7,6 +7,7 @@
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const {
   MODELS,
+  RETIRED_MODELS,
   DREAMINA_MODELS,
   DREAMINA_IMAGE_MODELS,
   DREAMINA_VIDEO_RATIOS,
@@ -76,143 +77,6 @@ function cleanVideoList(arr) {
       if (!isHttpUrl(v.url)) throw new ApiError(400, `videos 含非法 URL：${v.url}`);
       return v;
     });
-}
-
-/* ---------------- V2.0 payload ---------------- */
-
-function gcd(a, b) {
-  a = Math.abs(a);
-  b = Math.abs(b);
-  while (b) {
-    [a, b] = [b, a % b];
-  }
-  return a || 1;
-}
-
-/**
- * v2.6.6：秒 → 合法帧数（上游 v2.0 要求 9–441 且满足 8n+1）
- * 就近吸附并保证**不小于**请求时长（宁可多 1 帧，也不要少——渲染是按素材实际时长铺时间轴的）。
- * 例：10s@24fps → 241 帧（10.04s）· 12s → 289（12.04s）· 6s → 145（6.04s）· 5s → 121（5.04s）
- */
-function snapNumFrames(seconds, frameRate = 24) {
-  const raw = Math.round(Number(seconds) * Number(frameRate));
-  if (!Number.isFinite(raw)) return 121;
-  const snapped = Math.round((raw - 1) / 8) * 8 + 1;
-  return Math.max(9, Math.min(441, snapped));
-}
-
-/**
- * agnes-video-v2.0 参数构建（对照官方文档）
- * 模式：text（文生）/ image（图生，单图）/ keyframes（关键帧，extra_body.image 数组）
- * 时长由 num_frames / frame_rate 决定；尺寸由 width/height 决定（服务端会标准化到 480p/720p/1080p）
- */
-function buildV2Payload(b) {
-  const model = 'agnes-video-v2.0';
-  const prompt = String(b.prompt || '').trim();
-  if (!prompt) throw new ApiError(400, 'prompt 不能为空');
-
-  const mode = b.mode !== undefined ? String(b.mode) : 'text';
-
-  const frameRate = Number(b.frame_rate ?? 24);
-  if (!Number.isFinite(frameRate) || frameRate < 1 || frameRate > 60) {
-    throw new ApiError(400, `frame_rate 需在 1–60 之间，收到：${b.frame_rate}`);
-  }
-
-  // v2.6.6：上游 v2.0 **只认帧数**（且必须满足 8n+1）。调用方若只给了 seconds（POST /api/tasks，
-  // 或将来把镜头链路切到 v2.0），这里按 seconds × fps 就近吸附到合法帧数。
-  // ⚠️ 缺这层映射的后果：静默退回默认 121 帧 ≈ 5.04s，而本系列镜头是 10–12s——渲染按素材**实际时长**走，
-  // 成片会整体缩短（已识别的毁片路径）。
-  const hasFrames = b.num_frames !== undefined && b.num_frames !== null && b.num_frames !== '';
-  const hasSeconds = b.seconds !== undefined && b.seconds !== null && b.seconds !== '';
-  const numFrames = hasFrames ? Number(b.num_frames) : hasSeconds ? snapNumFrames(b.seconds, frameRate) : 121;
-  if (!Number.isInteger(numFrames) || numFrames < 9 || numFrames > 441) {
-    throw new ApiError(400, `num_frames 需为 9–441 的整数，收到：${b.num_frames ?? numFrames}`);
-  }
-  if ((numFrames - 1) % 8 !== 0) {
-    throw new ApiError(400, `num_frames 必须满足 8n+1 规则（如 81/121/241/441），收到：${numFrames}`);
-  }
-
-  const seed = b.seed === undefined || b.seed === null || b.seed === '' ? null : Number(b.seed);
-  if (seed !== null && (!Number.isInteger(seed) || seed < 0)) throw new ApiError(400, 'seed 必须是非负整数');
-
-  const width = b.width === undefined || b.width === null || b.width === '' ? null : Number(b.width);
-  const height = b.height === undefined || b.height === null || b.height === '' ? null : Number(b.height);
-  for (const [k, v] of [
-    ['width', width],
-    ['height', height],
-  ]) {
-    if (v !== null && (!Number.isInteger(v) || v <= 0)) throw new ApiError(400, `${k} 必须为正整数`);
-  }
-  const negativePrompt = b.negative_prompt ? String(b.negative_prompt).trim() : '';
-
-  // v2.6.6：上游 v2.0 的 mode 枚举是 **ti2vid / keyframes / multi_reference**（没有 text/image）。
-  // 不传顶层 mode 会被上游判为路由失败——实测返回 503 `fail_to_fetch_task`「no available server」，
-  // 而带 mode:'ti2vid' 的文生请求实测 **200 受理**。图生/关键帧同样归到 keyframes
-  //（keyframes 分支另在 extra_body.mode 里重复声明，保持既有行为）。
-  const upstreamMode = mode === 'text' ? 'ti2vid' : 'keyframes';
-  const payload = { model, prompt, mode: upstreamMode, num_frames: numFrames, frame_rate: frameRate };
-  if (seed !== null) payload.seed = seed;
-  if (width !== null && height !== null) {
-    payload.width = width;
-    payload.height = height;
-  }
-  if (negativePrompt) payload.negative_prompt = negativePrompt;
-
-  let imageUrl = '';
-  const images = [];
-  const upstreamModes = { text: 'ti2vid', image: 'keyframes', keyframes: 'keyframes', reference: 'multi_reference' };
-  if (mode === 'text') {
-    const hasMedia = (b.image && String(b.image).trim()) || (Array.isArray(b.images) && b.images.length);
-    if (hasMedia) throw new ApiError(400, 'v2.0 文生视频模式不允许携带图片（image / images）');
-  } else if (mode === 'image') {
-    imageUrl = String(b.image || '').trim();
-    if (!isHttpUrl(imageUrl)) throw new ApiError(400, '图生视频模式需要提供可公开访问的 image URL');
-    payload.image = imageUrl;
-    payload.mode = upstreamModes.image;
-  } else if (mode === 'reference') {
-    // v2.6.6：角色参考图（"保持一致外观"）走上游的 **multi_reference**——
-    // 实测：顶层 mode='multi_reference' + extra_body {image:[...], mode:'multi_reference'} → 200 受理；
-    // 而 keyframes 是"首尾帧插值"，语义不同（不要混用）。至少 1 张即可。
-    const refs = cleanUrlList(b.images, '角色参考图');
-    if (!refs.length) throw new ApiError(400, 'reference 模式至少需要 1 张参考图 URL');
-    payload.mode = upstreamModes.reference;
-    payload.extra_body = { image: refs, mode: 'multi_reference' };
-    images.push(...refs);
-  } else {
-    // keyframes（首尾帧插值）
-    const frames = cleanUrlList(b.images, '关键帧图片');
-    if (frames.length < 2) throw new ApiError(400, '关键帧动画至少需要 2 张关键帧图片 URL');
-    payload.extra_body = { image: frames, mode: 'keyframes' };
-    images.push(...frames);
-  }
-
-  const seconds = String((numFrames / frameRate).toFixed(2));
-  let aspectRatio = null;
-  if (width !== null && height !== null) {
-    const g = gcd(width, height);
-    aspectRatio = `${width / g}:${height / g}`;
-  }
-  const sizeStr = width !== null && height !== null ? `${width}x${height}` : null;
-
-  return {
-    payload,
-    meta: {
-      model,
-      mode,
-      prompt,
-      seconds,
-      size: sizeStr,
-      aspect_ratio: aspectRatio,
-      seed,
-      image: imageUrl,
-      images,
-      num_frames: numFrames,
-      frame_rate: frameRate,
-      width,
-      height,
-      negative_prompt: negativePrompt || null,
-    },
-  };
 }
 
 /* ---------------- 2.5 家族 payload ---------------- */
@@ -309,10 +173,18 @@ function buildPayload(body) {
   // 即梦（官方 CLI）与 Agnes 的参数体系完全不同，先按 provider 分流。
   // 注意：必须在 MODELS 兜底之前判断，否则即梦模型会被当作「未知模型」而静默降级为默认 Agnes 模型。
   if (providerOf(b.model) === 'dreamina') return buildDreaminaPayload(b);
+  // 已下线模型：明确报错，**不要**静默回退到默认模型 ——
+  // 否则旧任务点"重试"会悄悄换模型重投，产物与预期不符且难排查。
+  if (b.model && RETIRED_MODELS[b.model]) {
+    throw new ApiError(
+      400,
+      `模型 ${b.model} 已于 ${RETIRED_MODELS[b.model]} 下线，请改用 2.5 系列` +
+        '（agnes-video-2.5-flash / agnes-video-2.5）重新提交',
+    );
+  }
   const model = MODELS[b.model] ? b.model : settings.get('model', DEFAULT_SETTINGS.model);
   const info = MODELS[model];
   if (!info) throw new ApiError(400, `不支持的模型：${model}`);
-  if (info.family === 'v2') return buildV2Payload({ ...b, model });
   return buildV25Payload(b);
 }
 
@@ -690,9 +562,6 @@ module.exports = {
   safeUrl,
   cleanUrlList,
   cleanVideoList,
-  gcd,
-  snapNumFrames,
-  buildV2Payload,
   buildV25Payload,
   buildPayload,
   buildDreaminaPayload,

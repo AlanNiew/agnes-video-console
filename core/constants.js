@@ -25,18 +25,15 @@ const MODELS = {
     label: 'Agnes Video 2.5（付费）',
     rate_limit: '以账户配额为准',
   },
-  'agnes-video-v2.0': {
-    family: 'v2',
-    sizes: [],
-    free: true,
-    short: 'V2.0',
-    // deprecated 仅表示「不在主界面可选」（前端下拉/默认模型据此过滤）——官方并未下架本模型，
-    // 仍在售且当前免费；API 兼容层保留，可经 /api/tasks 直接提交使用（文生/图生/keyframes）。
-    deprecated: true,
-    hint: '官方在售免费档 · 界面默认不展示（主推 2.5 Flash 能力更全）；API 仍可经 /api/tasks 直接调用',
-    label: 'Agnes Video V2.0（官方在售 · 兼容保留）',
-    rate_limit: null,
-  },
+};
+
+/**
+ * 已下线模型（官方公告：Agnes Video v2.0 于 2026-09-25 23:59:59 UTC+8 正式下线）。
+ * 保留这张表只为**给旧任务一个清晰的报错**，而不是让它静默回退到默认模型、
+ * 或在界面上继续可选。历史任务记录里的 model 字段保持原样（仅用于展示）。
+ */
+const RETIRED_MODELS = {
+  'agnes-video-v2.0': '2026-09-25',
 };
 
 /**
@@ -354,7 +351,7 @@ function providerOf(model) {
   return isDreamina ? 'dreamina' : 'agnes';
 }
 
-/* 2.5 家族 / V2.0 家族模式 */
+/* 2.5 家族模式（V2.0 已下线，其 V2_MODES 仅保留供历史数据解析） */
 const MODES = ['text', 'keyframe', 'reference'];
 const V2_MODES = ['text', 'image', 'keyframes'];
 
@@ -441,6 +438,7 @@ module.exports = {
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,
   providerOf,
+  RETIRED_MODELS,
   MODES,
   V2_MODES,
   ASPECT_RATIOS,

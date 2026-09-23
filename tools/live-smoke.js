@@ -10,7 +10,7 @@
  * 用法：
  *   node tools/live-smoke.js                                  # 默认 http://127.0.0.1:8273
  *   AGNES_BASE=http://127.0.0.1:8274 node tools/live-smoke.js  # 指定实例（隔离实例联调用）
- *   node tools/live-smoke.js --model agnes-video-v2.0 --seconds 5 --timeout-min 20
+ *   node tools/live-smoke.js --model agnes-video-2.5 --seconds 5 --timeout-min 20   # 付费档（flash 排队时换档）
  *   node tools/live-smoke.js --keep                            # 保留项目/任务（排查用）
  *
  * 退出码：0 = 出片并归档成功；1 = 上游失败或排队超时；2 = 调用出错
@@ -156,7 +156,9 @@ async function getTaskTolerant(tid) {
     console.log('\n✓ 真上游闭环通过：提交 → 轮询 → 本地归档');
     process.exit(0);
   }
-  console.log('\n✗ 未完成（上游失败/排队超时）—— 可稍后重跑，或换档：--model agnes-video-v2.0');
+  console.log(
+    '\n✗ 未完成（上游失败/排队超时）—— 可稍后重跑，或换档：--model agnes-video-2.5（付费档；免费档 v2.0 已于 2026-09-25 下线）',
+  );
   process.exit(1);
 })().catch((e) => {
   console.error('冒烟失败:', e.message);

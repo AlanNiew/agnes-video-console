@@ -139,6 +139,7 @@ CREATE TABLE IF NOT EXISTS render_jobs (      -- v1.3 成片渲染任务
 CREATE INDEX IF NOT EXISTS idx_rjobs_project ON render_jobs(project_id);
 `);
 // 迁移：为旧版本数据库补充 agnes-video-v2.0 相关列（CREATE TABLE IF NOT EXISTS 不会追加列）
+// 注：v2.0 模型已于 2026-09-25 下线；这些列**保留**，用于兼容历史任务数据（不做破坏性删列）。
 const existingCols = new Set(
   db
     .prepare('PRAGMA table_info(tasks)')

@@ -38,7 +38,7 @@ describe('providerOf（模型 → 上游 provider）', () => {
   test('Agnes 模型与未知模型一律回退 agnes（保证历史数据与既有调用向后兼容）', () => {
     expect(providerOf('agnes-video-2.5-flash')).toBe('agnes');
     expect(providerOf('agnes-video-2.5')).toBe('agnes');
-    expect(providerOf('agnes-video-v2.0')).toBe('agnes');
+    expect(providerOf('agnes-video-2.5')).toBe('agnes'); // v2.0 已于 2026-09-25 下线
     expect(providerOf('some-unknown-model')).toBe('agnes');
     expect(providerOf(undefined)).toBe('agnes');
     expect(providerOf('')).toBe('agnes');

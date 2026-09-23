@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.6] - 2026-09-23
+
+### Removed
+
+- **移除 Agnes Video v2.0 模型支持**（依官方公告：v2.0 于 **2026-09-25 23:59:59 UTC+8 正式下线**）：
+  从 `core/constants.js` 的 `MODELS` 白名单删除该模型，并删除 `buildV2Payload` / `snapNumFrames` / `gcd`
+  及其单测与 e2e 用例；新增 `RETIRED_MODELS` 表 —— 旧任务重试时得到**明确报错**
+  （"模型 … 已于 … 下线，请改用 2.5 系列"），而不是静默回退到默认模型导致"重试变成换模型重投"。
+  数据库里 v2.0 相关列（`image` / `num_frames` / `frame_rate` / `width` / `height` / `negative_prompt`）
+  **保留**以兼容历史数据（不做破坏性删列）；`public/task-meta.js` 的模型名映射同样保留供历史任务展示。
+
+### Added
+
+- `tools/live-smoke.js`：真上游冒烟（提交 → 轮询 → 归档 → 清理），部署验收与升级回归用；
+  上游排队超时时可 `--model agnes-video-2.5` 换付费档。
+- `tools/db-snapshot.js`：跨 WAL 的一致性快照（`VACUUM INTO` + `integrity_check`），替代会丢 WAL 写入的 `cp`。
+- `tools/db-relocate.js`：库内绝对路径迁移工具（report / rewrite / clear-missing / assets 四模式），
+  支持 Windows→Linux 迁移与"只补传被引用的产物"。
+- `deploy/`：自托管部署模板 —— `bootstrap-server.sh`（幂等引导）、`agnes-console.service`（systemd 用户服务）、
+  `nginx-agnes.conf`（HTTPS + Basic Auth 反代，含 Range 透传）。
+- `docs/DEPLOY_SELF_HOSTED.md`：自托管部署方案（体检结论、分阶段 runbook、实测记录、24h 运维）。
+- 渲染字体解析支持**用户级路径与显式覆盖**（`AGNES_FONT_FILE` / `AGNES_SERIF_FONT_FILE` 与 `~/.fonts`），
+  供没有 root 的受限主机自备字体；新增 `test/unit/render-font.test.js` 锁定优先级。
+
+### Fixed
+
+- **`seconds` 数字入参被存成 `'5.0'` 导致镜头永远提交不出去**：`node:sqlite` 把 JS number 按 REAL 绑定，
+  写进 TEXT 亲和列后与秒数白名单（`'4'`..`'12'`）不匹配。数据层加 `asText` 护栏，覆盖
+  `projects.insert/update`、`addShot/updateShot`、`replaceShots/bulkAddShots`、`tasks.insert/update`
+  共 7 处写入点；新增 `test/unit/repo-seconds.test.js`。
+
 ## [2.6.5] - 2026-09-18
 
 ### Changed

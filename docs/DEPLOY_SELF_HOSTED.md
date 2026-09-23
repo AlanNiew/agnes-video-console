@@ -451,12 +451,15 @@ cd ~/ai-video/app && DATA_DIR=/home/alan/ai-video/data AGNES_BASE=http://127.0.0
 ```bash
 cd ~/ai-video/app
 DATA_DIR=/home/alan/ai-video/data node tools/live-smoke.js                    # 建 1 镜 5s → 提交 → 轮询 → 归档 → 清理
-DATA_DIR=/home/alan/ai-video/data node tools/live-smoke.js --model agnes-video-v2.0   # flash 排队 503 时换档
+DATA_DIR=/home/alan/ai-video/data node tools/live-smoke.js --model agnes-video-2.5    # flash 排队时换付费档
+#   （免费替代 agnes-video-v2.0 已于 2026-09-25 下线，见文末实测记录）
 ```
 
 > **实测上游行为**：`agnes-video-2.5-flash` 免费档会返回 **503「队列满（生成额度排队）」**，
-> 客户端按 90/180/360/720s 退避重试 5 次；同一时刻 **`agnes-video-v2.0` 十秒内即接单并 90 秒出片**。
-> 所以「排队」不是故障，也不是部署问题 —— 急着出片时用 `--model agnes-video-v2.0` 换档即可（UI 亦支持逐镜模型覆盖）。
+> 客户端按 90/180/360/720s 退避重试 5 次（约 22 分钟耗尽）后落 `submit_error`。
+> **排队不是故障、也不是部署问题**；应对方式：① 任务中心**原地重试**（等队列空闲时）；
+> ② 按镜换 **`agnes-video-2.5`（付费档）**；③ 等。
+> ⚠ 原先的免费替代 `agnes-video-v2.0` **已于 2026-09-25 23:59:59 下线**，已从模型白名单移除（旧任务重试会得到明确报错）。
 
 > **成片渲染要求 ≥ 2 个已完成视频的镜头**（xfade 转场至少需要两段素材）：单镜头项目调
 > `POST /api/projects/:id/render` 会被 400 拒绝，实测报错
@@ -527,7 +530,7 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 | 18293 上传服务是公开直链（既有，非本次引入）  | 有链接即可下载                           | 继续只放封面/素材，勿放敏感内容                                                                                                                                                       |
 | 未备案域名跑 80/443                           | 被运营商拦                               | 用 8443；或走 6B Cloudflare Tunnel                                                                                                                                                    |
 | **证书续期静默失效**                          | 90 天后 HTTPS 中断且无告警               | 用 **root 自持 acme.sh**：续期 cron 与 `--reloadcmd` 都以 root 执行；切勿用登录用户 acme.sh + `--reloadcmd "sudo …"`（续期无 TTY，sudo 要密码必失败）                                 |
-| **上游免费档 503「队列满」**                  | 新片排队、可能等数十分钟甚至当天出不来   | 客户端已按 90/180/360/720 s 退避重试 5 次（实测 `2.5-flash` 排队时 `v2.0` 十秒接单、90 s 出片）→ 用 `tools/live-smoke.js --model agnes-video-v2.0` 或 UI 逐镜模型覆盖换档；与部署无关 |
+| **上游免费档 503「队列满」**                  | 新片排队、可能等数十分钟甚至当天出不来   | 客户端按 90/180/360/720 s 退避 5 次后落 `submit_error` → **原地重试**等队列空闲，或按镜换 `agnes-video-2.5`（付费档）。⚠ 队列是**账号级**的：实测把 `base_url` 切到国内端点 `apihub.agnes-ai.cn` 仍返回 503（但该端点快 6–19 倍，可留用） |
 | 磁盘 19 GB / 内存 1.7 GB                      | 攒到 ~30 集后吃紧；渲染峰值可能被 OOM 杀 | 盯水位与 OOM 日志；渲染串行；及时清理 artifacts 或扩盘。**实测**：e2e 连跑 3 次真实 ffmpeg 渲染（含 720×1280 竖屏）未触发 earlyoom，服务常驻内存 ~57 MB                               |
 | 服务器无配音                                  | 成片无旁白（字幕仍在）                   | 配音回本机补：本机跑配音 → 把音频与项目配置同步回来；或第 9 节给服务器出口                                                                                                            |
 | 两台机器数据分叉（本方案天然如此）            | 本机有历史库、服务器有新库               | 明确「服务器=生产、本机=历史+配音工作台」；需要合并不手动拼库，走发布包/素材搬运                                                                                                      |
@@ -544,7 +547,7 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 | `deploy/nginx-agnes.conf`        | 8443 + TLS + Basic Auth + Range 透传反代模板                   | 在服务器 nginx 1.24.0 上 `nginx -t` **通过**                                              |
 | `tools/db-snapshot.js`           | 跨 WAL 一致性快照（`VACUUM INTO` + 完整性校验）                | 本机对真实库跑通，integrity_check ok                                                      |
 | `tools/db-relocate.js`           | 库内绝对路径 report/rewrite/clear-missing/**assets** 四模式    | 本机对真实库副本跑通：1309 行改写、0 残留、JSON 解析无损、assets 466 文件/627 MB 实拷一致 |
-| `tools/live-smoke.js`            | **真上游**冒烟（提交→轮询→归档→清理），部署验收 / 升级回归用   | 服务器实测跑通 v2.0 档：5.04 s / 800 KB 归档；错误路径 exit 2                             |
+| `tools/live-smoke.js`            | **真上游**冒烟（提交→轮询→归档→清理），部署验收 / 升级回归用   | 服务器实测跑通 v2.0 档：5.04 s / 800 KB 归档（v2.0 已下线，改用 `--model agnes-video-2.5`） |
 | `test/unit/render-font.test.js`  | 锁死字体候选优先级（用户级路径 / 显式覆盖 / 不存在值必须跳过） | jest 4 用例通过                                                                           |
 | `test/unit/repo-seconds.test.js` | 锁死 `seconds` 写库归一化（数字不得落成 `'5.0'`）              | jest 6 用例通过                                                                           |
 | `docs/DEPLOY_SELF_HOSTED.md`     | 本文                                                           | —                                                                                         |
@@ -586,7 +589,7 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 | 资源压力                            | 3 次真实 ffmpeg 渲染**未触发 earlyoom**                                                                    | `journalctl -u earlyoom` 无记录；磁盘 18 GB 可用                                                                                                                                                                                                                                           |
 | 网络                                | Agnes CDN 实测 1.7–7.6 MB/s；8443/9999 外网超时、18293 31 ms 连通                                          | 渲染取材不再是瓶颈；公网入口需双放行                                                                                                                                                                                                                                                       |
 | 备份                                | 每日 04:15 cron 已装并试跑                                                                                 | 4.37 MB / `integrity_check=ok`；acme.sh v3.1.6 已预装（含 dns_huaweicloud/dp/ali/cf）                                                                                                                                                                                                      |
-| **真上游闭环**                      | **通过**（用 `agnes-video-v2.0` 档）                                                                       | 提交成功 → 轮询（含 429 退避）→ completed → 异步归档 800 KB；ffprobe：h264 1088×832@24 + aac，5.04 s                                                                                                                                                                                       |
+| **真上游闭环**                      | **通过**（当时用 `agnes-video-v2.0` 档；该模型已于 2026-09-25 下线）                                                                       | 提交成功 → 轮询（含 429 退避）→ completed → 异步归档 800 KB；ffprobe：h264 1088×832@24 + aac，5.04 s                                                                                                                                                                                       |
 | **Linux 侧 CI 平价**                | jest **16 套件 231 用例全过**；lint **0 error**（11 个既有 warning）；`format:check` 全绿                  | 在部署机上跑仓库自带套件，证明跨平台（路径 / 字体 / 换行）无差异                                                                                                                                                                                                                           |
 | **Range/206**                       | 应用层返回 `206 Partial Content` + `Accept-Ranges: bytes` + `Content-Range: bytes 0-99/9370`               | 成片拖动进度条的前置条件在反代之前就已成立（nginx 只需透传）                                                                                                                                                                                                                               |
 | **单实例工作锁**                    | 同 `DATA_DIR` 起第二实例 → 日志「仅提供 API，后台工作器停用」                                              | 真实机器上验证；收尾按 PID（不用宽泛 pkill，避免误杀）                                                                                                                                                                                                                                     |
@@ -595,12 +598,12 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 | **BGM 曲库链路**                    | **可用**：搜索命中 3 首 → 试听流 200 / 8,005,007 B / audio/mpeg                                            | `GET /api/music/search` + `GET /api/music/stream` 全通；ffprobe: mp3 200.1 s；容器 `127.0.0.1:15001` 直连 200                                                                                                                                                                              |
 | 免 sudo 公网入口                    | **不可能**（16 个候选端口全部丢弃，连 443 也是）                                                           | 安全组只放行既有服务端口，无空闲可借用 → 必须 sudo + 云控制台，或改走 6B Cloudflare Tunnel                                                                                                                                                                                                 |
 | **IP 模式准备与彩排**               | 自签名证书（SAN 含 IP，10 年）+ Basic Auth 口令 + IP 版配置全部就绪；彩排**断言全过**                      | 系统 nginx + **真实证书/真实口令**在回环 8443：401 / 200 / 200-24446B / `--cacert` 200 / Range 206 / 错误 0 条                                                                                                                                                                             |
-| **真实上游 → 渲染成片**             | **通过**：2 镜真实 v2.0 素材 → 渲染 **66 s** → 成片 **5.12 MB** / h264 **1280×720@30** + aac / **15.63 s** | 同批产出净版、**竖屏版**、3 张封面候选、**发布包 6 个文件**；抽帧目视确认片头卡与字幕中文成形（`渲染验收` 字形无误、字幕「灯塔在暮色里亮起」带描边）                                                                                                                                       |
+| **真实上游 → 渲染成片**             | **通过**：2 镜真实 v2.0 素材（该模型已下线） → 渲染 **66 s** → 成片 **5.12 MB** / h264 **1280×720@30** + aac / **15.63 s** | 同批产出净版、**竖屏版**、3 张封面候选、**发布包 6 个文件**；抽帧目视确认片头卡与字幕中文成形（`渲染验收` 字形无误、字幕「灯塔在暮色里亮起」带描边）                                                                                                                                       |
 | 渲染约束                            | 需 **≥2 个已完成镜头**（单镜 `POST /render` → 400）                                                        | 已在第 7 步写明；另记「项目名带空格」的片头卡排版注意事项                                                                                                                                                                                                                                  |
 | 隔离验收的洁净度                    | 全程在 `/tmp` 隔离实例（库副本 + 独立端口 8274）上跑，**生产库零污染**                                     | 验收后生产侧仍为 48 项目 / 0 artifacts / 0 works，与测试前一致                                                                                                                                                                                                                             |
 | **长时运行巡检**                    | 4.5 小时 **0 次重启 / 0 条 error**；仅 2 条告警且均为**重启瞬间的锁接管**（预期行为）                      | 内存 63.7 MB、负载 0.27、磁盘 18 GB、5 小时日志仅 38 行；库 `integrity_check=ok`、`journal_mode=wal`                                                                                                                                                                                       |
 | 回滚点                              | `~/ai-video/backup/{agnes-postrelocate,agnes-postdeploy}.db`                                               | 迁移后 / 部署后各一份，`integrity_check=ok`                                                                                                                                                                                                                                                |
-| 上游排队行为                        | `2.5-flash` 返回 **503「队列满」**，同刻 v2.0 立即接单                                                     | 503 走 90/180/360/720 s 退避 5 次；v2.0 十秒内进入生成中、90 秒出片（`--model` 可换档）                                                                                                                                                                                                    |
+| 上游排队行为                        | `2.5-flash` 返回 **503「队列满」**，当时 v2.0 可立即接单（v2.0 已于 2026-09-25 下线）                                                     | 503 走 90/180/360/720 s 退避 5 次；v2.0 十秒内进入生成中、90 秒出片（`--model` 可换档）                                                                                                                                                                                                    |
 | **顺带修复**                        | `seconds` 数字入参被存成 `'5.0'` → 镜头**永远提交不出去**（v2.6.6 已修）                                   | 数据层加 `asText` 护栏；服务器实测数字 `5`/`7` → 读回 `'5'`/`'7'` 且过白名单；16 套件 231 用例全过                                                                                                                                                                                         |
 | 遗留（用户）                        | nginx 8443 + HTTPS + Basic Auth                                                                            | 8443 需 UFW + 云安全组**双放行**；证书需域名与 DNS API 凭据                                                                                                                                                                                                                                |
 | **公网入口上线**                    | **已完成**：`https://60.204.147.98:8443` 外网可访问，Basic Auth 生效                                       | 无鉴权 **401** / 带鉴权 **200** / 首页 **24446 B**（与直连一致）/ 错口令仍 401 / 你的 80 站点照常 200                                                                                                                                                                                      |
@@ -644,7 +647,8 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 1. **默认模型**：**保持 `agnes-video-2.5-flash`**（用户的创作选择）。代价已知：flash 免费档排队时会连续
    浪费 ~22 分钟/条并落 `submit_error`（`max_active_minutes` 与提交退避预算决定）。应对方式：
    - 失败任务可在任务中心**原地重试**（ID 不变、参数保留），等队列空闲时批量重试即可；
-   - 单镜需要赶时间时，提交时按镜头**换档到 `agnes-video-v2.0`**（UI 支持逐镜模型覆盖）。
+   - 单镜需要赶时间时，提交时按镜头**换档到 `agnes-video-2.5`（付费档）**（UI 支持逐镜模型覆盖）；
+  或等队列空闲后在任务中心原地重试（`v2.0` 已于 2026-09-25 下线，不再是选项）。
 2. **配音（旁白）**：**已解决** —— 服务器上装了 mihomo 出口（见第 9 节），线上成片**从现在起有旁白**。
 3. **成片备份**：用户选择「不做异地备份、服务器暂存」，由**本机脚本主动拉取**归档 ——
    见工作区根目录的 `pull-works.ps1`（增量、单连接 sftp、中文名安全，实测首拉 3 个文件 1.1 秒、
