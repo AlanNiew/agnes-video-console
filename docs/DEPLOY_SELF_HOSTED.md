@@ -488,6 +488,31 @@ journalctl --user -u agnes-console -f          # 实时日志（内存环形日�
 df -h / ; du -sh ~/ai-video/data/*             # 实测约 0.6 GB/集（镜头素材 ~0.36 + 成片 ~0.28）
 ```
 
+**把线上库重置为「干净控制台」（清内容、留配置）**
+
+迁移过去的库带着本机 805 条历史任务/48 个项目 —— 记录在、素材不在（历史条目点开是 404、作品库为空），
+看起来别扭。若想线上只做新内容，可以清空内容表、保留全部配置：
+
+| 删除                                                                                                | 保留                                                                              |
+| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| `tasks` / `projects` / `project_texts` / `project_images` / `shots` / `project_tts` / `render_jobs` | `settings` 全部 20 项（API Key、模型、间隔、创作模板、角色库、声音池、BGM 接口…） |
+
+安全顺序（脚本已放在服务器 `~/ai-video/reset-online-history.sh`，含全部步骤与自检）：
+
+```bash
+# ① 一致性快照（回滚点）→ ② dry-run 打印删除行数 → ③ 停服 → ④ 删内容 + VACUUM + 清运行时键
+# → ⑤ 起服 → ⑥ 验证（统计为 0、设置仍在、外网 200）
+bash ~/ai-video/reset-online-history.sh
+```
+
+实测（2026-09-23）：删除 **2246 行**（tasks 806 / shots 479 / project_tts 528 / project_images 173 /
+render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，`settings` 20 项完好，
+重启后 5 个 worker 正常、外网 HTTPS 仍 200。回滚只需把 `~/ai-video/backup/agnes-before-reset-*.db`
+拷回 `data/agnes-console.db` 并重启服务。
+
+> 顺带清理了运行时键 `instance_lock`：不删的话，重启后的新进程会先看到旧进程尚未过期的锁，
+> 日志出现「仅提供 API」并等 30 秒才接管（不影响功能，但没必要）。
+
 **回滚**：`systemctl --user stop agnes-console` → `cp ~/ai-video/backup/agnes-<日期>.db ~/ai-video/data/agnes-console.db`
 → `git checkout <上一个提交> && npm ci && npm run build` → `systemctl --user start agnes-console`。
 
