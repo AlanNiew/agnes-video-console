@@ -689,3 +689,69 @@ render_jobs 151 / project_texts 61 / projects 48），库 **4.2 M → 108 K**，
 
 > ⚠ 订阅链接里带 token，已写入 `~/ai-video/proxy/subscription.url`（600）。若该链接外泄过，
 > 建议在机场面板**重置订阅 token**，然后覆盖该文件即可（`refresh-sub.sh` 下次会用新链接）。
+
+### 9.1 服务器上的 Docker 容器也走这个出口
+
+容器里的 `127.0.0.1` 是容器自己，碰不到宿主机的回环端口 —— 所以**额外在 docker 网桥网关上开了一个
+同端口的 mixed 监听**（HTTP + SOCKS5），公网接口仍然不监听。
+
+| 监听地址          | 给谁用                                                         |
+| ----------------- | -------------------------------------------------------------- |
+| `127.0.0.1:7890`  | 宿主机进程（控制台的 `FISH_PROXY`）                            |
+| `172.17.0.1:7890` | **默认网桥上的容器**（本机所有运行中容器都在这个网桥）         |
+| `127.0.0.1:9090`  | 控制器 API（查看当前节点/延迟，secret 在 `controller.secret`） |
+| `127.0.0.1:1053`  | mihomo 内置 DNS                                                |
+| 公网接口          | **不监听**（配合 UFW 默认 DROP + 云安全组，外网碰不到）        |
+
+**容器里怎么用**（三选一，`NO_PROXY` 一定要带上内网段与内部服务名，否则容器间调用会被绕进代理）：
+
+```bash
+# ① docker run
+docker run -e HTTP_PROXY=http://172.17.0.1:7890 -e HTTPS_PROXY=http://172.17.0.1:7890 \
+           -e NO_PROXY=localhost,127.0.0.1,172.17.0.0/16,redis,netmusic,hntv-api <镜像>
+
+# ② docker-compose
+services:
+  app:
+    environment:
+      HTTP_PROXY: http://172.17.0.1:7890
+      HTTPS_PROXY: http://172.17.0.1:7890
+      ALL_PROXY: socks5://172.17.0.1:7890        # 支持 SOCKS5 的程序用这个
+      NO_PROXY: localhost,127.0.0.1,172.17.0.0/16,redis,netmusic,hntv-api
+
+# ③ 需要 host.docker.internal 写法时（默认网桥网关即宿主机）
+docker run --add-host=host.docker.internal:host-gateway ...   # 然后把代理地址写成 host.docker.internal:7890
+```
+
+**实测证据（2026-09-23，容器内 python3 直测）**：
+
+| 测试                                         | 结果                         |
+| -------------------------------------------- | ---------------------------- |
+| 容器 → `google.com` **经** `172.17.0.1:7890` | **HTTP 200**                 |
+| 容器 → `google.com` **直连对照**             | **失败（URLError）**         |
+| 容器 → `gstatic` 经代理                      | 204                          |
+| 容器互通 `netmusic → redis:6379`             | **OK**（内网未被影响）       |
+| 宿主机走公网 IP 访问自己的 7890              | 000（未作为 LAN 客户端放行） |
+| 控制台 `/api/tts/voices`                     | 仍 200（回环路径未受影响）   |
+
+**注意两点**：
+
+1. `mysql-network`（172.18.0.1）的网桥当前是 **DOWN**，绑它会失败，所以生成器**自动跳过**并在输出里
+   说明；等你在那个网络上跑容器（网桥 UP）后，**每日 05:10 的订阅刷新会自动加上**该监听，也可以手动
+   `node ~/ai-video/proxy/build-mihomo-config.js && systemctl --user restart mihomo`。
+2. **让 `docker pull` 本身走代理**属于 docker 守护进程配置，需要 sudo（与容器内代理是两件事）：
+   ```bash
+   sudo mkdir -p /etc/systemd/system/docker.service.d
+   sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf >/dev/null <<'EOF'
+   [Service]
+   Environment="HTTP_PROXY=http://172.17.0.1:7890"
+   Environment="HTTPS_PROXY=http://172.17.0.1:7890"
+   Environment="NO_PROXY=localhost,127.0.0.1,172.17.0.0/16,172.18.0.0/16"
+   EOF
+   sudo systemctl daemon-reload && sudo systemctl restart docker
+   ```
+   ⚠ 重启 docker 会重启所有容器（含 netmusic / hntv-api / redis），挑个空闲时间做。
+
+**安全边界**：`allow-lan: true` 是容器能连的前提，但**暴露面由监听地址限定**（只绑回环 + docker 网桥）；
+公网接口既没监听、又被 UFW 默认 DROP 拦住。若将来把 7890 暴露到公网，等于开了一个**开放代理**
+（任何人可借你的机场账号上网，机场通常会封号）——**不要那样做**。
