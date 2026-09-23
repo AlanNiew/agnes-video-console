@@ -777,18 +777,45 @@ docker run --add-host=host.docker.internal:host-gateway ...   # 然后把代理�
 1. `mysql-network`（172.18.0.1）的网桥当前是 **DOWN**，绑它会失败，所以生成器**自动跳过**并在输出里
    说明；等你在那个网络上跑容器（网桥 UP）后，**每日 05:10 的订阅刷新会自动加上**该监听，也可以手动
    `node ~/ai-video/proxy/build-mihomo-config.js && systemctl --user restart mihomo`。
-2. **让 `docker pull` 本身走代理**属于 docker 守护进程配置，需要 sudo（与容器内代理是两件事）：
+2. **让 `docker pull` / `docker search` 走代理**属于 docker 守护进程配置，需要 sudo（与容器内代理是两件事）。
+   **实测踩过两个坑**：
+
+   **坑 1：多个 drop-in 按文件名字母序合并，旧文件会覆盖新文件。**
+   本机原本就有 `proxy.conf`（2025-12 留下，指向已失效的 `socks5h://127.0.0.1:1080`），
+   新建的 `http-proxy.conf` 字母序在前 → **旧的赢了**，于是 `docker search` 一直
+   `TLS handshake timeout`（`systemctl show docker -p Environment` 一看便知）。
+   修法：**只保留一个权威文件**（把内容写进原有的 `proxy.conf`，删掉新建的那个）。
+
+   **坑 2：重启 docker 会停掉重启策略为 `no` 的容器。**
+   实测 `netmusic` / `hntv-api` 策略是 `no` → docker 重启后没自动回来（`redis` 是 `unless-stopped` 所以回来了）。
+   注意 **控制台的 BGM 依赖 netmusic 容器**（`music_api_base=http://127.0.0.1:15001`），它停了 BGM 就废了。
+   修法：`docker update --restart unless-stopped redis netmusic hntv-api`（对运行中容器即时生效，无需重建）。
+
    ```bash
-   sudo mkdir -p /etc/systemd/system/docker.service.d
-   sudo tee /etc/systemd/system/docker.service.d/http-proxy.conf >/dev/null <<'EOF'
+   # ① 统一到一个文件（先删掉新建的那个，避免字母序覆盖）
+   sudo rm -f /etc/systemd/system/docker.service.d/http-proxy.conf
+   sudo tee /etc/systemd/system/docker.service.d/proxy.conf >/dev/null <<'EOF'
    [Service]
-   Environment="HTTP_PROXY=http://172.17.0.1:7890"
-   Environment="HTTPS_PROXY=http://172.17.0.1:7890"
-   Environment="NO_PROXY=localhost,127.0.0.1,172.17.0.0/16,172.18.0.0/16"
+   Environment="HTTP_PROXY=http://127.0.0.1:7890"
+   Environment="HTTPS_PROXY=http://127.0.0.1:7890"
+   Environment="ALL_PROXY=socks5h://127.0.0.1:7890"
+   Environment="NO_PROXY=localhost,127.0.0.1,172.17.0.0/16,172.18.0.0/16,docker.xuanyuan.me"
    EOF
+   # ② 让容器能自己回来（避免重启 docker 后手工拉起）
+   docker update --restart unless-stopped redis netmusic hntv-api
+   # ③ 生效
    sudo systemctl daemon-reload && sudo systemctl restart docker
+   # ④ 核对
+   systemctl show docker -p Environment | tr ' ' '\n' | grep -i proxy   # 应为 http://127.0.0.1:7890
+   docker search nginx | head -3                                          # 之前就是这条失败
    ```
-   ⚠ 重启 docker 会重启所有容器（含 netmusic / hntv-api / redis），挑个空闲时间做。
+
+   `NO_PROXY` 里带上 `docker.xuanyuan.me`（`/etc/docker/daemon.json` 里配的镜像源）→ 国内镜像流量直连、不烧配额。
+   用 `127.0.0.1:7890` 而非网桥地址：dockerd 是宿主机进程，走回环最直接。
+
+   **实测结果（2026-09-23）**：`systemctl show docker -p Environment` → `http://127.0.0.1:7890`；
+   `docker search nginx` → **25 条结果**；`docker pull hello-world` → **下载成功**（25.9 kB）；
+   三个容器恢复运行且策略改为 `unless-stopped`；控制台 BGM 搜索 200（命中 3 首）、TTS 200、容器内代理 200。
 
 **安全边界**：`allow-lan: true` 是容器能连的前提，但**暴露面由监听地址限定**（只绑回环 + docker 网桥）；
 公网接口既没监听、又被 UFW 默认 DROP 拦住。若将来把 7890 暴露到公网，等于开了一个**开放代理**
