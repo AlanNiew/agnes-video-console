@@ -259,16 +259,24 @@ done
 
 **你要执行的四段（需要 sudo）**：
 
+> ⚠ **权限要点（实测踩过，务必照抄）**：这台 nginx 的 **master 进程以 `www-data` 运行**
+> （`systemctl show nginx -p User` → `www-data`；`ps` 里 master 也是 www-data），
+> 所以**私钥与口令文件必须是 `root:www-data` + `640`** —— 让 nginx 用户可读、其他普通用户不可读。
+> 若按常规假设（master 是 root）装成 `600 root:root`，reload 会失败：
+> `[emerg] cannot load certificate key "/usr/local/nginx/certs/agnes.key": BIO_new_file() failed (Permission denied)`，
+> 表现为 **8443 不监听、而 80 站点照常**（旧配置继续生效，容易误判成"配置写错了"）。
+
 ```bash
 # ① 安装文件
 sudo mkdir -p /usr/local/nginx/certs
-sudo install -m600 /home/alan/ai-video/certs/agnes.key          /usr/local/nginx/certs/agnes.key
-sudo install -m644 /home/alan/ai-video/certs/agnes.crt          /usr/local/nginx/certs/agnes.crt
-sudo install -m600 /home/alan/ai-video/htpasswd-agnes           /usr/local/nginx/conf/htpasswd-agnes
-sudo install -m644 /home/alan/ai-video/agnes-ip.conf            /usr/local/nginx/conf/conf.d/agnes.conf
+sudo install -o root -g www-data -m640 /home/alan/ai-video/certs/agnes.key /usr/local/nginx/certs/agnes.key
+sudo install -o root -g root     -m644 /home/alan/ai-video/certs/agnes.crt /usr/local/nginx/certs/agnes.crt
+sudo install -o root -g www-data -m640 /home/alan/ai-video/htpasswd-agnes  /usr/local/nginx/conf/htpasswd-agnes
+sudo install -o root -g root     -m644 /home/alan/ai-video/agnes-ip.conf   /usr/local/nginx/conf/conf.d/agnes.conf
 
 # ② 校验并热加载
 sudo /usr/local/nginx/sbin/nginx -t && sudo /usr/local/nginx/sbin/nginx -s reload
+ss -tln | grep 8443        # 确认真的监听了（没监听就看 error.log）
 
 # ③ 放行端口（UFW 与云安全组两处都要）
 sudo ufw allow 8443/tcp
@@ -281,6 +289,9 @@ sudo ufw allow 8443/tcp
 # ⑤ 查看 Basic Auth 口令（不进任何聊天记录）
 cat ~/ai-video/htpasswd-password.txt
 ```
+
+> 若已经装成了 600 root:root，不必重装，跑一条修复命令即可：
+> `sudo bash ~/ai-video/fix-nginx-perms.sh`（改属主/权限 → nginx -t → reload → 回环自检 401/200）。
 
 访问：`https://60.204.147.98:8443` → 浏览器会提示证书不受信任（自签名，正常）→
 Chrome「高级 → 继续前往」/ Firefox「高级 → 接受风险并继续」/ Safari「显示详细信息 → 访问此网站」→
