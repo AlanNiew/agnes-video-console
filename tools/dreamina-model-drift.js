@@ -117,7 +117,7 @@ function checkKind(kind, subcommands) {
   console.log('  ── 白名单现状 ──');
   const src = kind === 'image' ? DREAMINA_IMAGE_MODELS : DREAMINA_MODELS;
   for (const [key, def] of Object.entries(src)) {
-    const mv = String(def.model_version || '');
+    const mv = String(def.modelVersion || def.model_version || '');
     const subs = kind === 'image' ? IMAGE_SUBCOMMANDS : VIDEO_SUBCOMMANDS;
     const supported = subs.filter((s) => (kind === 'image' ? true : def.specs?.[s]));
     const price = priceHint(kind, mv);
