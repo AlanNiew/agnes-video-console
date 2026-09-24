@@ -2,6 +2,32 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.16] - 2026-09-24
+
+### Changed
+
+- **即梦 CLI 升为图片生成主力**（用户口径）。核查发现**前端早已如此**（`task-meta.js`
+  `imageModelOptions()` 注释即「图走即梦是既定策略」，即梦分组首位默认选中；4.7 现为清单首位），
+  缺的是**后端默认值**：新增设置项 `image_model`（默认 `jimeng-image-4.7`），
+  `buildImagePayload` 在**调用方未指定 model 时**落到该档（此前硬编码 Agnes）——
+  于是 API 调用方（脚本/自动化）与前端行为一致。
+  `GET /api/settings` 暴露 `image_model`（可校验切换）；`GET /api/meta` 新增 `image.default_model`
+  （`image.model` 仍是 Agnes 免费兜底档，供前端"Agnes 图片"选项用）。
+  **Agnes 仍是免费兜底**：即梦不可用/积分不足时由既有 `dreamina_fallback` 改投，方向不变。
+
+### Fixed
+
+- **修两处"换默认档会弄坏既有调用方"的坑**（分别由代码审查与 e2e 门禁抓出）：
+  ① 只在**显式未传 model** 时才套默认档 —— 否则显式传 Agnes 的调用（尤其即梦失败后的改投免费档
+  路径）会被又拽回即梦，形成"即梦失败→改投 Agnes→又被改回即梦"的**死循环**；
+  ② **尺寸兼容性** —— 调用方可能按 Agnes 语义传 `size:'1K'`，而 4.7 只支持 2k/4k，硬套默认档会以
+  「分辨率须为 2k / 4k」400 拒掉（e2e 抓到）。现规则：尺寸不在目标即梦模型支持档内时
+  **保持 Agnes 路径**，不硬改分辨率。
+- **过时的前端提示**：`task-meta.js` 仍写「即梦不支持多模态参考模式」并强制拦截 ——
+  v2.6.8 起 `multimodal2video` 已接入。现 `dreaminaVideoInfo` 把 `reference` 映射到
+  `multimodal2video` 并展示其规格，hint 补上实测警告「即梦侧常返回 generation failed，
+  建议优先用首尾帧控制传首帧图」。
+
 ## [2.6.15] - 2026-09-24
 
 > 本条目合并 2.6.12–2.6.15 四个未单独发版的改动（同一件事：**即梦图片选型的性价比 overhaul**）。
