@@ -55,12 +55,14 @@ function parseModels(text) {
   return set;
 }
 
-/** 我们白名单里 model_version → 常量键，按子命令归属 */
+/** 我们白名单里 model_version → 常量键，按子命令归属
+ *  注意：图片档用 `model_version`（3.1 / 5.0Pro），视频档用 `modelVersion`（seedance2.0mini）
+ *  —— 我们自己的命名不统一，读取时两者都要认，否则视频侧会全部误报"未接入"。 */
 function oursByKind(kind) {
   const map = new Map();
   const src = kind === 'image' ? DREAMINA_IMAGE_MODELS : DREAMINA_MODELS;
   for (const [key, def] of Object.entries(src)) {
-    const mv = String(def.model_version || '');
+    const mv = String(def.modelVersion || def.model_version || '');
     if (!mv) continue;
     if (!map.has(mv)) map.set(mv, { key, def });
   }
@@ -70,7 +72,7 @@ function oursByKind(kind) {
 /** 打印已知单价（图片按档位、视频按分辨率） */
 function priceHint(kind, mv) {
   const src = kind === 'image' ? DREAMINA_IMAGE_MODELS : DREAMINA_MODELS;
-  const key = Object.entries(src).find(([, d]) => String(d.model_version) === mv)?.[0];
+  const key = Object.entries(src).find(([, d]) => String(d.modelVersion || d.model_version || '') === mv)?.[0];
   if (!key) return '';
   if (kind === 'image') {
     const row = DREAMINA_CREDIT_COST.image?.[key]?.perRequest || {};
