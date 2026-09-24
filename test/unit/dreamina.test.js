@@ -414,13 +414,19 @@ describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
     expect(DREAMINA_IMAGE_MODELS[keys[0]].resolutions).toEqual(['2k', '4k']);
   });
 
-  test('4.7/4.6@2k 均为实测 1 积分（同价），且都便宜于 5.0@2k', () => {
+  test('4.7/4.6 的 2k=1 分、4k=2 分均为实测；4k 性价比优于 5.0@2k', () => {
     for (const m of ['jimeng-image-4.7', 'jimeng-image-4.6']) {
-      const row = DREAMINA_CREDIT_COST.image[m].perRequest['2k'];
-      expect(row.points).toBe(1);
-      expect(row.source).toBe('measured');
+      const p = DREAMINA_CREDIT_COST.image[m].perRequest;
+      expect(p['2k'].points).toBe(1);
+      expect(p['2k'].source).toBe('measured');
+      expect(p['4k'].points).toBe(2);
+      expect(p['4k'].source).toBe('measured');
     }
-    // 「性价比主力」的选型前提：不得比同档更贵的模型还贵
+    // 反直觉但已核对：4.7@4k（2 分）比 5.0@2k（3 分）更便宜且分辨率更高 → 5.0 被支配
+    expect(DREAMINA_CREDIT_COST.image['jimeng-image-4.7'].perRequest['4k'].points).toBeLessThan(
+      DREAMINA_CREDIT_COST.image['jimeng-image-5.0'].perRequest['2k'].points,
+    );
+    // 「性价比主力」的选型前提：2k 档不得比更贵的模型还贵
     expect(DREAMINA_CREDIT_COST.image['jimeng-image-4.7'].perRequest['2k'].points).toBeLessThan(
       DREAMINA_CREDIT_COST.image['jimeng-image-5.0'].perRequest['2k'].points,
     );
