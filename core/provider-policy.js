@@ -80,6 +80,29 @@ function shouldFallbackFromDreamina(kind, o = {}) {
   return { fallback: true, reason: k, retry: false };
 }
 
+/**
+ * v2.6.7 **反向回退**：Agnes 任务提交失败后是否改投即梦（`seedance2.0mini`）。
+ *
+ * 与 `shouldFallbackFromDreamina` 方向相反：那边是"即梦不行→免费档"，这边是"免费档排队排不上→即梦"。
+ * 设置项 `dreamina_agnes_fallback`（默认 **关**：会消耗会员积分，须显式开启）。
+ *
+ * 只对**重试也大概率无效**的失败启用（否则会白白消耗积分）：
+ *   - `queue-full` 上游队列长时间满（503 queue_full，实测 flash 连续 22 分钟排不上）
+ *   - `rate-limit` 429 限流重试耗尽
+ *   - `net`        网络异常重试耗尽
+ * **内容/参数类失败（4xx 非 429）不改投** —— 即梦同样会拒，改了只是花钱。
+ *
+ * @param {string} kind queue-full | rate-limit | net | 其它
+ * @param {{enabled?:boolean}} [o]
+ * @returns {{fallback:boolean, reason:string|null}}
+ */
+function shouldFallbackToDreamina(kind, o = {}) {
+  if (o.enabled === false) return { fallback: false, reason: null };
+  const k = String(kind || '');
+  if (k === 'queue-full' || k === 'rate-limit' || k === 'net') return { fallback: true, reason: k };
+  return { fallback: false, reason: null };
+}
+
 /** 把任意秒数钳制到免费档可接受的整数秒（4–12） */
 function clampFreeSeconds(seconds) {
   const n = Math.round(Number(seconds) || 5);
@@ -113,6 +136,24 @@ function fallbackReasonText(reason) {
   return FALLBACK_REASON_TEXT[reason] || `即梦不可用（${reason}）`;
 }
 
+/** v2.6.7 反向回退（Agnes → 即梦）的原因 → 中文说明 */
+const TO_DREAMINA_REASON_TEXT = {
+  'queue-full': 'Agnes 免费档队列长时间满（503）',
+  'rate-limit': 'Agnes 提交限流（429）重试耗尽',
+  net: 'Agnes 提交网络异常重试耗尽',
+  'no-prompt': '任务缺少提示词',
+  'has-reference-images': '任务带参考图（Agnes 的 reference 与即梦 image2video 语义不同，不自动改投）',
+  'unknown-model': '目标即梦模型不在白名单',
+  'unsupported-subcommand': '目标即梦模型不支持文生视频',
+  'bad-args': '参数无法映射为即梦合法入参',
+  'dreamina-unusable': '即梦不可用（未安装 / 未登录 / 无权益）',
+  'insufficient-credit': '即梦积分不足',
+};
+
+function toDreaminaReasonText(reason) {
+  return TO_DREAMINA_REASON_TEXT[reason] || `无法改投即梦（${reason}）`;
+}
+
 module.exports = {
   FREE_VIDEO_MODEL,
   FREE_IMAGE_MODEL,
@@ -121,7 +162,9 @@ module.exports = {
   isVipLevel,
   dreaminaUsable,
   shouldFallbackFromDreamina,
+  shouldFallbackToDreamina,
   clampFreeSeconds,
   freeVideoSize,
   fallbackReasonText,
+  toDreaminaReasonText,
 };

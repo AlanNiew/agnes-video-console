@@ -5,15 +5,22 @@
  * 规则来源：用户口径 + 《幻灯屋》台账 §七——
  *   会过期的即梦额度先用；积分不足 / 生成失败 / 非 VIP / 环境未就绪 → 回退免费档（Agnes）。
  */
-const { estimateDreaminaCost, checkDreaminaGuard, dreaminaToAgnes } = require('../../services/payloads');
+const {
+  estimateDreaminaCost,
+  checkDreaminaGuard,
+  dreaminaToAgnes,
+  agnesToDreamina,
+} = require('../../services/payloads');
 const {
   FREE_VIDEO_MODEL,
   FREE_IMAGE_MODEL,
   dreaminaUsable,
   shouldFallbackFromDreamina,
+  shouldFallbackToDreamina,
   clampFreeSeconds,
   freeVideoSize,
   fallbackReasonText,
+  toDreaminaReasonText,
 } = require('../../core/provider-policy');
 
 describe('价目表按模型分档（E06 实测标定）', () => {
@@ -95,6 +102,74 @@ describe('dreaminaUsable（提交前可用性）', () => {
   test('环境齐备 → 可用', () => {
     const r = dreaminaUsable({ installed: true, loggedIn: true, vipLevel: 'standard' });
     expect(r).toEqual({ usable: true, reason: null });
+  });
+});
+
+describe('shouldFallbackToDreamina（v2.6.7 反向回退：Agnes 排队失败 → 即梦）', () => {
+  test('队列满 / 限流 / 网络重试耗尽 → 改投即梦', () => {
+    for (const k of ['queue-full', 'rate-limit', 'net']) {
+      expect(shouldFallbackToDreamina(k, { enabled: true })).toEqual({ fallback: true, reason: k });
+    }
+  });
+
+  test('内容/参数类失败不改投（即梦同样会拒，改了只是花钱）', () => {
+    for (const k of ['bad-args', 'auth', 'content-policy', '', undefined]) {
+      expect(shouldFallbackToDreamina(k, { enabled: true }).fallback).toBe(false);
+    }
+  });
+
+  test('设置项关闭时永不改投（默认关闭：会消耗会员积分）', () => {
+    expect(shouldFallbackToDreamina('queue-full', { enabled: false }).fallback).toBe(false);
+  });
+
+  test('原因文案可读', () => {
+    expect(toDreaminaReasonText('queue-full')).toContain('队列');
+    expect(toDreaminaReasonText('has-reference-images')).toContain('参考图');
+  });
+});
+
+describe('agnesToDreamina（Agnes 任务 → 即梦任务映射）', () => {
+  const base = {
+    prompt: '黄昏的渡口，旧提灯被点亮',
+    seconds: '5',
+    size: '720P',
+    aspect_ratio: '16:9',
+    request_json: { model: 'agnes-video-2.5-flash', prompt: '黄昏的渡口，旧提灯被点亮', seconds: '5' },
+  };
+
+  test('纯文生任务可映射：落到即梦默认主力档 + 720p + 同画幅', () => {
+    const r = agnesToDreamina(base);
+    expect(r.ok).toBe(true);
+    expect(r.model).toBe('seedance2.0mini');
+    expect(r.size).toBe('720p');
+    expect(r.seconds).toBe('5');
+    expect(r.aspect_ratio).toBe('16:9');
+    expect(r.request_json.provider).toBe('dreamina');
+    expect(r.request_json.prompt).toBe(base.prompt);
+  });
+
+  test('带参考图的任务**不改投**（reference 与 image2video 语义不同）', () => {
+    const r = agnesToDreamina({ ...base, request_json: { ...base.request_json, images: ['https://a.com/c.png'] } });
+    expect(r).toEqual({ ok: false, reason: 'has-reference-images' });
+    const r2 = agnesToDreamina({ ...base, request_json: { ...base.request_json, image: 'https://a.com/c.png' } });
+    expect(r2.ok).toBe(false);
+  });
+
+  test('缺提示词 → 不映射', () => {
+    expect(agnesToDreamina({ seconds: '5' })).toEqual({ ok: false, reason: 'no-prompt' });
+  });
+
+  test('时长超界按目标模型 spec 钳制并记 notes', () => {
+    const r = agnesToDreamina({ ...base, seconds: '30' });
+    expect(r.ok).toBe(true);
+    expect(r.seconds).toBe('15'); // seedance2.0mini 上限 15s
+    expect(r.notes.join()).toContain('15s');
+  });
+
+  test('非法画幅回落 16:9', () => {
+    const r = agnesToDreamina({ ...base, aspect_ratio: '5:4' });
+    expect(r.ok).toBe(true);
+    expect(r.aspect_ratio).toBe('16:9');
   });
 });
 

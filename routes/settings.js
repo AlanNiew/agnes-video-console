@@ -52,6 +52,9 @@ module.exports = function registerSettingsRoutes(app) {
         settings.get('dreamina_auto_character', DEFAULT_SETTINGS.dreamina_auto_character) === '1',
       // v2.6.1 即梦不可用/失败时是否自动改投免费档（默认开）
       dreamina_fallback: settings.get('dreamina_fallback', DEFAULT_SETTINGS.dreamina_fallback) === '1',
+      // v2.6.7 反向回退：Agnes 排队失败时是否自动改投即梦（默认关，会消耗会员积分）
+      dreamina_agnes_fallback:
+        settings.get('dreamina_agnes_fallback', DEFAULT_SETTINGS.dreamina_agnes_fallback) === '1',
     });
   });
 
@@ -188,6 +191,11 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.dreamina_fallback !== undefined) {
       settings.set('dreamina_fallback', b.dreamina_fallback ? '1' : '0');
       changed.push('dreamina_fallback');
+    }
+    // v2.6.7 反向回退开关（Agnes 排队失败 → 改投即梦；消耗会员积分，默认关）
+    if (b.dreamina_agnes_fallback !== undefined) {
+      settings.set('dreamina_agnes_fallback', b.dreamina_agnes_fallback ? '1' : '0');
+      changed.push('dreamina_agnes_fallback');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

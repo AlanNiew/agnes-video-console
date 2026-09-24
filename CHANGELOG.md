@@ -2,6 +2,32 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.7] - 2026-09-24
+
+### Added
+
+- **反向回退：Agnes 免费档排队失败 → 自动改投即梦**（设置项 `dreamina_agnes_fallback`，默认**关**，会消耗会员积分）。
+  动机：flash 免费档队列满时连续 503（实测 22 分钟重试预算耗尽后落 `submit_error`），无人值守会一直卡住。
+  开启后，**只对"重试也大概率无效"的三类失败**自动把任务原地改成即梦 `seedance2.0mini`（720p）继续制作：
+  `queue-full`（上游队列满 503）/ `rate-limit`（429）/ `net`（网络异常），不新增状态与路由。
+  护栏（任一不满足即不改投、保持原失败状态等人工）：
+  ① 带**参考图**的任务 —— Agnes `reference`（角色一致性）与即梦 `image2video`（首帧动画）语义不同，
+  自动改投会把"参考"变成"首帧"；② 内容/参数类失败（4xx 非 429）—— 即梦同样会拒，改了只是花钱；
+  ③ 即梦未安装 / 未登录 / 无权益；④ **积分不足**（按成本护栏预估比对余额）。
+- `services/payloads.agnesToDreamina()`：Agnes 任务 → 即梦任务的映射，组装走 `buildDreaminaPayload`，
+  与手动提交即梦**同一套校验**（时长按目标模型 spec 钳制、分辨率落该档首个合法值、非法画幅回落 16:9，改动记 notes）。
+- `core/provider-policy.shouldFallbackToDreamina()` + `toDreaminaReasonText()`（纯函数，零副作用，便于单测）。
+- `core/constants.DREAMINA_FALLBACK_VIDEO_MODEL`（`seedance2.0mini`：非 VIP 可用、清单首位主力档）。
+
+### Changed
+
+- **即梦 Mini 单价实测标定**：5s / 720p / text2video 实扣 **30 积分**（CLI `commerce_info.credit_count=30`、
+  `benefit_type=seedance_20_mini_720p_output_5s`）= **6 积分/秒**，写入 `videoByModel` 覆盖
+  （此前按 Fast 同档 5/秒保守估，低报 17%）。
+- `AGENTS.md`：即梦视频"天级排队"结论按 **2026-09-24 复核**更新 —— `seedance2.0mini` 实测
+  `queue_info.queue_length=0`、`queue_status=Generating`、**150 秒出片**且未触发合规闸门；初测数据保留为历史，
+  并保留两条仍有效的约束（并发上限 1 → 提交前只读查 `queue_length`；天级排队可能随 priority 复现）。
+
 ## [2.6.6] - 2026-09-23
 
 ### Removed

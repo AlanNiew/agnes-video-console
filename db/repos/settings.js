@@ -37,5 +37,6 @@ const DEFAULT_SETTINGS = {
   dreamina_confirm_threshold: '10', // 即梦成本护栏：预估积分 > 此阈值时前端需弹窗确认（0 = 每次即梦调用都确认）
   dreamina_auto_character: '1', // 全自动成片的角色图阶段用即梦主力档（1 积分/次 ≈ 4 张候选）；'0' = 用 Agnes 免费档
   dreamina_fallback: '1', // v2.6.1 即梦不可用/失败时**自动改投免费档**（积分不足 / 生成失败 / 非 VIP / 环境未就绪）；'0' = 保留旧的退避等人工
+  dreamina_agnes_fallback: '0', // v2.6.7 **反向回退**：Agnes 免费档排队失败（503/429/网络重试耗尽）时自动改投即梦 seedance2.0mini；默认 '0'（会消耗会员积分，须显式开启）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

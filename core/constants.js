@@ -157,7 +157,12 @@ const DREAMINA_VIDEO_COMMANDS = ['text2video', 'image2video'];
  * 前端图片下拉默认选中它，全自动成片的角色图阶段也用它——两处一致，避免策略漂移。
  */
 const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-3.1';
-
+/**
+ * 反向回退目标：Agnes 任务长时间排队失败（503 队列满 / 429 / 网络）时改投的即梦视频模型。
+ * 选 `seedance2.0mini` 的理由：非 VIP 档（standard 会员可用）、即梦清单首位（前端默认主力）、
+ * 720p/5s 实测约 30 积分、2026-09-24 实测队列空闲时 150 秒出片。
+ */
+const DREAMINA_FALLBACK_VIDEO_MODEL = 'seedance2.0mini';
 /**
  * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
  * （resolution_type / generate_num，且为异步任务）。
@@ -457,6 +462,7 @@ module.exports = {
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_VIDEO_COMMANDS,
   DREAMINA_IMAGE_DEFAULT_MODEL,
+  DREAMINA_FALLBACK_VIDEO_MODEL,
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,

@@ -16,9 +16,33 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
-const { providerOf } = require('../core/constants');
-const { dreaminaToAgnes } = require('../services/payloads');
-const { shouldFallbackFromDreamina, fallbackReasonText } = require('../core/provider-policy');
+const { providerOf, DREAMINA_FALLBACK_VIDEO_MODEL } = require('../core/constants');
+const { dreaminaToAgnes, agnesToDreamina, estimateDreaminaCost } = require('../services/payloads');
+const {
+  shouldFallbackFromDreamina,
+  shouldFallbackToDreamina,
+  dreaminaUsable,
+  fallbackReasonText,
+  toDreaminaReasonText,
+} = require('../core/provider-policy');
+
+/**
+ * v2.6.7 反向回退用的即梦账户状态缓存（60s）：
+ * `dreamina.credit()` 要 spawn CLI（实测约 1s），而一次失败可能触发多次判断，故缓存而非每次都问。
+ */
+let dmStatusCache = { at: 0, data: null };
+async function cachedDreaminaStatus(ttlMs = 60_000) {
+  if (dmStatusCache.data && Date.now() - dmStatusCache.at < ttlMs) return dmStatusCache.data;
+  let data;
+  try {
+    const r = await dreamina.credit();
+    data = r?.ok ? r.data : null;
+  } catch {
+    data = null;
+  }
+  dmStatusCache = { at: Date.now(), data };
+  return data;
+}
 
 /**
  * 即梦 CLI 的 `--image` 只接受**本地文件路径**（官方 help 原文「local first-frame image path」）。
@@ -194,6 +218,82 @@ class Submitter {
     return true;
   }
 
+  /**
+   * v2.6.7 **反向回退**：Agnes（免费档）提交失败 → **改投即梦**继续制作。
+   *
+   * 为什么需要：flash 免费档队列满时会连续 503，重试预算（约 22 分钟）耗尽即落 submit_error，
+   * 无人值守时会一直卡住。此时改投即梦（默认 `seedance2.0mini`，实测队列空闲时 150 秒出片）
+   * 就能把制作走完 —— 代价是消耗会员积分（5s/720p ≈ 30 积分），故设置项默认关闭。
+   *
+   * 命中条件：设置项 `dreamina_agnes_fallback='1'` 且
+   *   ① 失败类型属"重试也大概率无效"（queue-full / rate-limit / net）；
+   *   ② 任务可映射（有提示词、**不带参考图** —— 语义不同不改投）；
+   *   ③ 即梦环境可用（已安装 + 已登录 + 有权益）且**积分够**（按护栏预估算）。
+   *
+   * 动作与 `fallbackDreaminaVideo` 对称：原地改写任务行（model + request_json + 清 submit_id），
+   * 状态回 queued，下一轮 tick 由即梦 CLI 路径提交；不新增状态、不新增路由。
+   *
+   * @returns {Promise<boolean>} true=已改投（调用方直接 return）
+   */
+  async fallbackAgnesVideoToDreamina(t, kind) {
+    const enabled = settings.get('dreamina_agnes_fallback', DEFAULT_SETTINGS.dreamina_agnes_fallback) === '1';
+    const decision = shouldFallbackToDreamina(kind, { enabled });
+    if (!decision.fallback) return false;
+
+    const mapped = agnesToDreamina(t, DREAMINA_FALLBACK_VIDEO_MODEL);
+    if (!mapped.ok) {
+      log(
+        'warn',
+        `任务 #${t.id} ${toDreaminaReasonText(kind)}，但${toDreaminaReasonText(mapped.reason)}，保持失败状态等人工`,
+      );
+      return false;
+    }
+
+    // 环境 + 积分护栏：任何一项不满足就不改投（宁可失败，也不盲目花积分）
+    const status = await cachedDreaminaStatus();
+    const usable = dreaminaUsable({
+      installed: dreamina.isInstalled(),
+      loggedIn: !!status,
+      vipLevel: status?.vip_level,
+      enabled: true,
+    });
+    if (!usable.usable) {
+      log('warn', `任务 #${t.id} ${toDreaminaReasonText(kind)}，但无法改投即梦：${fallbackReasonText(usable.reason)}`);
+      return false;
+    }
+    const est = estimateDreaminaCost(mapped.model, {
+      video_resolution: mapped.size,
+      duration: Number(mapped.seconds),
+    });
+    const credits = Number(status?.total_credit);
+    if (est && est.points != null && Number.isFinite(credits) && credits < est.points) {
+      log('warn', `任务 #${t.id} 无法改投即梦：积分不足（需约 ${est.points}，余 ${credits}）`);
+      return false;
+    }
+
+    const note = mapped.notes.length ? `；${mapped.notes.join('；')}` : '';
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      model: mapped.model,
+      seconds: mapped.seconds,
+      size: mapped.size,
+      aspect_ratio: mapped.aspect_ratio,
+      request_json: mapped.request_json,
+      status: 'queued',
+      progress: 0,
+      task_id: null,
+      video_id: null,
+      submit_response: null,
+      error_message: `已改投即梦（${toDreaminaReasonText(kind)}${note}）`,
+    });
+    log(
+      'warn',
+      `任务 #${t.id} ${toDreaminaReasonText(kind)} → 改投即梦 ${mapped.model}` +
+        `（约 ${est?.points ?? '?'} 积分，余 ${Number.isFinite(credits) ? credits : '?'}；创意提示词不变${note}），继续制作`,
+    );
+    return true;
+  }
+
   async submitOne(t) {
     // provider 分流：即梦走本地 CLI（无 apiKey 概念，登录态由 CLI 保管），Agnes 走 HTTP
     if (providerOf(t.model) === 'dreamina') {
@@ -216,6 +316,8 @@ class Submitter {
       r = await agnes.createTask({ apiKey, baseUrl, payload });
     } catch (e) {
       if (attempts >= MAX_ATTEMPTS) {
+        // v2.6.7：重试耗尽 → 先试反向回退（改投即梦），不行才落 submit_error
+        if (await this.fallbackAgnesVideoToDreamina(t, 'net')) return;
         this.fail(t.id, `提交网络异常（自动重试 ${attempts - 1} 次）：${e.message}`);
         return;
       }
@@ -226,6 +328,7 @@ class Submitter {
 
     if (r.status === 429) {
       if (attempts >= MAX_ATTEMPTS) {
+        if (await this.fallbackAgnesVideoToDreamina(t, 'rate-limit')) return;
         this.fail(t.id, `提交限流（429），自动重试 ${attempts - 1} 次后仍失败：请降低提交频率，稍后再试`, r.data);
         return;
       }
@@ -243,6 +346,8 @@ class Submitter {
     if (r.status >= 500) {
       const queueFull = /queue_full|queue is full|队列/i.test(JSON.stringify(r.data || ''));
       if (attempts >= MAX_ATTEMPTS) {
+        // v2.6.7：队列满/5xx 重试耗尽 → 反向回退即梦（正是 flash 长期 503 的场景）
+        if (await this.fallbackAgnesVideoToDreamina(t, queueFull ? 'queue-full' : 'net')) return;
         this.fail(t.id, `提交失败（${r.status}），自动重试 ${attempts - 1} 次后仍失败：${serverDetail(r)}`, r.data);
         return;
       }

@@ -9,6 +9,7 @@ const {
   MODELS,
   RETIRED_MODELS,
   DREAMINA_MODELS,
+  DREAMINA_FALLBACK_VIDEO_MODEL,
   DREAMINA_IMAGE_MODELS,
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_IMAGE_RATIOS,
@@ -557,6 +558,68 @@ function dreaminaToAgnes(kind, job = {}) {
   return { model: FREE_VIDEO_MODEL, size, seconds: String(seconds), aspect_ratio, request_json, notes };
 }
 
+/**
+ * v2.6.7 **反向回退映射**：Agnes 任务 → 即梦任务（免费档长时间排队失败时改投即梦继续制作）。
+ * 与 `dreaminaToAgnes` 对称、方向相反；差异点必须守住：
+ *
+ *   - **带参考图的任务不自动改投**：Agnes 的 `reference`（角色一致性）与即梦 `image2video`
+ *     （首帧动画）语义不同 —— 自动改投会把"参考"变成"首帧"，画面意图被改变，宁可停在原处等人工；
+ *   - 分辨率一律落该模型 spec 的首个合法值（`seedance2.0mini` 仅 720p）；
+ *   - 时长按目标模型 spec 钳制（Mini 4–15s），并记 notes 说明改动；
+ *   - 组装走 `buildDreaminaPayload`，保证与手动提交即梦**同一套校验**（不另写一份参数逻辑）。
+ *
+ * @param {object} job 任务行（读 prompt / seconds / size / aspect_ratio / request_json）
+ * @param {string} [model] 目标即梦模型（默认 `DREAMINA_FALLBACK_VIDEO_MODEL`）
+ * @returns {{ok:true,model:string,size:string,seconds:string,aspect_ratio:string,request_json:object,notes:string[]}
+ *          |{ok:false,reason:string}}
+ */
+function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
+  const rj = job.request_json || {};
+  const prompt = String(job.prompt || rj.prompt || '').trim();
+  if (!prompt) return { ok: false, reason: 'no-prompt' };
+
+  const refs = [...(Array.isArray(rj.images) ? rj.images : []), rj.image].filter(
+    (x) => x !== undefined && x !== null && x !== '',
+  );
+  if (refs.length) return { ok: false, reason: 'has-reference-images' };
+
+  const info = DREAMINA_MODELS[model];
+  if (!info) return { ok: false, reason: 'unknown-model' };
+  const spec = info.specs?.text2video;
+  if (!spec) return { ok: false, reason: 'unsupported-subcommand' };
+
+  const notes = [];
+  const rawSeconds = Number(job.seconds ?? rj.seconds ?? rj.duration ?? 5);
+  let seconds = Math.round(Number.isFinite(rawSeconds) ? rawSeconds : 5);
+  if (seconds < spec.minDuration || seconds > spec.maxDuration) {
+    const clamped = Math.min(Math.max(seconds, spec.minDuration), spec.maxDuration);
+    notes.push(`时长 ${seconds}s → ${clamped}s（${model} 支持 ${spec.minDuration}–${spec.maxDuration}s）`);
+    seconds = clamped;
+  }
+
+  const size = spec.resolutions[0];
+  const rawSize = String(job.size || rj.size || rj.video_resolution || '');
+  if (rawSize && rawSize.toLowerCase() !== size) notes.push(`分辨率 ${rawSize} → ${size}`);
+
+  const rawRatio = String(job.aspect_ratio || rj.aspect_ratio || '');
+  const aspect_ratio = DREAMINA_VIDEO_RATIOS.includes(rawRatio) ? rawRatio : '16:9';
+  if (rawRatio && aspect_ratio !== rawRatio) notes.push(`画幅 ${rawRatio} → ${aspect_ratio}`);
+
+  try {
+    const { payload } = buildDreaminaPayload({
+      model,
+      prompt,
+      seconds: String(seconds),
+      video_resolution: size,
+      aspect_ratio,
+    });
+    return { ok: true, model, size, seconds: String(seconds), aspect_ratio, request_json: payload, notes };
+  } catch (e) {
+    // 即梦侧校验不通过（如参数组合不支持）→ 不改投，保留原失败状态等人工
+    return { ok: false, reason: e instanceof ApiError ? 'bad-args' : 'bad-args' };
+  }
+}
+
 module.exports = {
   isHttpUrl,
   safeUrl,
@@ -570,4 +633,5 @@ module.exports = {
   estimateDreaminaCost,
   checkDreaminaGuard,
   dreaminaToAgnes,
+  agnesToDreamina,
 };
