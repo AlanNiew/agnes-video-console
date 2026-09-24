@@ -2,6 +2,27 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.11] - 2026-09-24
+
+### Added
+
+- **自动兜底的每日镜数配额**（设置项 `dreamina_daily_auto_shots`，默认 **2**，0=不限）——
+  落实用户口径「**只在必要镜头用即梦**」：自动反向回退每天最多救 N 镜，其余镜头**留给用户在任务中心
+  手动「⬆ 升级即梦」**决定（花钱的裁量权在人手里）。与 v2.6.10 的每日积分预算互补：
+  预算管"钱"（100/天硬上限），镜数配额管"自动化节制"。
+  台账 `dreamina_auto_shot_ledger`（`{"YYYY-MM-DD": 镜数}`）跨天清零、只留 7 天，与积分台账相互独立。
+  `GET /api/settings` 附 `auto_shots_used` / `auto_shots_cap` / `auto_shots_remain`。
+- `core/provider-policy.dreaminaAutoQuotaAllows()`（纯函数）。语义取舍：镜数配额的**非法 cap 视为 0（不限）**
+  —— 它是"自动化节制"而非"钱的安全阀"，坏值不该反过来卡死自动兜底（与积分预算的处理刻意相反）。
+
+### Fixed
+
+- **任务中心「⬆ 升级即梦」按钮在最该出现时反而看不到**：原展示条件要求 `retry_count >= 3`，
+  而**内部 503 退避重试不会累加 `retry_count`** —— 于是"flash 排队排不上"这类最需要即梦兜底的失败任务，
+  按钮根本不显示（用户得先手点 3 次「重试」）。现改为：`failed` / `submit_error` 且当前为 Agnes 任务、
+  即梦可用 → **直接给一键升级**（后端本就只要求状态为 failed/submit_error，是前端门槛多余）。
+  仍刻意不自动触发：必须用户点击 + 过成本护栏。
+
 ## [2.6.10] - 2026-09-24
 
 ### Added
