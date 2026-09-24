@@ -43,5 +43,6 @@ const DEFAULT_SETTINGS = {
   dreamina_spend_ledger: '{}', // v2.6.10 当日即梦花费台账：{ "YYYY-MM-DD": 已提交积分 }，跨天自动清零（预算闸门的判据；余额跨天，故必须自己按日记账）
   dreamina_daily_auto_shots: '2', // v2.6.11 自动兜底**每日镜数**上限（用户口径「只在必要镜头用即梦」）：0=不限；超出后自动路径不再改投，需人工一键升级
   dreamina_auto_shot_ledger: '{}', // v2.6.11 当日自动兜底镜数台账：{ "YYYY-MM-DD": 镜数 }，跨天清零
+  image_model: 'jimeng-image-4.7', // v2.6.16 **图片生成主力档**（用户口径：即梦 CLI 为图片主力）：调用方未指定 model 时的默认值；Agnes 仍是免费兜底（即梦不可用/积分不足时自动改投）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

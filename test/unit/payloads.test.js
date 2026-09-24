@@ -165,9 +165,27 @@ describe('buildV25Payload（2.5 家族）', () => {
 
 describe('buildImagePayload', () => {
   const base = { prompt: '一张角色立绘' };
+  /** v2.6.16：不指定 model 时默认落到**即梦主力档**（设置项 image_model），
+   *  故要测 Agnes 路径必须显式传 Agnes 模型。 */
+  const agnes = { ...base, model: 'agnes-image-2.5-flash' };
 
-  test('默认 1K / 1:1 文生图', () => {
-    const { payload, size, ratio, inputImages } = buildImagePayload(base);
+  test('不指定 model → 默认走即梦主力档（图片主力 = 即梦 CLI）', () => {
+    const { payload, model } = buildImagePayload(base);
+    expect(model).toBe('jimeng-image-4.7');
+    expect(payload.modelVersion).toBe('4.7');
+    expect(payload.resolutionType).toBe('2k'); // 即梦 4.7 支持 2k/4k
+  });
+
+  test('不指定 model 但尺寸是 Agnes 语义（1K）→ **保持 Agnes 路径**（不硬改分辨率）', () => {
+    const r = buildImagePayload({ prompt: 'x', size: '1K' });
+    expect(r.model).toBe('agnes-image-2.5-flash');
+    expect(r.size).toBe('1K');
+    // 兼容的尺寸则走即梦
+    expect(buildImagePayload({ prompt: 'x', size: '2k' }).model).toBe('jimeng-image-4.7');
+  });
+
+  test('显式传 Agnes 模型 → 走 Agnes 同步路径（默认 1K / 1:1 文生图）', () => {
+    const { payload, size, ratio, inputImages } = buildImagePayload(agnes);
     expect(payload).toMatchObject({ model: 'agnes-image-2.5-flash', prompt: base.prompt, size: '1K' });
     expect(payload.extra_body.response_format).toBe('url');
     expect(payload.ratio).toBeUndefined(); // ratio 未显式传时不下发
@@ -181,27 +199,27 @@ describe('buildImagePayload', () => {
     expectApiError(400, () => buildImagePayload({ prompt: 'x'.repeat(8001) }));
   });
 
-  test('size 白名单与自定义尺寸上限', () => {
-    expect(buildImagePayload({ ...base, size: '2K' }).size).toBe('2K');
-    expect(buildImagePayload({ ...base, size: '1024x768' }).size).toBe('1024x768');
-    expectApiError(400, () => buildImagePayload({ ...base, size: '99999x1' }));
-    expectApiError(400, () => buildImagePayload({ ...base, size: 'abc' }));
+  test('size 白名单与自定义尺寸上限（Agnes 路径）', () => {
+    expect(buildImagePayload({ ...agnes, size: '2K' }).size).toBe('2K');
+    expect(buildImagePayload({ ...agnes, size: '1024x768' }).size).toBe('1024x768');
+    expectApiError(400, () => buildImagePayload({ ...agnes, size: '99999x1' }));
+    expectApiError(400, () => buildImagePayload({ ...agnes, size: 'abc' }));
   });
 
-  test('ratio 白名单校验', () => {
-    expectApiError(400, () => buildImagePayload({ ...base, ratio: '5:4' }));
-    const { payload } = buildImagePayload({ ...base, ratio: '16:9' });
+  test('ratio 白名单校验（Agnes 路径）', () => {
+    expectApiError(400, () => buildImagePayload({ ...agnes, ratio: '5:4' }));
+    const { payload } = buildImagePayload({ ...agnes, ratio: '16:9' });
     expect(payload.ratio).toBe('16:9');
   });
 
-  test('输入图支持 http(s) 与 data:image，上限 5 张', () => {
-    const ok = buildImagePayload({ ...base, image: ['https://a.com/a.jpg', 'data:image/png;base64,xxx', ''] });
+  test('输入图支持 http(s) 与 data:image，上限 5 张（Agnes 路径）', () => {
+    const ok = buildImagePayload({ ...agnes, image: ['https://a.com/a.jpg', 'data:image/png;base64,xxx', ''] });
     expect(ok.inputImages).toEqual(['https://a.com/a.jpg', 'data:image/png;base64,xxx']);
     expect(ok.payload.extra_body.image).toHaveLength(2);
-    expectApiError(400, () => buildImagePayload({ ...base, image: 'https://a.com/a.jpg' })); // 必须数组
-    expectApiError(400, () => buildImagePayload({ ...base, image: ['ftp://bad.com/a.jpg'] }));
+    expectApiError(400, () => buildImagePayload({ ...agnes, image: 'https://a.com/a.jpg' })); // 必须数组
+    expectApiError(400, () => buildImagePayload({ ...agnes, image: ['ftp://bad.com/a.jpg'] }));
     expectApiError(400, () =>
-      buildImagePayload({ ...base, image: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`) }),
+      buildImagePayload({ ...agnes, image: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`) }),
     );
   });
 });

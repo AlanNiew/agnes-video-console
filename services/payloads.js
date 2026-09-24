@@ -322,8 +322,28 @@ function buildDreaminaPayload(b) {
 
 /** 校验图片请求并构建 payload（即梦异步任务 / Agnes 同步生成；文生图 / 图生图 / 多图合成） */
 function buildImagePayload(b) {
+  const explicit = String(b.model || '').trim();
   // 即梦图片为异步任务（submit_id + query_result），参数体系与 Agnes 完全不同，先按模型分流
-  if (DREAMINA_IMAGE_MODELS[String(b.model || '')]) return buildDreaminaImagePayload(b);
+  if (DREAMINA_IMAGE_MODELS[explicit]) return buildDreaminaImagePayload(b);
+  // v2.6.16「即梦图片为生成主力」：**仅在调用方未指定 model 时**默认落到即梦主力档（设置项 image_model）。
+  // ⚠ 必须判 `!explicit`：否则显式传 Agnes 模型的调用（尤其是即梦失败后的改投免费档路径）会被
+  // 又拽回即梦，形成"即梦失败→改投 Agnes→又被改回即梦"的死循环。
+  if (!explicit) {
+    const defaultImageModel = String(settings.get('image_model', DEFAULT_SETTINGS.image_model) || '').trim();
+    const dmDef = DREAMINA_IMAGE_MODELS[defaultImageModel];
+    if (dmDef) {
+      // 尺寸兼容性：调用方可能按 Agnes 语义传 size（'1K'/'2K'/'4K' 或精确尺寸）。
+      // 若该尺寸不在目标即梦模型的支持档内（如 4.7 只支持 2k/4k，而调用方传 1K），
+      // **保持 Agnes 路径**而不是硬改分辨率 —— 否则会以「分辨率须为 2k / 4k」400 拒掉，
+      // 把"换个默认档"变成"弄坏既有调用方"。（前端选即梦模型时会自动切换尺寸白名单，不受影响）
+      const wantSize = String(b.size || '')
+        .trim()
+        .toLowerCase();
+      if (!wantSize || (dmDef.resolutions || []).includes(wantSize)) {
+        return buildDreaminaImagePayload({ ...b, model: defaultImageModel });
+      }
+    }
+  }
   const prompt = String(b.prompt || '').trim();
   if (!prompt) throw new ApiError(400, '图片描述 prompt 不能为空');
   if (prompt.length > MAX_TEXT_LEN) throw new ApiError(400, `prompt 长度需 ≤ ${MAX_TEXT_LEN}`);

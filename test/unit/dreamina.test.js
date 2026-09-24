@@ -259,11 +259,19 @@ describe('buildImagePayload 分流（即梦异步 vs Agnes 同步）', () => {
     expect(r.model).toBe('jimeng-image-5.0');
   });
 
-  test('Agnes 路径行为不变，且返回值带 model（此前路由硬编码 IMAGE_MODEL）', () => {
-    const r = buildImagePayload({ prompt: 'x' });
+  test('Agnes 路径行为不变（显式传 Agnes 模型时），且返回值带 model', () => {
+    // v2.6.16：不传 model 现在默认走即梦主力档，故此处显式传 Agnes 模型来锁定 Agnes 路径
+    const r = buildImagePayload({ prompt: 'x', model: 'agnes-image-2.5-flash' });
     expect(r.payload.model).toBe('agnes-image-2.5-flash');
     expect(r.model).toBe('agnes-image-2.5-flash');
     expect(r.payload.provider).toBeUndefined();
+  });
+
+  test('不传 model → 默认即梦主力档（图片主力 = 即梦 CLI，v2.6.16）', () => {
+    const r = buildImagePayload({ prompt: 'x' });
+    expect(r.model).toBe('jimeng-image-4.7');
+    expect(r.payload.provider).toBe('dreamina');
+    expect(r.payload.modelVersion).toBe('4.7');
   });
 });
 

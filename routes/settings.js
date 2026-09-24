@@ -64,6 +64,8 @@ module.exports = function registerSettingsRoutes(app) {
       dreamina_daily_auto_shots: Number(
         settings.get('dreamina_daily_auto_shots', DEFAULT_SETTINGS.dreamina_daily_auto_shots),
       ),
+      // v2.6.16 图片生成主力档（默认即梦 4.7；Agnes 为免费兜底）
+      image_model: settings.get('image_model', DEFAULT_SETTINGS.image_model),
       ...dreaminaBudget.todaySummary(),
     });
   });
@@ -236,6 +238,16 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.dreamina_spent_today !== undefined) {
       dreaminaBudget.setSpentForDay(dreaminaBudget.todayKey(), Number(b.dreamina_spent_today));
       changed.push('dreamina_spend_ledger');
+    }
+    // v2.6.16 图片生成主力档（默认即梦；可切回 Agnes 免费档）
+    if (b.image_model !== undefined) {
+      const v = String(b.image_model || '').trim();
+      const { DREAMINA_IMAGE_MODELS, IMAGE_MODEL } = require('../core/constants');
+      if (v !== IMAGE_MODEL && !DREAMINA_IMAGE_MODELS[v]) {
+        throw new ApiError(400, `image_model 仅支持 Agnes 图片档（${IMAGE_MODEL}）或即梦图片档（如 jimeng-image-4.7）`);
+      }
+      settings.set('image_model', v);
+      changed.push('image_model');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

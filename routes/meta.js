@@ -3,7 +3,7 @@
  * routes/meta.js —— 元信息与健康检查（v1.9.1 拆分自 server.js）
  * /api/meta /api/health /api/openapi.json /api/logs
  */
-const { DB_PATH, settings } = require('../db');
+const { DB_PATH, settings, DEFAULT_SETTINGS } = require('../db');
 const { buildOpenApi } = require('../core/openapi');
 const { recent: recentLogs } = require('../core/logger');
 const dreaminaClient = require('../clients/dreamina');
@@ -47,7 +47,14 @@ module.exports = function registerMetaRoutes(app) {
       })),
       aspect_ratios: ASPECT_RATIOS,
       seconds: SECONDS_OK,
-      image: { model: IMAGE_MODEL, sizes: IMAGE_SIZES, ratios: IMAGE_RATIOS },
+      // v2.6.16：image.model 是 **Agnes 免费兜底档**（前端"Agnes 图片"选项用），
+      // image.default_model 才是**图片主力档**（默认即梦；前端即梦分组已按清单首位选中）
+      image: {
+        model: IMAGE_MODEL,
+        default_model: String(settings.get('image_model', DEFAULT_SETTINGS.image_model) || ''),
+        sizes: IMAGE_SIZES,
+        ratios: IMAGE_RATIOS,
+      },
       llm_model: LLM_MODEL,
       // 即梦（可选上游）——**刻意不混入上面的 models**，前端按 provider 分组渲染。
       // installed 用纯文件探测（不 spawn），保证本端点仍是高频廉价调用；

@@ -28,13 +28,13 @@ const dreaminaAvailable = () => Boolean(dreaminaMeta()?.installed);
 /**
  * 查询即梦视频模型在指定模式下是否可用；可用时返回带 `spec`（该子命令的规格）与 `command` 的对象。
  * mode 映射：'text' → text2video；'keyframe' → image2video（本系统只支持单首帧）；
- * 'reference' → multimodal2video **本系统未接入**，一律返回 null（调用方据此强制回落或拒绝）。
+ * 'reference' → multimodal2video（**v2.6.8 起已接入**，即梦「全能参考」）。
  * 之所以要按模式判断：官方各子命令的支持集不同（1.0fast/1.5pro 仅支持图生视频）。
  */
 function dreaminaVideoInfo(id, mode = 'text') {
   const m = (dreaminaMeta()?.video || []).find((x) => x.id === id);
-  if (!m || mode === 'reference') return null;
-  const command = mode === 'keyframe' ? 'image2video' : 'text2video';
+  if (!m) return null;
+  const command = mode === 'reference' ? 'multimodal2video' : mode === 'keyframe' ? 'image2video' : 'text2video';
   const spec = m.specs?.[command];
   return spec ? { ...m, spec, command } : null;
 }
@@ -94,20 +94,22 @@ function onModelChange() {
   const mode = $('#modeTabs .tab.active')?.dataset.mode || 'text';
   const isDmModel = (dreaminaMeta()?.video || []).some((m) => m.id === id);
 
-  // 即梦 + 参考模式：本系统未接入 multimodal2video → 明确提示（提交也会被后端拒绝）
-  if (isDmModel && mode === 'reference') {
-    $('#modelHint').textContent = '（即梦不支持多模态参考模式，请切换到「文生视频」或「首尾帧控制」）';
-    return;
-  }
+  // 即梦 + 参考模式：v2.6.8 起已接入「全能参考」（multimodal2video），不再拦截；
+  // 但实测即梦侧该子命令常失败（generation failed），故在上面的 hint 里给出改用首帧的建议。
 
   const dm = dreaminaVideoInfo(id, mode);
   if (dm) {
     // 即梦分支：规格取自该**子命令**的 spec（各子命令的时长/分辨率范围不同）
     const s = dm.spec;
-    const cmdLabel = dm.command === 'image2video' ? '图生视频' : '文生视频';
+    const cmdLabel =
+      dm.command === 'image2video' ? '图生视频' : dm.command === 'multimodal2video' ? '全能参考' : '文生视频';
+    const refWarn =
+      dm.command === 'multimodal2video'
+        ? '；⚠ 实测即梦侧常返回 generation failed，建议优先用「首尾帧控制」传首帧图'
+        : '';
     $('#modelHint').textContent =
-      `（即梦 ${cmdLabel} · 积分计费 · ${s.resolutions.join('/')} · ${s.min_duration}-${s.max_duration}s` +
-      `${dm.vip_only ? ' · VIP' : ''}${s.omit_ratio ? ' · 画幅随首帧' : ''}）`;
+      `（即梦 ${cmdLabel} · 积分计费 · ${s.resolutions.join('/')} · ${s.minDuration ?? s.min_duration}-${s.maxDuration ?? s.max_duration}s` +
+      `${(dm.vipOnly ?? dm.vip_only) ? ' · VIP' : ''}${s.omitRatio ? ' · 画幅随首帧' : ''}${refWarn}）`;
     $('#fSize').innerHTML = s.resolutions.map((x) => `<option value="${esc(x)}">${esc(x)}</option>`).join('');
     $('#fSeconds').innerHTML = durationOptions(s.min_duration, s.max_duration);
     // 未接入的素材区隐藏：尾帧属 frames2video、参考文本属 multimodal2video
