@@ -14,8 +14,12 @@ const dreamina = require('../clients/dreamina');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { IMAGE_MODEL, providerOf } = require('../core/constants');
-const { safeUrl, dreaminaToAgnes } = require('../services/payloads');
+const { safeUrl, dreaminaToAgnes, estimateDreaminaCost } = require('../services/payloads');
 const { shouldFallbackFromDreamina, fallbackReasonText } = require('../core/provider-policy');
+const { checkBudget, recordSpend } = require('../services/dreamina-budget');
+
+/** 已按预算记账的即梦图片任务（进程内去重，见 runDreaminaImage 注释） */
+const budgetRecorded = new Set();
 
 const TICK_MS = 5000;
 const MAX_ATTEMPTS = 5;
@@ -365,6 +369,26 @@ class ImageWorker {
   async runDreaminaImage(t) {
     const req = t.request_json || {};
     if (t.video_id) return this.queryDreaminaImage(t, req);
+
+    // v2.6.10 每日预算闸门：即梦图片也计费（jimeng-image-3.1 1k = 1 积分/次），与视频同一本账。
+    // 预算用尽时**不提交**（保留 queued 等次日预算重置后自动续跑），Agnes 免费档主链路不受影响。
+    // budgetRecorded 用进程内 Set 去重：同一任务重试时不重复记账（重启后最多多记一次，
+    // 方向是偏保守 —— 宁可低估可用额度，也不会低估已花额度）。
+    if (!budgetRecorded.has(t.id)) {
+      const estImg = estimateDreaminaCost(t.model, {
+        resolution_type: req.resolution_type || req.size,
+        size: req.resolution_type || req.size,
+      });
+      const budget = checkBudget(estImg && estImg.points != null ? estImg.points : null);
+      if (!budget.allowed) {
+        const prev = this.retryUntil.get(t.id);
+        this.retryUntil.set(t.id, { until: Date.now() + DREAMINA_ENV_BACKOFF_MS, attempts: (prev?.attempts || 0) + 1 });
+        log('warn', `图片任务 #${t.id} 暂不提交即梦：${budget.text}（保留入队，次日预算重置后自动续跑）`);
+        return;
+      }
+      recordSpend(estImg && estImg.points != null ? estImg.points : null);
+      budgetRecorded.add(t.id);
+    }
 
     let r;
     try {

@@ -2,6 +2,31 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.10] - 2026-09-24
+
+### Added
+
+- **即梦每日积分预算闸门（默认 100/天）**：用户账号 standard 档的运营约束是**每天最多 100 积分**，
+  而 `dreamina user_credit` 只报**跨天总余额**、不提供"当日已用/日限额"字段 —— 余额充足 ≠ 今天还能花。
+  新增 `services/dreamina-budget.js`（当日台账 + 闸门）与设置项 `dreamina_daily_budget`（0=不限）：
+  · 台账存 settings（`dreamina_spend_ledger` = `{"YYYY-MM-DD": 分}`），**跨天自动清零**、只留最近 7 天，**无 schema 变更**；
+  · 闸门接在**两处即梦提交点**：`workers/submitter` 的反向回退（改投即梦前）与 `workers/image-worker` 的即梦图片；
+  · 预算用尽 → **不提交**，任务保留入队等次日预算重置后自动续跑；**Agnes 免费档主链路完全不受影响**；
+  · 记账时机=提交前预扣（即梦提交成功即扣费，等"完成"才记会在并发/失败场景漏记导致超支）；
+  图片侧用进程内 Set 去重（同任务重试不重复记账；重启后最多多记一次，方向偏保守）。
+- `GET /api/settings` 附带今日概览（`day` / `spent` / `cap` / `remain`），`PUT` 可改预算与**人工校正当日已花**
+  （`dreamina_spent_today`，用于失败任务或手工试跑的记账修正）。
+
+### Fixed
+
+- `dreaminaBudgetAllows` 对**非法 cap**（NaN/负数）的处理：原实现回落成"不限"，
+  意味着**一条坏配置就会把 100/天的硬约束整个放开**（危险方向）。现回落到默认上限 100，
+  只有**显式 0** 才是"不限"；并补单测锁死该行为。
+
+测试：+14（预算纯函数 8 + 台账 6，含"恰好用满放行 / 超 1 分拦截 / cap=0 不限 / 估算未知保守拦截 /
+脏台账不抛错 / 人工校正 / 非法 cap 不放开"）。
+验证：prettier 全绿 · eslint 0 error · jest 17 套件 263 用例全过 · e2e 全部通过。
+
 ## [2.6.9] - 2026-09-24
 
 ### Changed

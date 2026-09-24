@@ -39,5 +39,7 @@ const DEFAULT_SETTINGS = {
   dreamina_fallback: '1', // v2.6.1 即梦不可用/失败时**自动改投免费档**（积分不足 / 生成失败 / 非 VIP / 环境未就绪）；'0' = 保留旧的退避等人工
   dreamina_agnes_fallback: '0', // v2.6.7 **反向回退**：Agnes 免费档排队失败（503/429/网络重试耗尽）时自动改投即梦 seedance2.0mini；默认 '0'（会消耗会员积分，须显式开启）
   dreamina_ref_strategy: 'first-frame', // v2.6.9 反向回退里参考图的传法：first-frame=取首张作首帧（image2video，**实测唯一能出片**）/ multimodal=全能参考（multimodal2video，实测即梦侧失败，待其修复再切）
+  dreamina_daily_budget: '100', // v2.6.10 即梦**每日积分预算**（0=不限）：用户账号 standard 档运营约束为每天 100 积分，超出即拦（常量副本见 core/constants.js DREAMINA_DAILY_BUDGET_DEFAULT）
+  dreamina_spend_ledger: '{}', // v2.6.10 当日即梦花费台账：{ "YYYY-MM-DD": 已提交积分 }，跨天自动清零（预算闸门的判据；余额跨天，故必须自己按日记账）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

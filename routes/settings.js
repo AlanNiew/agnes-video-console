@@ -10,6 +10,7 @@ const manager = require('../workers/manager');
 const { log } = require('../core/logger');
 const { MODELS } = require('../core/constants');
 const { ApiError } = require('../core/errors');
+const dreaminaBudget = require('../services/dreamina-budget');
 const { isHttpUrl } = require('../services/payloads');
 const { getVoicePool } = require('../services/voice-pool');
 
@@ -57,6 +58,9 @@ module.exports = function registerSettingsRoutes(app) {
         settings.get('dreamina_agnes_fallback', DEFAULT_SETTINGS.dreamina_agnes_fallback) === '1',
       // v2.6.9 反向回退里参考图的传法：first-frame（实测能出片）/ multimodal（全能参考）
       dreamina_ref_strategy: settings.get('dreamina_ref_strategy', DEFAULT_SETTINGS.dreamina_ref_strategy),
+      // v2.6.10 即梦每日积分预算（硬约束，默认 100/天）
+      dreamina_daily_budget: Number(settings.get('dreamina_daily_budget', DEFAULT_SETTINGS.dreamina_daily_budget)),
+      ...dreaminaBudget.todaySummary(),
     });
   });
 
@@ -207,6 +211,19 @@ module.exports = function registerSettingsRoutes(app) {
       }
       settings.set('dreamina_ref_strategy', v);
       changed.push('dreamina_ref_strategy');
+    }
+    // v2.6.10 每日积分预算（0=不限）
+    if (b.dreamina_daily_budget !== undefined) {
+      const n = Number(b.dreamina_daily_budget);
+      if (!Number.isFinite(n) || n < 0 || n > 100000)
+        throw new ApiError(400, 'dreamina_daily_budget 须为 0–100000 的数值（0=不限）');
+      settings.set('dreamina_daily_budget', String(Math.round(n)));
+      changed.push('dreamina_daily_budget');
+    }
+    // 人工校正当日已花（失败任务/手工试跑的记账修正）
+    if (b.dreamina_spent_today !== undefined) {
+      dreaminaBudget.setSpentForDay(dreaminaBudget.todayKey(), Number(b.dreamina_spent_today));
+      changed.push('dreamina_spend_ledger');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

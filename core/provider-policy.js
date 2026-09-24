@@ -10,7 +10,10 @@
  *   - `shouldFallbackFromDreamina()` 运行期失败后是否改投免费档（按 dreamina.classify 的 kind）
  * 具体「改投」动作由 workers（submitter / image-worker）与装配层执行，见 workers/*.js。
  */
-const { MODELS, IMAGE_MODEL } = require('./constants');
+const { MODELS, IMAGE_MODEL, DREAMINA_DAILY_BUDGET_DEFAULT } = require('./constants');
+
+/** 预算上限非法时的回落值（与 core/constants 的默认值同源，避免两处漂移） */
+const DAILY_BUDGET_DEFAULT = DREAMINA_DAILY_BUDGET_DEFAULT;
 
 /** 回退目标：免费档（Agnes）模型 */
 const FREE_VIDEO_MODEL = 'agnes-video-2.5-flash';
@@ -154,6 +157,54 @@ function toDreaminaReasonText(reason) {
   return TO_DREAMINA_REASON_TEXT[reason] || `无法改投即梦（${reason}）`;
 }
 
+/**
+ * v2.6.10 即梦**每日预算闸门**（纯函数，便于单测）。
+ *
+ * 为什么要它：账号约束是**每天最多 100 积分**，而 `user_credit` 只报跨天总余额
+ * （今天花光了余额仍可能 >100），不设闸门的话「自动兜底 + 自动角色图」会在无人值守时
+ * 一天烧掉几百积分。判据是**当日累计记账**，与余额护栏互补：
+ *   - 余额护栏（`dreaminaUsable` + 提交处）：防"余额不足还去提交"；
+ *   - 预算闸门（本函数）：防"余额充足但今天已超配额"。
+ *
+ * @param {{cap?:number, spentToday?:number, estimate?:number|null}} o
+ *        cap=0 表示不限；spentToday=当日已提交记账（分）；estimate=本次预估（分，null=未知→放行）
+ * @returns {{allowed:boolean, reason:'daily-budget-exhausted'|'unknown-estimate'|null, spentToday:number, cap:number}}
+ */
+function dreaminaBudgetAllows(o = {}) {
+  const cap = Number(o.cap);
+  const spentToday = Number(o.spentToday) || 0;
+  const estimate = o.estimate == null ? null : Number(o.estimate);
+  // ⚠ cap 非法（NaN/负数）必须回落到**默认上限**，不能当"不限"——
+  // 那是危险方向：一条坏配置就会把 100/天的硬约束整个放开。真正的"不限"只有显式的 0。
+  const realCap = !Number.isFinite(cap) || cap < 0 ? DAILY_BUDGET_DEFAULT : cap;
+  if (realCap <= 0) {
+    return { allowed: true, reason: null, spentToday, cap: 0 };
+  }
+  if (estimate != null && !Number.isFinite(estimate)) {
+    return { allowed: true, reason: 'unknown-estimate', spentToday, cap: realCap };
+  }
+  // estimate 未知（如少数未标定的规格）时保守**拦截**：预算是硬约束，
+  // 宁可少一次自动兜底也不要超支。
+  if (estimate == null) {
+    return { allowed: false, reason: 'unknown-estimate', spentToday, cap: realCap };
+  }
+  if (spentToday + estimate > realCap) {
+    return { allowed: false, reason: 'daily-budget-exhausted', spentToday, cap: realCap };
+  }
+  return { allowed: true, reason: null, spentToday, cap: realCap };
+}
+
+/** 预算闸门的原因 → 中文说明（与 toDreaminaReasonText 同风格） */
+function budgetReasonText(reason, ctx = {}) {
+  if (reason === 'daily-budget-exhausted') {
+    return `即梦当日积分预算已用尽（${ctx.spentToday ?? '?'}/${ctx.cap ?? '?'}，本次约需 ${ctx.estimate ?? '?'}）`;
+  }
+  if (reason === 'unknown-estimate') {
+    return '无法预估本次即梦消耗（超出当日积分预算的把握）';
+  }
+  return `即梦预算闸门：${reason || '放行'}`;
+}
+
 module.exports = {
   FREE_VIDEO_MODEL,
   FREE_IMAGE_MODEL,
@@ -167,4 +218,6 @@ module.exports = {
   freeVideoSize,
   fallbackReasonText,
   toDreaminaReasonText,
+  dreaminaBudgetAllows,
+  budgetReasonText,
 };

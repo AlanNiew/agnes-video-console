@@ -25,6 +25,7 @@ const {
   fallbackReasonText,
   toDreaminaReasonText,
 } = require('../core/provider-policy');
+const { checkBudget, recordSpend } = require('../services/dreamina-budget');
 
 /**
  * v2.6.7 反向回退用的即梦账户状态缓存（60s）：
@@ -285,9 +286,17 @@ class Submitter {
       log('warn', `任务 #${t.id} 无法改投即梦：积分不足（需约 ${est.points}，余 ${credits}）`);
       return false;
     }
+    // v2.6.10 每日预算闸门（硬约束 100/天）：余额充足 ≠ 今天还能花
+    const budget = checkBudget(est && est.points != null ? est.points : null);
+    if (!budget.allowed) {
+      log('warn', `任务 #${t.id} 未改投即梦：${budget.text}（自动兜底让位于积分预算，Agnes 主链路不受影响）`);
+      return false;
+    }
 
     const note = mapped.notes.length ? `；${mapped.notes.join('；')}` : '';
     this.retryUntil.delete(t.id);
+    // 记账：改投即梦即视为"即将提交"，预扣当日预算（避免并发/失败漏记导致超支）
+    const spentAfter = recordSpend(est && est.points != null ? est.points : null);
     tasks.update(t.id, {
       model: mapped.model,
       seconds: mapped.seconds,
@@ -304,7 +313,7 @@ class Submitter {
     log(
       'warn',
       `任务 #${t.id} ${toDreaminaReasonText(kind)} → 改投即梦 ${mapped.model}` +
-        `（约 ${est?.points ?? '?'} 积分，余 ${Number.isFinite(credits) ? credits : '?'}；创意提示词不变${note}），继续制作`,
+        `（约 ${est?.points ?? '?'} 积分，余 ${Number.isFinite(credits) ? credits : '?'}；今日预算已用 ${spentAfter}${budget.cap > 0 ? `/${budget.cap}` : ''}；创意提示词不变${note}），继续制作`,
     );
     return true;
   }

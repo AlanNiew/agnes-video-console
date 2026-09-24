@@ -244,6 +244,18 @@ const DREAMINA_FALLBACK_VIDEO_MODEL = 'seedance2.0mini';
  */
 const DREAMINA_REFERENCE_STRATEGY_DEFAULT = 'first-frame';
 /**
+ * 即梦**每日积分预算**（v2.6.10）：默认 100。
+ *
+ * 背景：用户账号 standard 档，运营约束是**每天最多 100 积分**；而 `dreamina user_credit`
+ * 只报 `total_credit` 总余额、**不提供日限额/当期用量字段**，故"今天已花多少"必须由本系统自己记账。
+ * 余额充足 ≠ 今天还能花（余额是跨天的），所以闸门按**当日累计提交记账**判断，而不是看余额。
+ *
+ * 语义：
+ *   - `> 0`：当日累计已达/将超该值 → **不再提交任何即梦任务**（视频与图片都拦），Agnes 主链路照常；
+ *   - `0`：不限（不启用预算闸门，仅保留余额护栏）。
+ */
+const DREAMINA_DAILY_BUDGET_DEFAULT = 100;
+/**
  * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
  * （resolution_type / generate_num，且为异步任务）。
  * 参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测），**清单与官方支持集完全对齐**：
@@ -544,6 +556,7 @@ module.exports = {
   DREAMINA_IMAGE_DEFAULT_MODEL,
   DREAMINA_FALLBACK_VIDEO_MODEL,
   DREAMINA_REFERENCE_STRATEGY_DEFAULT,
+  DREAMINA_DAILY_BUDGET_DEFAULT,
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,
