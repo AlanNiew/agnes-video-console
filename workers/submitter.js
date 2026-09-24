@@ -165,6 +165,19 @@ class Submitter {
   }
 
   /**
+   * 该任务**是否允许**再回退到 Agnes（防 v2.6.7 反向回退引入的「来回弹」死循环）。
+   *
+   * 反向回退会把 Agnes 失败任务原地改成即梦（error_message 记为「已改投即梦（…）」）。
+   * 若这类任务在即梦侧再失败又回退 Agnes，就会无限循环：Agnes 503 → 即梦 → 回退 Agnes → 503 → …
+   * 判据用**持久化的 error_message 前缀**（重启后依然有效），而不是内存态，进程重启也不会失效。
+   *
+   * @returns {boolean} true=允许回退免费档；false=该任务已经是从 Agnes 改投来的，禁止再弹回去
+   */
+  canFallbackToAgnes(t) {
+    return !String(t.error_message || '').startsWith('已改投即梦');
+  }
+
+  /**
    * v2.6.1 即梦视频不可用 / 失败 → **改投免费档（Agnes）**。
    *
    * 命中条件（core/provider-policy.js）：积分不足 / 生成失败 / 非 VIP / 环境未就绪 / 合规闸门 / 首帧取不到本地文件。
@@ -393,14 +406,14 @@ class Submitter {
       this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
       return;
     }
-    // 浅拷贝一份：image 需替换为本地路径（即梦 CLI 的 --image 只接受本地文件），
+    // 浅拷贝一份：image / images 需替换为本地路径（即梦 CLI 的 --image 只接受本地文件），
     // 不污染库中保存的原始请求（升级 / 重试可能复用同一份）
     const payload = { ...t.request_json };
     if (payload.image) {
       const local = await ensureLocalImage(payload.image);
       if (!local) {
         // v2.6.1：即梦 CLI 只吃本地首帧 —— Agnes 可直接引用远端 URL，故改投免费档而不是判死
-        if (this.fallbackDreaminaVideo(t, 'bad-args')) return;
+        if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, 'bad-args')) return;
         this.fail(
           t.id,
           `首帧图无法落到本地（即梦 CLI 的 --image 只接受本地文件）：${String(payload.image).slice(0, 120)}`,
@@ -408,6 +421,22 @@ class Submitter {
         return;
       }
       payload.image = local;
+    }
+    // 全能参考（multimodal2video）的参考图同样必须是本地路径，逐张落地；
+    // 任何一张取不到就整单不走即梦（静默丢图 = "参考了却不生效"，比失败更难排查）
+    if (Array.isArray(payload.images) && payload.images.length) {
+      const locals = [];
+      for (const src of payload.images) {
+        const local = await ensureLocalImage(src);
+        if (!local) {
+          const msg = `参考图无法落到本地（即梦 CLI 的 --image 只接受本地文件）：${String(src).slice(0, 120)}`;
+          if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, 'bad-args')) return;
+          this.fail(t.id, msg);
+          return;
+        }
+        locals.push(local);
+      }
+      payload.images = locals;
     }
     const prev = this.retryUntil.get(t.id);
     const attempts = prev ? prev.attempts + 1 : 1;
@@ -418,7 +447,8 @@ class Submitter {
     } catch (e) {
       if (attempts >= MAX_ATTEMPTS) {
         // v2.6.1：重试耗尽 → 改投免费档，而不是把制作卡死
-        if (this.fallbackDreaminaVideo(t, 'spawn-error')) return;
+        // v2.6.7：若该任务已是从 Agnes 改投来的，禁止再弹回（防来回死循环）
+        if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, 'spawn-error')) return;
         this.fail(t.id, `即梦提交异常（自动重试 ${attempts - 1} 次）：${e.message}`);
         return;
       }
@@ -434,7 +464,8 @@ class Submitter {
       // 为满足合规要求，视频必须先到即梦 Web 端用该模型完成一次生成，CLI 才允许提交。
       if (r.kind === 'not-installed' || r.kind === 'not-logged-in' || r.kind === 'need-web-confirm') {
         // v2.6.1：环境/合规不可用 → 优先改投免费档（台账 §七 规则 4：合规闸门「不等它」）
-        if (this.fallbackDreaminaVideo(t, r.kind)) return;
+        // v2.6.7：已从 Agnes 改投来的任务不再弹回（防死循环），直接退避等环境恢复
+        if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, r.kind)) return;
         this.backoff(t.id, DREAMINA_ENV_BACKOFF_MS, attempts);
         const reason =
           r.kind === 'need-web-confirm'
@@ -452,7 +483,7 @@ class Submitter {
         return this.backoffDreaminaOrFallback(t, r.error, r.kind, attempts);
       }
       // 参数错误 / CLI 业务错误（含积分不足）：v2.6.1 先尝试改投免费档，改投不了才判失败
-      if (this.fallbackDreaminaVideo(t, r.kind)) return;
+      if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, r.kind)) return;
       this.fail(t.id, `即梦提交失败：${r.error || r.kind}`, r.data);
       return;
     }
@@ -461,7 +492,7 @@ class Submitter {
     const submitId = j.submit_id || null;
     if (!submitId) {
       // v2.6.1：拿不到 submit_id 说明即梦侧没有可追踪的任务 → 改投免费档重做
-      if (this.fallbackDreaminaVideo(t, 'no-result')) return;
+      if (this.canFallbackToAgnes(t) && this.fallbackDreaminaVideo(t, 'no-result')) return;
       this.fail(t.id, '即梦提交未返回 submit_id，无法追踪任务', j);
       return;
     }

@@ -195,8 +195,14 @@ function buildPayload(body) {
  * 校验即梦视频请求并构建「语义参数」对象（存入 tasks.request_json，由 submitter 转 argv）。
  * 与 Agnes payload 的区别：这里不组装 HTTP body——argv 由 clients/dreamina.js 的 buildVideoArgs
  * 从此对象生成，字段名与 CLI 的 --kebab 参数一一对应。
- * 子命令由入参自动推导：**提供首帧图 → image2video，否则 text2video**（后者更符合直觉）。
- * frames2video（首尾帧）/ multimodal2video（全能参考）尚未接入，显式拒绝而非静默忽略。
+ *
+ * 子命令自动推导（三条路，都已接入）：
+ *   - `images[]` 或 `mode='reference'` → **multimodal2video（全能参考）**：即梦网页端的「全能参考」，
+ *     是 Agnes `reference`（角色一致性）的正确对应物（官方 help：2.0 家族/mini 至少 1 图或视频、
+ *     image≤9 / video≤3 / audio≤3 / 总≤12；2.5 为 image≤30 / 总≤50 且允许纯音频）。
+ *   - 有首帧图（image / first_frame）→ image2video
+ *   - 其余 → text2video
+ * frames2video（首尾帧）仍未接入，显式拒绝而非静默忽略。
  */
 function buildDreaminaPayload(b) {
   const model = String(b.model || '').trim();
@@ -205,10 +211,22 @@ function buildDreaminaPayload(b) {
 
   // 首帧图来源：直接传 image，或复用前端 keyframe 模式的 first_frame
   const firstFrame = b.image || b.first_frame || null;
-  const subcommand = firstFrame ? 'image2video' : 'text2video';
+  // 参考图：Agnes reference 镜头带 images[]；也接受调用方显式 mode='reference' + images
+  const refImages = (Array.isArray(b.images) ? b.images : b.images ? [b.images] : [])
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  const wantsReference = !firstFrame && (refImages.length > 0 || String(b.mode || '') === 'reference');
+  const subcommand = wantsReference ? 'multimodal2video' : firstFrame ? 'image2video' : 'text2video';
   const spec = info.specs?.[subcommand];
   if (!spec) {
     const avail = Object.keys(info.specs || {}).join(' / ') || '无';
+    if (subcommand === 'multimodal2video') {
+      throw new ApiError(
+        400,
+        `模型 ${model} 不支持全能参考（multimodal2video），可用：${avail}；` +
+          '请改用支持全能参考的模型，或去掉参考图走文生 / 首帧图生',
+      );
+    }
     throw new ApiError(
       400,
       subcommand === 'image2video'
@@ -221,8 +239,26 @@ function buildDreaminaPayload(b) {
   if (b.last_frame) {
     throw new ApiError(400, '即梦暂不支持首尾帧（frames2video）；请只提供首帧图，或改用 Agnes 模型');
   }
-  if (b.mode && String(b.mode) === 'reference') {
-    throw new ApiError(400, '即梦暂不支持多模态参考（multimodal2video）；请用 text 或 keyframe 模式，或改用 Agnes');
+
+  // 参考素材数量按官方上限校验（宁可明确报错，也不静默丢图导致"参考了却不生效"）
+  let referenceInputs = 0;
+  if (wantsReference) {
+    if (!refImages.length) {
+      throw new ApiError(
+        400,
+        `全能参考（${model}）至少需要 1 张参考图或 1 段参考视频；本系统当前仅支持参考图，请提供 images`,
+      );
+    }
+    if (refImages.length > (spec.maxImages || 1)) {
+      throw new ApiError(
+        400,
+        `全能参考图最多 ${spec.maxImages} 张（${model} / multimodal2video），收到 ${refImages.length} 张；请减少参考图`,
+      );
+    }
+    referenceInputs = refImages.length;
+    if (referenceInputs > (spec.maxInputs || referenceInputs)) {
+      throw new ApiError(400, `全能参考总输入数最多 ${spec.maxInputs}，收到 ${referenceInputs}`);
+    }
   }
 
   const prompt = String(b.prompt || '').trim();
@@ -264,17 +300,19 @@ function buildDreaminaPayload(b) {
       videoResolution: resolution,
       ratio, // null 表示交给 CLI 用默认画幅（或由首帧推断）
       ...(firstFrame ? { image: firstFrame } : {}), // 即梦 CLI 的 --image（首帧，本地路径）
+      ...(wantsReference ? { images: refImages } : {}), // 全能参考：buildVideoArgs 转成重复的 --image=
     },
     // 存入 tasks 表列：字段名刻意对齐既有列（seconds / size / aspect_ratio），
     // 使前端任务列表无需任何改动即可正常显示时长与规格
     meta: {
       model,
-      // 有首帧 → 图生视频（本系统的 'image' 模式）；否则文生视频
-      mode: firstFrame ? 'image' : 'text',
+      // 有首帧 → 图生视频（本系统的 'image' 模式）；有参考图 → 'reference'（全能参考）；否则文生视频
+      mode: wantsReference ? 'reference' : firstFrame ? 'image' : 'text',
       prompt,
       seconds: duration,
       size: resolution,
       aspect_ratio: ratio,
+      ...(wantsReference ? { reference_count: referenceInputs } : {}),
     },
   };
 }
@@ -562,10 +600,11 @@ function dreaminaToAgnes(kind, job = {}) {
  * v2.6.7 **反向回退映射**：Agnes 任务 → 即梦任务（免费档长时间排队失败时改投即梦继续制作）。
  * 与 `dreaminaToAgnes` 对称、方向相反；差异点必须守住：
  *
- *   - **带参考图的任务不自动改投**：Agnes 的 `reference`（角色一致性）与即梦 `image2video`
- *     （首帧动画）语义不同 —— 自动改投会把"参考"变成"首帧"，画面意图被改变，宁可停在原处等人工；
- *   - 分辨率一律落该模型 spec 的首个合法值（`seedance2.0mini` 仅 720p）；
- *   - 时长按目标模型 spec 钳制（Mini 4–15s），并记 notes 说明改动；
+ *   - **参考图照常映射**：Agnes `reference`（角色一致性，images[]）→ 即梦 **`multimodal2video`
+ *     全能参考**（即梦网页端同一语义，官方 support set 覆盖 2.0 家族/mini/VIP 档）→ 不再因为
+ *     "带参考图"而拒绝改投；无参考图 → text2video；首帧图（first_frame）→ image2video。
+ *   - 参考图数量超官方上限 → 明确拒绝（宁可不改投，也不静默丢图）。
+ *   - 时长按目标模型 spec 钳制（Mini 4–15s），分辨率落该档首个合法值，均记 notes。
  *   - 组装走 `buildDreaminaPayload`，保证与手动提交即梦**同一套校验**（不另写一份参数逻辑）。
  *
  * @param {object} job 任务行（读 prompt / seconds / size / aspect_ratio / request_json）
@@ -578,32 +617,42 @@ function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
   const prompt = String(job.prompt || rj.prompt || '').trim();
   if (!prompt) return { ok: false, reason: 'no-prompt' };
 
-  const refs = [...(Array.isArray(rj.images) ? rj.images : []), rj.image].filter(
-    (x) => x !== undefined && x !== null && x !== '',
-  );
-  if (refs.length) return { ok: false, reason: 'has-reference-images' };
-
   const info = DREAMINA_MODELS[model];
   if (!info) return { ok: false, reason: 'unknown-model' };
-  const spec = info.specs?.text2video;
-  if (!spec) return { ok: false, reason: 'unsupported-subcommand' };
+
+  // 参考图（Agnes reference 镜头）：images[] + 可选 first_frame；取并集去重
+  const refImages = [...(Array.isArray(rj.images) ? rj.images : rj.images ? [rj.images] : [])]
+    .concat(rj.first_frame ? [rj.first_frame] : [])
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  const uniqRefs = [...new Set(refImages)];
 
   const notes = [];
   const rawSeconds = Number(job.seconds ?? rj.seconds ?? rj.duration ?? 5);
   let seconds = Math.round(Number.isFinite(rawSeconds) ? rawSeconds : 5);
+  const spec = info.specs?.text2video; // 下面按实际子命令再取 spec 校验
   if (seconds < spec.minDuration || seconds > spec.maxDuration) {
     const clamped = Math.min(Math.max(seconds, spec.minDuration), spec.maxDuration);
     notes.push(`时长 ${seconds}s → ${clamped}s（${model} 支持 ${spec.minDuration}–${spec.maxDuration}s）`);
     seconds = clamped;
   }
 
-  const size = spec.resolutions[0];
+  // 分辨率：全能参考档优先（与目标子命令一致），否则用文生档的首个合法值
+  const sizeSpec = info.specs?.multimodal2video || info.specs?.text2video;
+  if (!sizeSpec) return { ok: false, reason: 'unsupported-subcommand' };
+  const size = sizeSpec.resolutions[0];
   const rawSize = String(job.size || rj.size || rj.video_resolution || '');
   if (rawSize && rawSize.toLowerCase() !== size) notes.push(`分辨率 ${rawSize} → ${size}`);
 
   const rawRatio = String(job.aspect_ratio || rj.aspect_ratio || '');
   const aspect_ratio = DREAMINA_VIDEO_RATIOS.includes(rawRatio) ? rawRatio : '16:9';
   if (rawRatio && aspect_ratio !== rawRatio) notes.push(`画幅 ${rawRatio} → ${aspect_ratio}`);
+
+  // 参考图数量超限 → 明确不改投（buildDreaminaPayload 会抛 ApiError，这里预判给出可读 reason）
+  const maxRefs = info.specs?.multimodal2video?.maxImages;
+  if (uniqRefs.length > 1 && maxRefs != null && uniqRefs.length > maxRefs) {
+    return { ok: false, reason: 'too-many-reference-images' };
+  }
 
   try {
     const { payload } = buildDreaminaPayload({
@@ -612,7 +661,9 @@ function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
       seconds: String(seconds),
       video_resolution: size,
       aspect_ratio,
+      ...(uniqRefs.length ? { images: uniqRefs, mode: 'reference' } : {}),
     });
+    if (uniqRefs.length) notes.push(`参考图 ${uniqRefs.length} 张 → 全能参考（multimodal2video）`);
     return { ok: true, model, size, seconds: String(seconds), aspect_ratio, request_json: payload, notes };
   } catch (e) {
     // 即梦侧校验不通过（如参数组合不支持）→ 不改投，保留原失败状态等人工

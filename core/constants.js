@@ -67,6 +67,18 @@ const DREAMINA_MODELS = {
     specs: {
       text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      // 全能参考（multimodal2video）：官方「seedance2.0 家族/mini → 至少 1 图或视频；
+      // image≤9 / video≤3 / audio≤3 / 总输入≤12」，画幅支持 1:1…21:9
+      multimodal2video: {
+        resolutions: ['720p'],
+        minDuration: 4,
+        maxDuration: 15,
+        minInputs: 1,
+        maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxInputs: 12,
+      },
     },
     label: 'Seedance 2.0 Mini（720p · 4-15s · 主力 · 极致性价比）',
   },
@@ -78,6 +90,16 @@ const DREAMINA_MODELS = {
     specs: {
       text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      multimodal2video: {
+        resolutions: ['720p'],
+        minDuration: 4,
+        maxDuration: 15,
+        minInputs: 1,
+        maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxInputs: 12,
+      },
     },
     label: 'Seedance 2.0 Fast（720p · 4-15s · 备选）',
   },
@@ -88,6 +110,16 @@ const DREAMINA_MODELS = {
     specs: {
       text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      multimodal2video: {
+        resolutions: ['720p'],
+        minDuration: 4,
+        maxDuration: 15,
+        minInputs: 1,
+        maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxInputs: 12,
+      },
     },
     label: 'Seedance 2.0（720p · 4-15s）',
   },
@@ -105,6 +137,17 @@ const DREAMINA_MODELS = {
         maxDuration: 30,
         omitRatio: true,
       },
+      // 全能参考：官方「2.5 → 允许纯音频；image≤30 / video≤10 / audio≤10 / 总≤50」，支持 --ratio
+      multimodal2video: {
+        resolutions: ['480p', '720p', '1080p'],
+        minDuration: 4,
+        maxDuration: 30,
+        minInputs: 1, // 本系统只用参考图，故下限按"至少 1 张图"约束
+        maxImages: 30,
+        maxVideos: 10,
+        maxAudios: 10,
+        maxInputs: 50,
+      },
     },
     label: 'Seedance 2.5（480p=样片模式 / 720p / 1080p · 4-30s · VIP）',
   },
@@ -115,6 +158,16 @@ const DREAMINA_MODELS = {
     specs: {
       text2video: { resolutions: ['720p', '1080p', '4k'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p', '1080p', '4k'], minDuration: 4, maxDuration: 15 },
+      multimodal2video: {
+        resolutions: ['720p', '1080p', '4k'],
+        minDuration: 4,
+        maxDuration: 15,
+        minInputs: 1,
+        maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxInputs: 12,
+      },
     },
     label: 'Seedance 2.0 VIP（720p/1080p/4k · 4-15s）',
   },
@@ -125,6 +178,16 @@ const DREAMINA_MODELS = {
     specs: {
       text2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
       image2video: { resolutions: ['720p'], minDuration: 4, maxDuration: 15 },
+      multimodal2video: {
+        resolutions: ['720p'],
+        minDuration: 4,
+        maxDuration: 15,
+        minInputs: 1,
+        maxImages: 9,
+        maxVideos: 3,
+        maxAudios: 3,
+        maxInputs: 12,
+      },
     },
     label: 'Seedance 2.0 Fast VIP（720p · 4-15s）',
   },

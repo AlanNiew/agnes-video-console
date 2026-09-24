@@ -142,7 +142,7 @@ const TO_DREAMINA_REASON_TEXT = {
   'rate-limit': 'Agnes 提交限流（429）重试耗尽',
   net: 'Agnes 提交网络异常重试耗尽',
   'no-prompt': '任务缺少提示词',
-  'has-reference-images': '任务带参考图（Agnes 的 reference 与即梦 image2video 语义不同，不自动改投）',
+  'too-many-reference-images': '参考图数量超出目标即梦模型上限（明确报错，不静默丢图）',
   'unknown-model': '目标即梦模型不在白名单',
   'unsupported-subcommand': '目标即梦模型不支持文生视频',
   'bad-args': '参数无法映射为即梦合法入参',

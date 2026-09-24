@@ -205,10 +205,18 @@ function buildVideoArgs(params = {}) {
   if (image) args.push(`--image=${image}`);
   if (first) args.push(`--first=${first}`);
   if (last) args.push(`--last=${last}`);
-  if (images) args.push(`--images=${Array.isArray(images) ? images.join(',') : images}`);
-  // multimodal2video（全能参考）：可同时传入参考视频与参考音频
-  if (video) args.push(`--video=${Array.isArray(video) ? video.join(',') : video}`);
-  if (audio) args.push(`--audio=${Array.isArray(audio) ? audio.join(',') : audio}`);
+  // 全能参考（multimodal2video）的参考素材是 **stringArray**：官方 help 明确
+  // "repeat for each local input image path"，故**逐个重复传**（--image=a --image=b）。
+  // 早期实现错拼成 `--images=a,b`（CLI 根本没有该 flag）+ 逗号串，会被判 bad-args。
+  for (const p of Array.isArray(images) ? images : images ? [images] : []) {
+    if (p) args.push(`--image=${p}`);
+  }
+  for (const p of Array.isArray(video) ? video : video ? [video] : []) {
+    if (p) args.push(`--video=${p}`);
+  }
+  for (const p of Array.isArray(audio) ? audio : audio ? [audio] : []) {
+    if (p) args.push(`--audio=${p}`);
+  }
   return args;
 }
 

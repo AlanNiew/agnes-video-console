@@ -2,6 +2,34 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.8] - 2026-09-24
+
+### Added
+
+- **即梦「全能参考」接入（multimodal2video）**：即梦官方 SKILL.md 明确 `multimodal2video` 即网页端「全能参考」
+  （原 ref2video），`--image` 为 **stringArray**（可重复传），支持 2.0 家族 / mini / VIP 档与 2.5
+  （2.0 家族与 mini：image≤9、video≤3、audio≤3、总输入≤12；2.5：image≤30、总≤50、允许纯音频）。
+  → `buildDreaminaPayload` 现在**接受 `mode='reference'` + `images[]`**（此前显式拒绝），
+  自动选择 multimodal2video 并把参考图写入 payload；`meta.mode='reference'`、附 `reference_count`。
+  参考素材数量超上限**明确 400**（不静默丢图）；老代际模型（1.5pro / 1.0fast，不支持该子命令）明确拒绝。
+- `DREAMINA_MODELS` 六个视频档新增 `specs.multimodal2video`（分辨率/时长/输入数量上限，取自官方 help）。
+
+### Fixed
+
+- **CLI argv bug：参考素材传参方式错误** —— `clients/dreamina.js buildVideoArgs` 原先把多张参考图拼成
+  `--images=a,b`（**CLI 并无该 flag**），且 `--video`/`--audio` 也拼成逗号串；官方三者是 **stringArray（逐个重复传）**，
+  旧写法会判 `bad-args`。现按官方语义逐个重复推 `--image=`/`--video=`/`--audio=`。
+- **反向回退的参考图限制解除**：`agnesToDreamina` 原以 `has-reference-images` 拒绝改投 —— 那是本系统自身
+  未接入全能参考所致，而非即梦能力限制（用户指出后核对官方文档确认）。现把 Agnes `images[]`/`first_frame`
+  映射为即梦参考图（走 multimodal2video），超上限才拒绝（`too-many-reference-images`）。
+- **防「来回弹」死循环**：`fallbackAgnesVideoToDreamina` 把任务改成即梦后，若即梦侧再失败，原逻辑会回退 Agnes →
+  又 503 → 再改投即梦 … 现按**持久化的 `error_message` 前缀**判定来源，已从 Agnes 改投来的任务
+  **不再回退 Agnes**（`canFallbackToAgnes`），各回退点均已接入该守卫。
+- `submitDreamina` 现在会把 `images[]` **逐张落地为本地路径**（CLI 只吃本地文件），任一张取不到即失败，
+  避免"参考了却不生效"。
+
+验证：prettier 全绿 · eslint 0 error · jest 16 套件 246 用例（+10）· e2e 全部通过。
+
 ## [2.6.7] - 2026-09-24
 
 ### Added

@@ -558,3 +558,143 @@ describe('图生视频（image2video）子命令推导与守卫', () => {
     ).toBe(25);
   });
 });
+
+describe('全能参考 multimodal2video（v2.6.8：即梦支持参考图）', () => {
+  const ref = (n) => Array.from({ length: n }, (_, i) => `/artifacts/ref${i}.png`);
+
+  test('mode=reference + images → 自动选 multimodal2video 并带上参考图', () => {
+    const { payload, meta } = buildDreaminaPayload({
+      model: 'seedance2.0mini',
+      prompt: '少女在渡口回头',
+      duration: 5,
+      video_resolution: '720p',
+      aspect_ratio: '16:9',
+      mode: 'reference',
+      images: ref(3),
+    });
+    expect(payload.subcommand).toBe('multimodal2video');
+    expect(payload.images).toEqual(ref(3));
+    expect(meta.mode).toBe('reference');
+    expect(meta.reference_count).toBe(3);
+  });
+
+  test('只给 images（不显式 mode=reference）也走全能参考（反向回退映射的调用形态）', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.0mini',
+      prompt: 'x',
+      duration: 5,
+      video_resolution: '720p',
+      images: ref(1),
+    });
+    expect(payload.subcommand).toBe('multimodal2video');
+  });
+
+  test('多张参考图 argv 逐个重复传 --image（官方 stringArray），不拼逗号、不用 --images', () => {
+    const args = buildVideoArgs({
+      subcommand: 'multimodal2video',
+      modelVersion: 'seedance2.0mini',
+      prompt: 'x',
+      duration: 5,
+      videoResolution: '720p',
+      images: ref(4),
+    });
+    expect(args[0]).toBe('multimodal2video');
+    expect(args.filter((a) => a.startsWith('--image='))).toEqual(ref(4).map((p) => `--image=${p}`));
+    expect(args.some((a) => a.includes(','))).toBe(false);
+    expect(args.some((a) => a.startsWith('--images='))).toBe(false);
+  });
+
+  test('参考视频/参考音频同样逐个重复传', () => {
+    const args = buildVideoArgs({
+      subcommand: 'multimodal2video',
+      videoResolution: '720p',
+      video: ['/tmp/v1.mp4', '/tmp/v2.mp4'],
+      audio: ['/tmp/a1.mp3'],
+    });
+    expect(args.filter((a) => a.startsWith('--video='))).toEqual(['--video=/tmp/v1.mp4', '--video=/tmp/v2.mp4']);
+    expect(args.filter((a) => a.startsWith('--audio='))).toEqual(['--audio=/tmp/a1.mp3']);
+  });
+
+  test('单图也走全能参考（语义为参考而非首帧动画）', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.0mini',
+      prompt: 'x',
+      duration: 5,
+      video_resolution: '720p',
+      images: ref(1),
+    });
+    expect(payload.subcommand).toBe('multimodal2video');
+  });
+
+  test('超上限参考图数量 → 400 且文案含上限（不静默丢图）', () => {
+    let status = 0;
+    let msg = '';
+    try {
+      buildDreaminaPayload({
+        model: 'seedance2.0mini',
+        prompt: 'x',
+        duration: 5,
+        video_resolution: '720p',
+        images: ref(10), // Mini 上限 9
+      });
+    } catch (e) {
+      status = e.status;
+      msg = e.message;
+    }
+    expect(status).toBe(400);
+    expect(msg).toContain('9');
+  });
+
+  test('参考素材为空 → 400（官方要求至少 1 图或视频）', () => {
+    expectApiError(400, () =>
+      buildDreaminaPayload({
+        model: 'seedance2.0mini',
+        prompt: 'x',
+        duration: 5,
+        video_resolution: '720p',
+        mode: 'reference',
+        images: [],
+      }),
+    );
+  });
+
+  test('仅支持图生的老代际模型用 reference → 明确拒绝（不支持 multimodal2video）', () => {
+    expectApiError(400, () =>
+      buildDreaminaPayload({
+        model: 'seedance1.5pro',
+        prompt: 'x',
+        duration: 5,
+        video_resolution: '720p',
+        mode: 'reference',
+        images: ref(1),
+      }),
+    );
+  });
+
+  test('首帧图仍走 image2video（不与全能参考混淆）', () => {
+    const { payload } = buildDreaminaPayload({
+      model: 'seedance2.0mini',
+      prompt: 'x',
+      duration: 5,
+      video_resolution: '720p',
+      image: '/tmp/first.png',
+    });
+    expect(payload.subcommand).toBe('image2video');
+    expect(payload.image).toBe('/tmp/first.png');
+  });
+
+  test('规格：2.0 家族与 mini 支持 multimodal2video，老代际不支持', () => {
+    for (const m of [
+      'seedance2.0',
+      'seedance2.0fast',
+      'seedance2.0mini',
+      'seedance2.0_vip',
+      'seedance2.0fast_vip',
+      'seedance2.5',
+    ]) {
+      expect(DREAMINA_MODELS[m].specs.multimodal2video).toBeTruthy();
+    }
+    expect(DREAMINA_MODELS['seedance1.5pro'].specs.multimodal2video).toBeUndefined();
+    expect(DREAMINA_MODELS['seedance1.0fast'].specs.multimodal2video).toBeUndefined();
+  });
+});

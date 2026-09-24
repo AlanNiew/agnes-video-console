@@ -124,7 +124,7 @@ describe('shouldFallbackToDreamina（v2.6.7 反向回退：Agnes 排队失败 �
 
   test('原因文案可读', () => {
     expect(toDreaminaReasonText('queue-full')).toContain('队列');
-    expect(toDreaminaReasonText('has-reference-images')).toContain('参考图');
+    expect(toDreaminaReasonText('too-many-reference-images')).toContain('参考图');
   });
 });
 
@@ -148,11 +148,15 @@ describe('agnesToDreamina（Agnes 任务 → 即梦任务映射）', () => {
     expect(r.request_json.prompt).toBe(base.prompt);
   });
 
-  test('带参考图的任务**不改投**（reference 与 image2video 语义不同）', () => {
+  test('带参考图的任务**照常改投**，映射为即梦全能参考（v2.6.8）', () => {
     const r = agnesToDreamina({ ...base, request_json: { ...base.request_json, images: ['https://a.com/c.png'] } });
-    expect(r).toEqual({ ok: false, reason: 'has-reference-images' });
-    const r2 = agnesToDreamina({ ...base, request_json: { ...base.request_json, image: 'https://a.com/c.png' } });
-    expect(r2.ok).toBe(false);
+    expect(r.ok).toBe(true);
+    expect(r.request_json.subcommand).toBe('multimodal2video');
+    expect(r.request_json.images).toEqual(['https://a.com/c.png']);
+    // 首帧图（image/first_frame）同样按参考素材处理，语义仍是全能参考
+    const r2 = agnesToDreamina({ ...base, request_json: { ...base.request_json, first_frame: 'https://a.com/f.png' } });
+    expect(r2.ok).toBe(true);
+    expect(r2.request_json.images).toEqual(['https://a.com/f.png']);
   });
 
   test('缺提示词 → 不映射', () => {
