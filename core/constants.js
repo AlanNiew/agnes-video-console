@@ -219,7 +219,7 @@ const DREAMINA_VIDEO_COMMANDS = ['text2video', 'image2video'];
  * 即梦图片**主力档**（高性价比：实测 1 积分/次、一次约 4 张候选）。
  * 前端图片下拉默认选中它，全自动成片的角色图阶段也用它——两处一致，避免策略漂移。
  */
-const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-3.1';
+const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-5.0';
 /**
  * 反向回退目标：Agnes 任务长时间排队失败（503 队列满 / 429 / 网络）时改投的即梦视频模型。
  * 选 `seedance2.0mini` 的理由：非 VIP 档（standard 会员可用）、即梦清单首位（前端默认主力）、
@@ -261,19 +261,35 @@ const DREAMINA_DAILY_BUDGET_DEFAULT = 100;
  * 参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测），**清单与官方支持集完全对齐**：
  *   3.0/3.1 -> 1k/2k；4.0/4.1/4.5/4.6/4.7/5.0 -> 2k/4k；5.0Pro -> 1.5k/2k/4k
  *
- * 主力 / 备用策略（成本均衡）：
- *   主力 = `jimeng-image-3.1`（实测 1 积分/次，一次约 4 张候选），默认选中；
- *   其余为备用档位，按需手动切换（代际越高画质越好、积分越贵）。
+ * 主力 / 备用策略（**性价比优先，不选最便宜的**，v2.6.12 重定）：
+ *   主力 = `jimeng-image-5.0`（2k/4k）：**CLI 自己的默认档**，且本机历史任务实测
+ *   `text2image 5.0 @2k = 3 积分`、`image2image 5.0 @2k = 3 积分` —— 只比 3.1 贵 2 分，
+ *   却是新两代、分辨率翻倍。角色图一次 3 分（100/天预算下约 33 次/天），成本可忽略。
+ *   省钱档 = `jimeng-image-3.1`（1k/2k，实测 **1 积分**）—— 需要批量试稿时手动切；
+ *   最强档 = `jimeng-image-5.0pro`（实测 2k = **8 积分**）—— 关键封面/主视觉用。
+ *
+ * ⚠ 网页端还有 CLI **不支持**的模型（Seedream 5.0 Flash / 5.0 Lite / 图片美学模型 V8.2）：
+ *   官方 help 的公开支持集只有 3.0–5.0Pro，CLI 升级到最新版（2026-09-10）也未包含 ——
+ *   要用那几个模型只能在即梦网页端手工出图，本系统走不通（不是配置问题）。
+ *   模型清单漂移用 `tools/dreamina-model-drift.js` 定期核对（见该脚本注释）。
  */
 const DREAMINA_IMAGE_RATIOS = ['21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'];
 const DREAMINA_IMAGE_MODELS = {
-  // —— 主力：实测 1 积分/次，性价比最高，默认选中 ——
+  // —— 主力：CLI 默认档 + 实测 3 积分/次（2k），性价比最优，默认选中 ——
+  'jimeng-image-5.0': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '5.0',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 5.0（2k/4k · 主力 · 性价比：实测 3 积分/次）',
+  },
+  // —— 省钱档：实测 1 积分/次，批量试稿用 ——
   'jimeng-image-3.1': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '3.1',
     resolutions: ['1k', '2k'],
-    label: '即梦图片 3.1（1k/2k · 主力 · 最省积分）',
+    label: '即梦图片 3.1（1k/2k · 省钱档 · 实测 1 积分/次）',
   },
   // —— 备用档位（与官方 CLI 支持集对齐） ——
   'jimeng-image-3.0': {
@@ -309,7 +325,7 @@ const DREAMINA_IMAGE_MODELS = {
     subcommand: 'text2image',
     model_version: '4.6',
     resolutions: ['2k', '4k'],
-    label: '即梦图片 4.6（2k/4k · 备用）',
+    label: '即梦图片 4.6（2k/4k · 备用 · 官方称人像一致性更好）',
   },
   'jimeng-image-4.7': {
     provider: 'dreamina',
@@ -318,19 +334,12 @@ const DREAMINA_IMAGE_MODELS = {
     resolutions: ['2k', '4k'],
     label: '即梦图片 4.7（2k/4k · 备用）',
   },
-  'jimeng-image-5.0': {
-    provider: 'dreamina',
-    subcommand: 'text2image',
-    model_version: '5.0',
-    resolutions: ['2k', '4k'],
-    label: '即梦图片 5.0（2k/4k · 备用 · 高画质）',
-  },
   'jimeng-image-5.0pro': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '5.0Pro',
     resolutions: ['1.5k', '2k', '4k'],
-    label: '即梦图片 5.0 Pro（1.5k/2k/4k · 备用 · 最强）',
+    label: '即梦图片 5.0 Pro（1.5k/2k/4k · 最强 · 实测 2k=8 积分）',
   },
 };
 
@@ -440,7 +449,9 @@ const DREAMINA_CREDIT_COST = {
     },
     'jimeng-image-5.0': {
       perRequest: {
-        '2k': { points: 3, source: 'estimated' },
+        // 档位 image_basic_v5_2k / v50 系列：本机历史任务实测 text2image 5.0@2k = 3 积分、
+        // image2image 5.0@2k = 3 积分（v2.6.12 从 estimated 升级为 measured）
+        '2k': { points: 3, source: 'measured' },
         '4k': { points: 6, source: 'estimated' },
       },
     },

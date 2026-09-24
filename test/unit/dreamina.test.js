@@ -4,7 +4,13 @@
  * 覆盖：provider 推导、即梦 payload 校验矩阵、CLI argv 组装。
  * 全部为纯函数校验，不触网、不 spawn 子进程、不消耗积分。
  */
-const { providerOf, DREAMINA_MODELS, DREAMINA_IMAGE_MODELS } = require('../../core/constants');
+const {
+  providerOf,
+  DREAMINA_MODELS,
+  DREAMINA_IMAGE_MODELS,
+  DREAMINA_IMAGE_DEFAULT_MODEL,
+  DREAMINA_CREDIT_COST,
+} = require('../../core/constants');
 const {
   buildPayload,
   buildDreaminaPayload,
@@ -387,7 +393,7 @@ describe('payload → argv 衔接（防字段名 snake_case / camelCase 不匹�
 });
 
 describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
-  test('图片模型覆盖 text2image 官方支持集全 9 档，且主力 3.1 置首', () => {
+  test('图片模型覆盖 text2image 官方支持集全 9 档，且**性价比主力 5.0** 置首', () => {
     const keys = Object.keys(DREAMINA_IMAGE_MODELS);
     expect(keys.slice().sort()).toEqual(
       [
@@ -402,7 +408,16 @@ describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
         'jimeng-image-5.0pro',
       ].sort(),
     );
-    expect(keys[0]).toBe('jimeng-image-3.1'); // 默认选中主力档
+    // v2.6.12：主力从"最便宜的 3.1"改为"性价比最优的 5.0"（CLI 自身默认档 + 实测 3 积分/2k）
+    expect(keys[0]).toBe('jimeng-image-5.0');
+    expect(DREAMINA_IMAGE_DEFAULT_MODEL).toBe('jimeng-image-5.0');
+    expect(DREAMINA_IMAGE_MODELS[keys[0]].resolutions).toEqual(['2k', '4k']);
+  });
+
+  test('5.0 单价为实测值（3 积分/2k），不是推断值', () => {
+    const row = DREAMINA_CREDIT_COST.image['jimeng-image-5.0'].perRequest['2k'];
+    expect(row.points).toBe(3);
+    expect(row.source).toBe('measured');
   });
 
   test('图片分辨率档位与官方一致', () => {

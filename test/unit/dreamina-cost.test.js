@@ -32,10 +32,18 @@ describe('estimateDreaminaCost（即梦积分预估）', () => {
     expect(estimateDreaminaCost('seedance2.0fast', {}).points).toBe(25);
   });
 
-  test('未实测的规格标注 estimated（UI 需提示"实际以扣费为准"）', () => {
+  test('5.0@2k 已是**实测值**（3 积分/次，v2.6.12 从 estimated 升级）', () => {
     const r = estimateDreaminaCost('jimeng-image-5.0', { size: '2k' });
     expect(r.points).toBe(3);
+    expect(r.confidence).toBe('measured');
+  });
+
+  test('未实测的规格仍标注 estimated（UI 需提示"实际以扣费为准"）', () => {
+    const r = estimateDreaminaCost('jimeng-image-5.0', { size: '4k' });
+    expect(r.points).toBe(6);
     expect(r.confidence).toBe('estimated');
+    // 主力档换 5.0 后，成本预估必须用**该模型支持的**档位（1k 不属于 5.0）
+    expect(estimateDreaminaCost('jimeng-image-5.0', { size: '1k' }).points).toBeNull();
   });
 
   test('未知规格返回 points=null（调用方据此走保守确认）', () => {

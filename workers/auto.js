@@ -31,6 +31,7 @@ const {
   STYLE_BGM_KEYWORDS,
   STYLE_BGM_DEFAULT_KEYWORD,
   DREAMINA_IMAGE_DEFAULT_MODEL,
+  DREAMINA_IMAGE_MODELS,
 } = require('../core/constants');
 const { ApiError } = require('../core/errors');
 const {
@@ -427,7 +428,10 @@ class AutoPipeline {
         vipLevel: status?.vip_level,
         enabled: true,
       });
-      const est = estimateDreaminaCost(DREAMINA_IMAGE_DEFAULT_MODEL, { size: '1k', count: 1 });
+      // 分辨率必须取**该模型支持的**档位：主力档已从 3.1（1k/2k）换成 5.0（2k/4k），
+      // 硬编码 '1k' 会被 buildDreaminaImagePayload 以「分辨率须为 2k / 4k」400 拒掉。
+      const charSize = DREAMINA_IMAGE_MODELS[DREAMINA_IMAGE_DEFAULT_MODEL]?.resolutions?.[0] || '1k';
+      const est = estimateDreaminaCost(DREAMINA_IMAGE_DEFAULT_MODEL, { size: charSize, count: 1 });
       const credit = Number(status?.total_credit);
       if (!usable.usable) {
         skipReason = usable.reason;
@@ -445,15 +449,16 @@ class AutoPipeline {
     let requestJson;
     if (useDreamina) {
       // 复用与路由一致的构建器，避免两处参数漂移
+      const size0 = DREAMINA_IMAGE_MODELS[DREAMINA_IMAGE_DEFAULT_MODEL]?.resolutions?.[0] || '1k';
       const built = buildDreaminaImagePayload({
         model: DREAMINA_IMAGE_DEFAULT_MODEL,
         prompt,
-        size: '1k',
+        size: size0,
         ratio: '1:1',
         count: 1,
       });
       model = DREAMINA_IMAGE_DEFAULT_MODEL;
-      size = '1k';
+      size = size0;
       // 图片任务的 request_json 需带 count 与 image_kind（与 routes/images.js 入队时一致）
       requestJson = { ...built.payload, count: 1, image_kind: 'character' };
     } else {
