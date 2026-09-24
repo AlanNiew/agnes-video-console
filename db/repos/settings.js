@@ -38,5 +38,6 @@ const DEFAULT_SETTINGS = {
   dreamina_auto_character: '1', // 全自动成片的角色图阶段用即梦主力档（1 积分/次 ≈ 4 张候选）；'0' = 用 Agnes 免费档
   dreamina_fallback: '1', // v2.6.1 即梦不可用/失败时**自动改投免费档**（积分不足 / 生成失败 / 非 VIP / 环境未就绪）；'0' = 保留旧的退避等人工
   dreamina_agnes_fallback: '0', // v2.6.7 **反向回退**：Agnes 免费档排队失败（503/429/网络重试耗尽）时自动改投即梦 seedance2.0mini；默认 '0'（会消耗会员积分，须显式开启）
+  dreamina_ref_strategy: 'first-frame', // v2.6.9 反向回退里参考图的传法：first-frame=取首张作首帧（image2video，**实测唯一能出片**）/ multimodal=全能参考（multimodal2video，实测即梦侧失败，待其修复再切）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

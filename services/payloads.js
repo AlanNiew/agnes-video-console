@@ -10,6 +10,7 @@ const {
   RETIRED_MODELS,
   DREAMINA_MODELS,
   DREAMINA_FALLBACK_VIDEO_MODEL,
+  DREAMINA_REFERENCE_STRATEGY_DEFAULT,
   DREAMINA_IMAGE_MODELS,
   DREAMINA_VIDEO_RATIOS,
   DREAMINA_IMAGE_RATIOS,
@@ -598,27 +599,38 @@ function dreaminaToAgnes(kind, job = {}) {
 
 /**
  * v2.6.7 **反向回退映射**：Agnes 任务 → 即梦任务（免费档长时间排队失败时改投即梦继续制作）。
- * 与 `dreaminaToAgnes` 对称、方向相反；差异点必须守住：
+ * 与 `dreaminaToAgnes` 对称、方向相反。
  *
- *   - **参考图照常映射**：Agnes `reference`（角色一致性，images[]）→ 即梦 **`multimodal2video`
- *     全能参考**（即梦网页端同一语义，官方 support set 覆盖 2.0 家族/mini/VIP 档）→ 不再因为
- *     "带参考图"而拒绝改投；无参考图 → text2video；首帧图（first_frame）→ image2video。
- *   - 参考图数量超官方上限 → 明确拒绝（宁可不改投，也不静默丢图）。
- *   - 时长按目标模型 spec 钳制（Mini 4–15s），分辨率落该档首个合法值，均记 notes。
- *   - 组装走 `buildDreaminaPayload`，保证与手动提交即梦**同一套校验**（不另写一份参数逻辑）。
+ * 参考图（Agnes `reference` 镜头的 `images[]` / `first_frame`）按 `strategy` 决定传法：
+ *   - `first-frame`（**默认**）：取**第一张**参考图当首帧走 `image2video`。2026-09-24 真机实测这是
+ *     当前唯一能出片的路（`multimodal2video` 反而 `final generation failed`），且角色外观完整保留；
+ *     多图时其余图不参与，notes 会写明"仅取首张"。
+ *   - `multimodal`：全部参考图走 `multimodal2video`（全能参考）。能力已按官方文档接入
+ *     （`--image` stringArray 重复传 + 官方数量上限校验），待即梦服务端修复后切此项即可，无需改代码。
+ *
+ * 其余约束：
+ *   - 时长按目标模型 spec 钳制（Mini 4–15s），分辨率落该档首个合法值，均记 notes；
+ *   - 组装走 `buildDreaminaPayload`，保证与手动提交即梦**同一套校验**（不另写一份参数逻辑）；
+ *   - `multimodal` 策略下参考图超官方上限 → 明确不改投（不静默丢图）。
  *
  * @param {object} job 任务行（读 prompt / seconds / size / aspect_ratio / request_json）
  * @param {string} [model] 目标即梦模型（默认 `DREAMINA_FALLBACK_VIDEO_MODEL`）
+ * @param {string} [strategy] first-frame | multimodal（默认 `DREAMINA_REFERENCE_STRATEGY_DEFAULT`）
  * @returns {{ok:true,model:string,size:string,seconds:string,aspect_ratio:string,request_json:object,notes:string[]}
  *          |{ok:false,reason:string}}
  */
-function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
+function agnesToDreamina(
+  job = {},
+  model = DREAMINA_FALLBACK_VIDEO_MODEL,
+  strategy = DREAMINA_REFERENCE_STRATEGY_DEFAULT,
+) {
   const rj = job.request_json || {};
   const prompt = String(job.prompt || rj.prompt || '').trim();
   if (!prompt) return { ok: false, reason: 'no-prompt' };
 
   const info = DREAMINA_MODELS[model];
   if (!info) return { ok: false, reason: 'unknown-model' };
+  const refStrategy = String(strategy || '') === 'multimodal' ? 'multimodal' : 'first-frame';
 
   // 参考图（Agnes reference 镜头）：images[] + 可选 first_frame；取并集去重
   const refImages = [...(Array.isArray(rj.images) ? rj.images : rj.images ? [rj.images] : [])]
@@ -648,10 +660,24 @@ function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
   const aspect_ratio = DREAMINA_VIDEO_RATIOS.includes(rawRatio) ? rawRatio : '16:9';
   if (rawRatio && aspect_ratio !== rawRatio) notes.push(`画幅 ${rawRatio} → ${aspect_ratio}`);
 
-  // 参考图数量超限 → 明确不改投（buildDreaminaPayload 会抛 ApiError，这里预判给出可读 reason）
-  const maxRefs = info.specs?.multimodal2video?.maxImages;
-  if (uniqRefs.length > 1 && maxRefs != null && uniqRefs.length > maxRefs) {
-    return { ok: false, reason: 'too-many-reference-images' };
+  // 参考素材：first-frame 取首张；multimodal 传全部并按官方上限预判（超限 → 不改投）
+  let refArg = {};
+  if (uniqRefs.length) {
+    if (refStrategy === 'first-frame') {
+      refArg = { image: uniqRefs[0] };
+      notes.push(
+        uniqRefs.length > 1
+          ? `参考图 ${uniqRefs.length} 张 → 仅取首张作首帧（image2video；其余图不参与）`
+          : '参考图 1 张 → 作首帧（image2video）',
+      );
+    } else {
+      const maxRefs = info.specs?.multimodal2video?.maxImages;
+      if (maxRefs != null && uniqRefs.length > maxRefs) {
+        return { ok: false, reason: 'too-many-reference-images' };
+      }
+      refArg = { images: uniqRefs, mode: 'reference' };
+      notes.push(`参考图 ${uniqRefs.length} 张 → 全能参考（multimodal2video）`);
+    }
   }
 
   try {
@@ -661,9 +687,8 @@ function agnesToDreamina(job = {}, model = DREAMINA_FALLBACK_VIDEO_MODEL) {
       seconds: String(seconds),
       video_resolution: size,
       aspect_ratio,
-      ...(uniqRefs.length ? { images: uniqRefs, mode: 'reference' } : {}),
+      ...refArg,
     });
-    if (uniqRefs.length) notes.push(`参考图 ${uniqRefs.length} 张 → 全能参考（multimodal2video）`);
     return { ok: true, model, size, seconds: String(seconds), aspect_ratio, request_json: payload, notes };
   } catch (e) {
     // 即梦侧校验不通过（如参数组合不支持）→ 不改投，保留原失败状态等人工

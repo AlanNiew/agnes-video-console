@@ -2,6 +2,25 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.6.9] - 2026-09-24
+
+### Changed
+
+- **只认 `seedance2.0mini`，`seedance2.0fast` 标为不建议**：2026-09-24 实测 fast 提交后进入
+  `Queueing`，`queue_idx=83772` / `queue_length=556818`（前面 8.3 万个），长时间不会出结果；
+  而 mini 走**专属队列** `dreamina_fusion_video40_mini`，`queue_length=0` 直接 Generating、150 秒出片。
+  两模型**分队列、并发互不占用**（fast 在排队期间 mini 仍可正常提交，已实测）。故一切「自动」路径
+  （反向回退目标 `DREAMINA_FALLBACK_VIDEO_MODEL`、示例、推荐）一律用 mini，fast 的 label 追加
+  「实测长时间不出结果，不建议用」。
+- **反向回退的参考图传法改为可切换（默认 `first-frame`）**：新增设置项 `dreamina_ref_strategy`
+  （`first-frame` / `multimodal`，默认前者）。真机实测（同账号同参考图、mini/720p/5s）：
+  `multimodal2video`（全能参考）→ `final generation failed`（×2；代码侧已按官方文档正确接入，
+  是即梦服务端当前不可用），`image2video`（首帧图）→ **成功出片且角色外观完整保留**。
+  故默认取首张作首帧（多图时其余图不参与，notes 写明「仅取首张」）；即梦修复后把设置切
+  `multimodal` 即可，无需改代码。
+
+验证：prettier 全绿 · eslint 0 error · jest 16 套件 249 用例全过 · e2e 全部通过。
+
 ## [2.6.8] - 2026-09-24
 
 ### Added

@@ -253,7 +253,9 @@ class Submitter {
     const decision = shouldFallbackToDreamina(kind, { enabled });
     if (!decision.fallback) return false;
 
-    const mapped = agnesToDreamina(t, DREAMINA_FALLBACK_VIDEO_MODEL);
+    // 参考图传法：默认 first-frame（2026-09-24 实测唯一能出片）；可切 multimodal（全能参考，待即梦修复）
+    const refStrategy = settings.get('dreamina_ref_strategy', DEFAULT_SETTINGS.dreamina_ref_strategy);
+    const mapped = agnesToDreamina(t, DREAMINA_FALLBACK_VIDEO_MODEL, refStrategy);
     if (!mapped.ok) {
       log(
         'warn',

@@ -55,6 +55,8 @@ module.exports = function registerSettingsRoutes(app) {
       // v2.6.7 反向回退：Agnes 排队失败时是否自动改投即梦（默认关，会消耗会员积分）
       dreamina_agnes_fallback:
         settings.get('dreamina_agnes_fallback', DEFAULT_SETTINGS.dreamina_agnes_fallback) === '1',
+      // v2.6.9 反向回退里参考图的传法：first-frame（实测能出片）/ multimodal（全能参考）
+      dreamina_ref_strategy: settings.get('dreamina_ref_strategy', DEFAULT_SETTINGS.dreamina_ref_strategy),
     });
   });
 
@@ -196,6 +198,15 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.dreamina_agnes_fallback !== undefined) {
       settings.set('dreamina_agnes_fallback', b.dreamina_agnes_fallback ? '1' : '0');
       changed.push('dreamina_agnes_fallback');
+    }
+    // v2.6.9 参考图传法：first-frame（默认，实测能出片）/ multimodal（全能参考）
+    if (b.dreamina_ref_strategy !== undefined) {
+      const v = String(b.dreamina_ref_strategy);
+      if (v !== 'first-frame' && v !== 'multimodal') {
+        throw new ApiError(400, "dreamina_ref_strategy 仅支持 'first-frame' 或 'multimodal'");
+      }
+      settings.set('dreamina_ref_strategy', v);
+      changed.push('dreamina_ref_strategy');
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

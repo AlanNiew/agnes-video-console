@@ -148,15 +148,57 @@ describe('agnesToDreamina（Agnes 任务 → 即梦任务映射）', () => {
     expect(r.request_json.prompt).toBe(base.prompt);
   });
 
-  test('带参考图的任务**照常改投**，映射为即梦全能参考（v2.6.8）', () => {
+  test('带参考图的任务**照常改投**：默认 first-frame（取首张作首帧，v2.6.9 实测唯一能出片）', () => {
     const r = agnesToDreamina({ ...base, request_json: { ...base.request_json, images: ['https://a.com/c.png'] } });
     expect(r.ok).toBe(true);
-    expect(r.request_json.subcommand).toBe('multimodal2video');
-    expect(r.request_json.images).toEqual(['https://a.com/c.png']);
-    // 首帧图（image/first_frame）同样按参考素材处理，语义仍是全能参考
+    expect(r.request_json.subcommand).toBe('image2video');
+    expect(r.request_json.image).toBe('https://a.com/c.png');
+    expect(r.notes.join()).toContain('首帧');
+    // first_frame 同样按首帧处理
     const r2 = agnesToDreamina({ ...base, request_json: { ...base.request_json, first_frame: 'https://a.com/f.png' } });
     expect(r2.ok).toBe(true);
-    expect(r2.request_json.images).toEqual(['https://a.com/f.png']);
+    expect(r2.request_json.image).toBe('https://a.com/f.png');
+  });
+
+  test('多张参考图：默认只取首张并在 notes 说明（其余图不参与）', () => {
+    const r = agnesToDreamina({
+      ...base,
+      request_json: {
+        ...base.request_json,
+        images: ['https://a.com/1.png', 'https://a.com/2.png', 'https://a.com/3.png'],
+      },
+    });
+    expect(r.ok).toBe(true);
+    expect(r.request_json.subcommand).toBe('image2video');
+    expect(r.request_json.image).toBe('https://a.com/1.png');
+    expect(r.request_json.images).toBeUndefined();
+    expect(r.notes.join()).toContain('仅取首张');
+  });
+
+  test('显式 strategy=multimodal → 走全能参考（能力已接入，待即梦服务端修复）', () => {
+    const r = agnesToDreamina(
+      { ...base, request_json: { ...base.request_json, images: ['https://a.com/1.png', 'https://a.com/2.png'] } },
+      undefined,
+      'multimodal',
+    );
+    expect(r.ok).toBe(true);
+    expect(r.request_json.subcommand).toBe('multimodal2video');
+    expect(r.request_json.images).toEqual(['https://a.com/1.png', 'https://a.com/2.png']);
+  });
+
+  test('strategy=multimodal 且参考图超上限 → 明确不改投（too-many-reference-images）', () => {
+    const images = Array.from({ length: 12 }, (_, i) => `https://a.com/${i}.png`);
+    expect(
+      agnesToDreamina(
+        { prompt: 'p', seconds: '5', request_json: { prompt: 'p', mode: 'reference', images } },
+        undefined,
+        'multimodal',
+      ),
+    ).toEqual({ ok: false, reason: 'too-many-reference-images' });
+    // 默认 first-frame 不受图数上限约束（只用首张）
+    expect(
+      agnesToDreamina({ prompt: 'p', seconds: '5', request_json: { prompt: 'p', mode: 'reference', images } }).ok,
+    ).toBe(true);
   });
 
   test('缺提示词 → 不映射', () => {

@@ -101,7 +101,7 @@ const DREAMINA_MODELS = {
         maxInputs: 12,
       },
     },
-    label: 'Seedance 2.0 Fast（720p · 4-15s · 备选）',
+    label: 'Seedance 2.0 Fast（720p · 4-15s · 备选 · 实测长时间不出结果，不建议用）',
   },
   'seedance2.0': {
     provider: 'dreamina',
@@ -224,8 +224,25 @@ const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-3.1';
  * 反向回退目标：Agnes 任务长时间排队失败（503 队列满 / 429 / 网络）时改投的即梦视频模型。
  * 选 `seedance2.0mini` 的理由：非 VIP 档（standard 会员可用）、即梦清单首位（前端默认主力）、
  * 720p/5s 实测约 30 积分、2026-09-24 实测队列空闲时 150 秒出片。
+ *
+ * ⚠ **只此一档**：2026-09-24 实测 `seedance2.0fast` 提交后进入 `Queueing`，
+ * `queue_idx=83772` / `queue_length=556818`（前面 8.3 万个），长时间不会出结果；
+ * 而 mini 走专属队列 `dreamina_fusion_video40_mini`，`queue_length=0` 直接 Generating。
+ * 两个模型**分队列、并发互不占用**（fast 在排队期间 mini 仍可正常提交）。
+ * 故本系统一切「自动」路径（反向回退目标、示例、推荐）一律用 mini，fast 不作为兜底选项。
  */
 const DREAMINA_FALLBACK_VIDEO_MODEL = 'seedance2.0mini';
+/**
+ * 反向回退里「带参考图的镜头」用哪种即梦传法（v2.6.9）。
+ *
+ * 2026-09-24 真机实测（同账号、同参考图、seedance2.0mini / 720p / 5s）：
+ *   - `multimodal2video`（全能参考，官方推荐的多图语义）→ **`final generation failed`**（×2，换 2.0fast 亦长时间 querying）
+ *     —— 代码侧已按官方文档正确接入（stringArray 重复传参、规格校验），但即梦服务端这条路当前不可用；
+ *   - `image2video`（首帧图）→ **成功出片**，且**角色外观完整保留**（实测抽帧：红蝴蝶结双马尾 + 水手服一致）。
+ * 故默认取 `first-frame`：把第一张参考图当首帧（image2video），多图时其余图不参与；
+ * 若即梦后续修复全能参考，把设置项切成 `multimodal` 即可，无需改代码。
+ */
+const DREAMINA_REFERENCE_STRATEGY_DEFAULT = 'first-frame';
 /**
  * 即梦图片模型（text2image）—— 与即梦视频同属 dreamina provider，但参数体系不同
  * （resolution_type / generate_num，且为异步任务）。
@@ -526,6 +543,7 @@ module.exports = {
   DREAMINA_VIDEO_COMMANDS,
   DREAMINA_IMAGE_DEFAULT_MODEL,
   DREAMINA_FALLBACK_VIDEO_MODEL,
+  DREAMINA_REFERENCE_STRATEGY_DEFAULT,
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,
