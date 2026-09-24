@@ -408,10 +408,18 @@ describe('即梦清单与官方对齐（CLI v1.4.18 实测）', () => {
         'jimeng-image-5.0pro',
       ].sort(),
     );
-    // v2.6.12：主力从"最便宜的 3.1"改为"性价比最优的 5.0"（CLI 自身默认档 + 实测 3 积分/2k）
-    expect(keys[0]).toBe('jimeng-image-5.0');
-    expect(DREAMINA_IMAGE_DEFAULT_MODEL).toBe('jimeng-image-5.0');
+    // v2.6.13：主力 = 性价比最优的 **4.6**（网页端 2k = 1 积分 + 官方称人像一致性更好）
+    expect(keys[0]).toBe('jimeng-image-4.6');
+    expect(DREAMINA_IMAGE_DEFAULT_MODEL).toBe('jimeng-image-4.6');
     expect(DREAMINA_IMAGE_MODELS[keys[0]].resolutions).toEqual(['2k', '4k']);
+  });
+
+  test('4.6@2k 单价为实测值（1 积分，网页端核对）—— 2k 档最便宜', () => {
+    const row = DREAMINA_CREDIT_COST.image['jimeng-image-4.6'].perRequest['2k'];
+    expect(row.points).toBe(1);
+    expect(row.source).toBe('measured');
+    // "性价比主力"的选型前提：必须便宜于 5.0@2k（3 分）
+    expect(row.points).toBeLessThan(DREAMINA_CREDIT_COST.image['jimeng-image-5.0'].perRequest['2k'].points);
   });
 
   test('5.0 单价为实测值（3 积分/2k），不是推断值', () => {
