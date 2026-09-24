@@ -219,7 +219,7 @@ const DREAMINA_VIDEO_COMMANDS = ['text2video', 'image2video'];
  * 即梦图片**主力档**（高性价比：实测 1 积分/次、一次约 4 张候选）。
  * 前端图片下拉默认选中它，全自动成片的角色图阶段也用它——两处一致，避免策略漂移。
  */
-const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-4.6';
+const DREAMINA_IMAGE_DEFAULT_MODEL = 'jimeng-image-4.7';
 /**
  * 反向回退目标：Agnes 任务长时间排队失败（503 队列满 / 429 / 网络）时改投的即梦视频模型。
  * 选 `seedance2.0mini` 的理由：非 VIP 档（standard 会员可用）、即梦清单首位（前端默认主力）、
@@ -261,29 +261,40 @@ const DREAMINA_DAILY_BUDGET_DEFAULT = 100;
  * 参数矩阵取自 `dreamina text2image -h`（v1.4.18 实测），**清单与官方支持集完全对齐**：
  *   3.0/3.1 -> 1k/2k；4.0/4.1/4.5/4.6/4.7/5.0 -> 2k/4k；5.0Pro -> 1.5k/2k/4k
  *
- * 主力 / 备用策略（**性价比优先，不选最便宜的旧档**，v2.6.13 定稿）：
- *   主力 = `jimeng-image-4.6`（2k/4k）：**网页端显示 2k = 1 积分**（用户核对）+ 官方描述
- *   「人像一致性保持更好，性价比更高」—— 本系列最吃角色一致性，且它是 2k 档里最便宜的。
- *   高画质 = `jimeng-image-5.0`（实测 3 积分/2k，CLI 自身默认档）；
- *   最强 = `jimeng-image-5.0pro`（实测 8 积分/2k，关键封面/主视觉）；
- *   老代际省钱 = `jimeng-image-3.1`（1 积分/1k，需要 1k 时用；2k 场景已被 4.6 同价支配）。
+ * 主力 / 备用策略（**选型规则，v2.6.14 定稿** —— 以后按规则选，不要凭"最便宜"直觉）：
+ *
+ *   规则 1 **同价取更新**：网页端 2k 档 4.6 与 4.7 同为 **1 积分** → 取更新的 `4.7`
+ *          （官方："画质全面优化，指令响应能力再次提升"）。
+ *   规则 2 **一致性优先时可换同价专档**：4.6 官方明确"人像一致性保持更好"，
+ *          与 4.7 同价（1 积分）→ 若实测 4.7 在角色一致性上不如 4.6，一行切回即可。
+ *   规则 3 **不要停在老代际**：`3.1`（1 积分/1k）已被 `4.6/4.7`（1 积分/**2k**）同价支配，
+ *          仅在明确需要 1k 时使用。
+ *   规则 4 **关键美术用最强档**：`5.0pro`（实测 8 积分/2k）用于封面/主视觉；
+ *          `5.0`（实测 3 积分/2k）用于需要更高代际画质的场合。
  *
  * ⚠ 网页端还有 CLI **不支持**的模型（Seedream 5.0 Flash / 5.0 Lite / 图片美学模型 V8.2，
  *   网页显示 5.0 Lite/Flash @2k = 3 积分）：官方 help 的公开支持集只有 3.0–5.0Pro，
  *   CLI 升级到最新版（2026-09-10）仍未包含 —— 要用它们只能在即梦网页端手工出图，
  *   本系统走不通（不是配置问题）；网页出好的图可作为参考图导入本系统。
- *   模型清单漂移用 `tools/dreamina-model-drift.js` 定期核对（建议入周任务）。
+ *   模型清单漂移用 `tools/dreamina-model-drift.js` 定期核对（已入周任务 05:40）。
  */
 const DREAMINA_IMAGE_RATIOS = ['21:9', '16:9', '3:2', '4:3', '1:1', '3:4', '2:3', '9:16'];
 const DREAMINA_IMAGE_MODELS = {
-  // —— 主力：官方称「人像一致性保持更好，性价比更高」+ 网页端实测 2k = **1 积分** ——
-  // 本系列创作最吃角色一致性，且它是 2k 档里最便宜的 → 默认选中（v2.6.13）
+  // —— 主力：**同价取更新**（4.7 与 4.6 都是 2k = 1 积分，4.7 官方称"画质全面优化 + 指令响应再次提升"）——
+  'jimeng-image-4.7': {
+    provider: 'dreamina',
+    subcommand: 'text2image',
+    model_version: '4.7',
+    resolutions: ['2k', '4k'],
+    label: '即梦图片 4.7（2k/4k · 主力 · 同价更新 + 2k 仅 1 积分）',
+  },
+  // —— 人像一致性专档：与 4.7 同价（1 积分/2k），官方明确"人像一致性保持更好" ——
   'jimeng-image-4.6': {
     provider: 'dreamina',
     subcommand: 'text2image',
     model_version: '4.6',
     resolutions: ['2k', '4k'],
-    label: '即梦图片 4.6（2k/4k · 主力 · 人像一致性 + 2k 仅 1 积分）',
+    label: '即梦图片 4.6（2k/4k · 人像一致性专档 · 同价 1 积分）',
   },
   // —— 高画质档：CLI 自身默认档，实测 3 积分/2k ——
   'jimeng-image-5.0': {
@@ -293,7 +304,7 @@ const DREAMINA_IMAGE_MODELS = {
     resolutions: ['2k', '4k'],
     label: '即梦图片 5.0（2k/4k · 高画质 · 实测 3 积分/2k）',
   },
-  // —— 省钱档：老代际 1k（4.6@2k 同价更清晰，故仅在需要 1k 时用） ——
+  // —— 省钱档：老代际 1k（4.6/4.7@2k 同价更清晰，故仅在需要 1k 时用） ——
   'jimeng-image-3.1': {
     provider: 'dreamina',
     subcommand: 'text2image',
@@ -329,13 +340,6 @@ const DREAMINA_IMAGE_MODELS = {
     model_version: '4.5',
     resolutions: ['2k', '4k'],
     label: '即梦图片 4.5（2k/4k · 备用）',
-  },
-  'jimeng-image-4.7': {
-    provider: 'dreamina',
-    subcommand: 'text2image',
-    model_version: '4.7',
-    resolutions: ['2k', '4k'],
-    label: '即梦图片 4.7（2k/4k · 备用）',
   },
   'jimeng-image-5.0pro': {
     provider: 'dreamina',
@@ -449,7 +453,8 @@ const DREAMINA_CREDIT_COST = {
     },
     'jimeng-image-4.7': {
       perRequest: {
-        '2k': { points: 3, source: 'estimated' },
+        // 网页端显示价 + 用户核对（2026-09-24）：4.7 @2k 与 4.6 同为 **1 积分** → 同价取更新
+        '2k': { points: 1, source: 'measured' },
         '4k': { points: 6, source: 'estimated' },
       },
     },
