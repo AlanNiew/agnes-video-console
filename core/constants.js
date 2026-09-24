@@ -273,6 +273,14 @@ const DREAMINA_CREDIT_COST = {
   videoByModel: {
     'seedance2.0': { '720p': { perSecond: 8, source: 'measured' } },
     /**
+     * seedance2.0mini（即梦视频默认主力档）：2026-09-24 实测标定 ——
+     * 5s / 720p / text2video 实扣 **30 积分**（CLI `list_task` 的
+     * `commerce_info.credit_count=30`、`benefit_type=seedance_20_mini_720p_output_5s`），
+     * 即 **6 积分/秒**（此前按 Fast 同档 5 积分/秒保守估，低报 17%）。
+     * Mini 仅支持 720p（specs.text2video.resolutions = ['720p']），故只此一档。
+     */
+    'seedance2.0mini': { '720p': { perSecond: 6, source: 'measured' } },
+    /**
      * seedance2.5：即梦网页端的「**样片模式**」= 该模型 @ 480p
      * （网页原文：先生成 480P 样片，确认满意后可升级为高清正片）。
      * ⚠ **CLI 没有视频升级命令**（子命令里只有 image_upscale），所以走本系统时"升级高清"

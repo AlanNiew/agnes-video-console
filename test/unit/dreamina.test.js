@@ -445,6 +445,18 @@ describe('即梦 2.5 成本护栏（网页「样片模式」= 2.5 @ 480p）', ()
   });
 });
 
+describe('即梦 2.0 Mini 成本护栏（2026-09-24 实测标定）', () => {
+  test('720p 按 6 积分/秒（5s 实扣 30 积分）', () => {
+    const e = estimateDreaminaCost('seedance2.0mini', { video_resolution: '720p', duration: 5 });
+    expect(e.points).toBe(30);
+    expect(e.confidence).toBe('measured');
+  });
+
+  test('默认分辨率即 720p（Mini 只有这一档）', () => {
+    expect(estimateDreaminaCost('seedance2.0mini', { duration: 10 }).points).toBe(60);
+  });
+});
+
 describe('图生视频（image2video）子命令推导与守卫', () => {
   test('提供首帧 → 自动推导 image2video，首帧进入 payload.image', () => {
     const { payload, meta } = buildDreaminaPayload({
