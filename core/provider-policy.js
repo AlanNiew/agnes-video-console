@@ -205,6 +205,25 @@ function budgetReasonText(reason, ctx = {}) {
   return `即梦预算闸门：${reason || '放行'}`;
 }
 
+/**
+ * v2.6.11 自动兜底的**每日镜数配额**（纯函数）。
+ *
+ * 用户口径：「只在必要镜头用即梦」—— 自动兜底不能把一集里所有卡住的镜头都换成即梦（30 积分/镜），
+ * 否则一天 100 积分的预算会被 3 镜吃光。故自动路径每天最多救 N 镜（默认 2），
+ * 其余镜头**留给用户手动一键「⬆ 升级即梦」**决定 —— 花钱的最终裁量权在人手里。
+ * 手动升级不受此配额限制（仅受每日积分预算约束）。
+ *
+ * @param {{cap?:number, usedToday?:number}} o cap=0 表示不限制自动兜底镜数
+ * @returns {{allowed:boolean, usedToday:number, cap:number}}
+ */
+function dreaminaAutoQuotaAllows(o = {}) {
+  const cap = Number(o.cap);
+  const usedToday = Number(o.usedToday) || 0;
+  const realCap = !Number.isFinite(cap) || cap < 0 ? 0 : cap;
+  if (realCap <= 0) return { allowed: true, usedToday, cap: 0 };
+  return { allowed: usedToday < realCap, usedToday, cap: realCap };
+}
+
 module.exports = {
   FREE_VIDEO_MODEL,
   FREE_IMAGE_MODEL,
@@ -220,4 +239,5 @@ module.exports = {
   toDreaminaReasonText,
   dreaminaBudgetAllows,
   budgetReasonText,
+  dreaminaAutoQuotaAllows,
 };

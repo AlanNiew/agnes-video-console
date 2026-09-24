@@ -15,7 +15,7 @@
  */
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const { DREAMINA_DAILY_BUDGET_DEFAULT } = require('../core/constants');
-const { dreaminaBudgetAllows, budgetReasonText } = require('../core/provider-policy');
+const { dreaminaBudgetAllows, dreaminaAutoQuotaAllows, budgetReasonText } = require('../core/provider-policy');
 
 /** 今天的日期键（本地时区，与运维口径一致：跨 0 点即新的一天） */
 function todayKey(d = new Date()) {
@@ -93,7 +93,68 @@ function setSpentForDay(dayKey, points) {
 function todaySummary() {
   const cap = budgetCap();
   const spent = spentToday();
-  return { day: todayKey(), spent, cap, remain: cap > 0 ? Math.max(0, cap - spent) : null, enabled: cap > 0 };
+  const shotCap = autoShotCap();
+  const shots = autoShotsToday();
+  return {
+    day: todayKey(),
+    spent,
+    cap,
+    remain: cap > 0 ? Math.max(0, cap - spent) : null,
+    enabled: cap > 0,
+    auto_shots_used: shots,
+    auto_shots_cap: shotCap,
+    auto_shots_remain: shotCap > 0 ? Math.max(0, shotCap - shots) : null,
+  };
+}
+
+/* ---------------- v2.6.11 自动兜底的每日镜数配额 ---------------- */
+
+/** 自动兜底镜数上限（0=不限） */
+function autoShotCap() {
+  const raw = settings.get('dreamina_daily_auto_shots', String(DEFAULT_SETTINGS.dreamina_daily_auto_shots ?? 2));
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= 0 ? n : 2;
+}
+
+/** 今日自动兜底已用镜数 */
+function autoShotsToday(d = new Date()) {
+  try {
+    const raw = JSON.parse(settings.get('dreamina_auto_shot_ledger', '{}') || '{}');
+    return Number(raw?.[todayKey(d)]) || 0;
+  } catch {
+    return 0;
+  }
+}
+
+/** 自动兜底闸门：本次改投是否还在今日镜数配额内 */
+function checkAutoShotQuota() {
+  const cap = autoShotCap();
+  const used = autoShotsToday();
+  const d = dreaminaAutoQuotaAllows({ cap, usedToday: used });
+  return {
+    ...d,
+    text:
+      cap <= 0 || d.allowed ? '' : `自动兜底今日已达上限（${used}/${cap} 镜）—— 需要更多请到任务中心手动「⬆ 升级即梦」`,
+  };
+}
+
+/** 记一次自动兜底（改投即梦时调用） */
+function recordAutoShot() {
+  const key = todayKey();
+  let ledger;
+  try {
+    ledger = JSON.parse(settings.get('dreamina_auto_shot_ledger', '{}') || '{}') || {};
+  } catch {
+    ledger = {};
+  }
+  const pruned = {};
+  for (const [k, v] of Object.entries(ledger)) {
+    const d = new Date(`${k}T00:00:00`);
+    if (Number.isFinite(d.getTime()) && (Date.now() - d.getTime()) / 86400000 <= 7) pruned[k] = v;
+  }
+  pruned[key] = (Number(pruned[key]) || 0) + 1;
+  settings.set('dreamina_auto_shot_ledger', JSON.stringify(pruned));
+  return Number(pruned[key]);
 }
 
 module.exports = {
@@ -105,4 +166,8 @@ module.exports = {
   recordSpend,
   setSpentForDay,
   todaySummary,
+  autoShotCap,
+  autoShotsToday,
+  checkAutoShotQuota,
+  recordAutoShot,
 };

@@ -60,6 +60,10 @@ module.exports = function registerSettingsRoutes(app) {
       dreamina_ref_strategy: settings.get('dreamina_ref_strategy', DEFAULT_SETTINGS.dreamina_ref_strategy),
       // v2.6.10 即梦每日积分预算（硬约束，默认 100/天）
       dreamina_daily_budget: Number(settings.get('dreamina_daily_budget', DEFAULT_SETTINGS.dreamina_daily_budget)),
+      // v2.6.11 自动兜底每日镜数上限（用户口径「只在必要镜头用即梦」）
+      dreamina_daily_auto_shots: Number(
+        settings.get('dreamina_daily_auto_shots', DEFAULT_SETTINGS.dreamina_daily_auto_shots),
+      ),
       ...dreaminaBudget.todaySummary(),
     });
   });
@@ -211,6 +215,14 @@ module.exports = function registerSettingsRoutes(app) {
       }
       settings.set('dreamina_ref_strategy', v);
       changed.push('dreamina_ref_strategy');
+    }
+    // v2.6.11 自动兜底每日镜数上限（0=不限）
+    if (b.dreamina_daily_auto_shots !== undefined) {
+      const n = Number(b.dreamina_daily_auto_shots);
+      if (!Number.isFinite(n) || n < 0 || n > 1000)
+        throw new ApiError(400, 'dreamina_daily_auto_shots 须为 0–1000 的整数（0=不限）');
+      settings.set('dreamina_daily_auto_shots', String(Math.round(n)));
+      changed.push('dreamina_daily_auto_shots');
     }
     // v2.6.10 每日积分预算（0=不限）
     if (b.dreamina_daily_budget !== undefined) {

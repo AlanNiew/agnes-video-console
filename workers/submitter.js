@@ -25,7 +25,7 @@ const {
   fallbackReasonText,
   toDreaminaReasonText,
 } = require('../core/provider-policy');
-const { checkBudget, recordSpend } = require('../services/dreamina-budget');
+const { checkBudget, recordSpend, checkAutoShotQuota, recordAutoShot } = require('../services/dreamina-budget');
 
 /**
  * v2.6.7 反向回退用的即梦账户状态缓存（60s）：
@@ -292,11 +292,19 @@ class Submitter {
       log('warn', `任务 #${t.id} 未改投即梦：${budget.text}（自动兜底让位于积分预算，Agnes 主链路不受影响）`);
       return false;
     }
+    // v2.6.11 自动兜底镜数配额（用户口径「只在必要镜头用即梦」）：每天最多自动救 N 镜，
+    // 其余留给用户在任务中心手动「⬆ 升级即梦」决定 —— 花钱的裁量权在人手里。
+    const quota = checkAutoShotQuota();
+    if (!quota.allowed) {
+      log('warn', `任务 #${t.id} 未自动改投即梦：${quota.text}`);
+      return false;
+    }
 
     const note = mapped.notes.length ? `；${mapped.notes.join('；')}` : '';
     this.retryUntil.delete(t.id);
     // 记账：改投即梦即视为"即将提交"，预扣当日预算（避免并发/失败漏记导致超支）
     const spentAfter = recordSpend(est && est.points != null ? est.points : null);
+    const shotsAfter = recordAutoShot();
     tasks.update(t.id, {
       model: mapped.model,
       seconds: mapped.seconds,
@@ -313,7 +321,7 @@ class Submitter {
     log(
       'warn',
       `任务 #${t.id} ${toDreaminaReasonText(kind)} → 改投即梦 ${mapped.model}` +
-        `（约 ${est?.points ?? '?'} 积分，余 ${Number.isFinite(credits) ? credits : '?'}；今日预算已用 ${spentAfter}${budget.cap > 0 ? `/${budget.cap}` : ''}；创意提示词不变${note}），继续制作`,
+        `（约 ${est?.points ?? '?'} 积分，余 ${Number.isFinite(credits) ? credits : '?'}；今日预算已用 ${spentAfter}${budget.cap > 0 ? `/${budget.cap}` : ''}，自动兜底 ${shotsAfter}${quota.cap > 0 ? `/${quota.cap}` : ''} 镜；创意提示词不变${note}），继续制作`,
     );
     return true;
   }

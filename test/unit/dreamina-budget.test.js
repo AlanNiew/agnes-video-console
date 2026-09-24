@@ -56,6 +56,65 @@ describe('dreaminaBudgetAllows（每日 100 积分硬约束）', () => {
   });
 });
 
+describe('dreaminaAutoQuotaAllows（v2.6.11 自动兜底每日镜数：只在必要镜头用即梦）', () => {
+  const { dreaminaAutoQuotaAllows } = require('../../core/provider-policy');
+
+  test('配额内放行、用满即拦', () => {
+    expect(dreaminaAutoQuotaAllows({ cap: 2, usedToday: 0 }).allowed).toBe(true);
+    expect(dreaminaAutoQuotaAllows({ cap: 2, usedToday: 1 }).allowed).toBe(true);
+    expect(dreaminaAutoQuotaAllows({ cap: 2, usedToday: 2 }).allowed).toBe(false);
+  });
+
+  test('cap=0 → 不限自动兜底镜数', () => {
+    expect(dreaminaAutoQuotaAllows({ cap: 0, usedToday: 99 }).allowed).toBe(true);
+  });
+
+  test('非法 cap（NaN/负数）→ 视为 0（不限），不像预算那样回落到默认值', () => {
+    // 镜数配额是"自动化节制"而非"钱的安全阀"：坏值不该反过来卡死自动兜底
+    expect(dreaminaAutoQuotaAllows({ cap: 'abc', usedToday: 5 }).allowed).toBe(true);
+    expect(dreaminaAutoQuotaAllows({ cap: -1, usedToday: 5 }).allowed).toBe(true);
+  });
+});
+
+describe('自动兜底镜数台账（跨天清零 / 与积分台账相互独立）', () => {
+  const budget = require('../../services/dreamina-budget');
+  const { settings } = require('../../db');
+
+  beforeEach(() => {
+    settings.set('dreamina_auto_shot_ledger', '{}');
+    settings.set('dreamina_daily_auto_shots', '2');
+    settings.set('dreamina_spend_ledger', '{}');
+  });
+
+  test('recordAutoShot 计数，且不动积分台账', () => {
+    budget.recordAutoShot();
+    budget.recordAutoShot();
+    expect(budget.autoShotsToday()).toBe(2);
+    expect(budget.spentToday()).toBe(0); // 镜数与积分分开记
+    const q = budget.checkAutoShotQuota();
+    expect(q.allowed).toBe(false);
+    expect(q.text).toContain('2/2');
+  });
+
+  test('配额用尽后闸门拦截，且提示引导手动升级', () => {
+    budget.recordAutoShot();
+    budget.recordAutoShot();
+    expect(budget.checkAutoShotQuota().allowed).toBe(false);
+    expect(budget.checkAutoShotQuota().text).toContain('升级即梦');
+  });
+
+  test('todaySummary 暴露镜数概览', () => {
+    budget.recordAutoShot();
+    expect(budget.todaySummary()).toMatchObject({ auto_shots_used: 1, auto_shots_cap: 2, auto_shots_remain: 1 });
+  });
+
+  test('设 0 → 不限，闸门恒放行', () => {
+    settings.set('dreamina_daily_auto_shots', '0');
+    for (let i = 0; i < 5; i++) budget.recordAutoShot();
+    expect(budget.checkAutoShotQuota().allowed).toBe(true);
+  });
+});
+
 describe('dreamina-budget 台账（跨天自动清零 / 记账不重复）', () => {
   const budget = require('../../services/dreamina-budget');
   const { settings } = require('../../db');

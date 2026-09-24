@@ -26,12 +26,13 @@ const KIND_ICON = { video: '🎬', image: '🖼️' };
 const KIND_LABEL = { video: '视频', image: '图片' };
 const taskKind = (t) => (t.kind === 'image' ? 'image' : 'video');
 
-/** 阶段 5：失败任务「升级到即梦」入口的展示条件 —— 重试 ≥ N 次且当前走 Agnes。
- * 刻意只在失败多次后提示（避免一开始就引导花钱），且必须用户点击 + 过成本护栏。 */
-const UPGRADE_HINT_RETRIES = 3;
+/** 阶段 5：失败任务「升级到即梦」入口的展示条件 —— 当前走 Agnes 且失败。
+ *  v2.6.11：**去掉「重试 ≥ 3 次」门槛** —— 内部 503 退避重试**不会**累加 retry_count，
+ *  于是"flash 排队排不上"这类最该用即梦兜底的场景反而看不到按钮（用户要手点 3 次重试才出现）。
+ *  改为：只要是 failed / submit_error 且当前是 Agnes 任务、即梦可用 → 直接给一键升级。
+ *  仍然刻意不自动触发：必须用户点击 + 过成本护栏（消耗积分）。 */
 const canUpgrade = (t) =>
   ['failed', 'submit_error'].includes(t.status) &&
-  (t.retry_count || 0) >= UPGRADE_HINT_RETRIES &&
   Boolean(modelInfo(t.model)) && // 仅 Agnes 任务需升级（即梦任务本身已在收费档）
   Boolean(dreaminaUpgradeTarget(taskKind(t)));
 /** v2.1 来源标签：项目名 / 镜头序号与标题 / 角色图·场景图 / 独立创作（看板与列表共用） */
