@@ -101,6 +101,29 @@ function computeBackoffMs(attempts, kind) {
   return Math.min(RATE_LIMIT_BASE_MS * 2 ** (attempts - 1), RATE_LIMIT_CAP_MS);
 }
 
+/**
+ * 智谱免费档的「提交等待预算」：返回本次退避后是否该判死，以及该退避多久。
+ *
+ * 为什么不能沿用 MAX_ATTEMPTS=5：CogVideoX-Flash 是免费模型，晚高峰会持续
+ * `429 code 1305 该模型当前访问量过大`（2026-10-31 22:16 起实测连续命中），
+ * 固定 5 次退避（60/120/240/480s ≈ 15 分钟）就判死，用户会以为「平台又废了」。
+ * 这里改成按**已等待时长**收口：只要还没超预算，就一直退避重试；
+ * 预算取 max(zhipu_max_active_minutes, 60) 分钟（免费档高峰可能持续很久）。
+ *
+ * @param {{attempts:number, waitedMs:number, waitLimitMs:number, kind:'rate-limit'|'net'|'queue'}} p
+ * @returns {{giveUp:boolean, delay:number, waitedMin:number}}
+ */
+function planZhipuRetry({ attempts, waitedMs, waitLimitMs, kind }) {
+  const delay = computeBackoffMs(Math.max(1, Number(attempts) || 1), kind);
+  const limit = Math.max(Number(waitLimitMs) || 0, 0);
+  const waited = Math.max(Number(waitedMs) || 0, 0);
+  return {
+    giveUp: limit > 0 && waited + delay > limit,
+    delay,
+    waitedMin: Math.round(waited / 60_000),
+  };
+}
+
 /** 上游错误详情：优先 detail / error.message；503 无正文时给可读提示（队列繁忙），避免出现「提交失败（503）：」 */
 function serverDetail(r) {
   const d = r?.data?.detail || r?.data?.error?.message || r?.data?.error || '';
@@ -115,6 +138,9 @@ class Submitter {
     this.running = false;
     this.lastSubmitAt = new Map(); // model -> 上次成功提交时间戳（服务端最小间隔）
     this.retryUntil = new Map(); // taskId -> { until, attempts }
+    this.zhipuCooldownUntil = 0; // 智谱免费档全局限流冷却（毫秒时间戳）
+    // taskId -> 本轮「等待预算」起点：手动重试/重新入队后重置，避免用 created_at 把预算提前耗光
+    this.zhipuWaitStart = new Map();
   }
 
   start() {
@@ -133,7 +159,10 @@ class Submitter {
 
   /** 唤醒：清除指定任务的退避标记（入队后立即尝试首次提交） */
   kick(taskId) {
-    if (taskId) this.retryUntil.delete(Number(taskId));
+    if (!taskId) return;
+    const id = Number(taskId);
+    this.retryUntil.delete(id);
+    this.zhipuWaitStart.delete(id); // 重新入队/手动重试：等待预算重新计时
   }
 
   async tick() {
@@ -163,6 +192,7 @@ class Submitter {
   fail(taskId, message, submitResponse = null) {
     tasks.update(taskId, { status: 'submit_error', error_message: message, submit_response: submitResponse });
     this.retryUntil.delete(taskId);
+    this.zhipuWaitStart.delete(taskId);
     log('error', `任务 #${taskId} 提交失败：${message}`);
   }
 
@@ -433,6 +463,8 @@ class Submitter {
     if (settings.get('zhipu_enabled', '1') !== '1') return;
     const apiKey = settings.get('zhipu_api_key', '');
     if (!apiKey) return; // 未配置 Key：保留入队状态，配置后下一轮自动提交
+    // 免费档限流按账户共享额度：上一次被限流后，全局冷却期内不再打上游（避免多个镜头同时把 429 拖长）
+    if (Date.now() < (this.zhipuCooldownUntil || 0)) return;
     const payload = t.request_json;
     if (!payload) {
       this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
@@ -441,34 +473,57 @@ class Submitter {
     const baseUrl = settings.get('zhipu_base_url', ZHIPU_DEFAULT_BASE_URL);
     const prev = this.retryUntil.get(t.id);
     const attempts = prev ? prev.attempts + 1 : 1;
+    // 免费档限流/网络异常的等待预算（分钟）：取 zhipu_max_active_minutes 与 60 的较大者。
+    // 预算按「本轮提交」计时（zhipuWaitStart），而不是 created_at：任务可能排队很久或被用户重试过，
+    // 用 created_at 会让预算在真正开始提交前就被耗光。
+    const waitLimitMs = Math.max(Number(settings.get('zhipu_max_active_minutes', 30)) || 30, 60) * 60_000;
+    if (!this.zhipuWaitStart.has(t.id)) this.zhipuWaitStart.set(t.id, Date.now());
+    const waitedMs = Date.now() - this.zhipuWaitStart.get(t.id);
+    const retryNote = (plan) =>
+      `智谱免费档限流中，已等待 ${plan.waitedMin} 分钟，${Math.round(plan.delay / 1000)}s 后自动重试`;
 
     let r;
     try {
       r = await zhipu.createTask({ apiKey, baseUrl, payload });
     } catch (e) {
-      if (attempts >= MAX_ATTEMPTS) {
-        this.fail(t.id, `智谱提交网络异常（自动重试 ${attempts - 1} 次）：${e.message}`);
+      const plan = planZhipuRetry({ attempts, waitedMs, waitLimitMs, kind: 'net' });
+      if (plan.giveUp) {
+        this.fail(t.id, `智谱提交网络异常（已等待 ${plan.waitedMin} 分钟）：${e.message}`);
         return;
       }
-      this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
-      log('warn', `任务 #${t.id} 智谱提交网络异常（第 ${attempts} 次）：${e.message}`);
+      this.backoff(t.id, plan.delay, attempts);
+      this.zhipuCooldownUntil = Math.max(this.zhipuCooldownUntil || 0, Date.now() + plan.delay);
+      tasks.update(t.id, {
+        error_message: `智谱提交网络异常（第 ${attempts} 次），已等待 ${plan.waitedMin} 分钟，稍后自动重试`,
+      });
+      log(
+        'warn',
+        `任务 #${t.id} 智谱提交网络异常（第 ${attempts} 次）：${e.message}，${Math.round(plan.delay / 1000)}s 后重试`,
+      );
       return;
     }
 
     if (!r.ok) {
       const cls = zhipu.classifyError(r) || { kind: 'unknown', retryable: false, message: `HTTP ${r.status}` };
       if (cls.retryable) {
-        if (attempts >= MAX_ATTEMPTS) {
-          this.fail(t.id, `智谱提交失败（${r.status}），自动重试 ${attempts - 1} 次后仍失败：${cls.message}`, r.data);
+        const backoffKind = cls.kind === 'queue-full' ? 'queue' : cls.kind === 'rate-limit' ? 'rate-limit' : 'net';
+        const plan = planZhipuRetry({ attempts, waitedMs, waitLimitMs, kind: backoffKind });
+        if (plan.giveUp) {
+          this.fail(
+            t.id,
+            `智谱免费档持续限流（已等待 ${plan.waitedMin} 分钟，上限 ${Math.round(waitLimitMs / 60_000)} 分钟，可稍后重试本任务）：${cls.message}`,
+            r.data,
+          );
           return;
         }
-        const backoffKind = cls.kind === 'queue-full' ? 'queue' : cls.kind === 'rate-limit' ? 'rate-limit' : 'net';
-        const delay = computeBackoffMs(attempts, backoffKind);
-        this.backoff(t.id, delay, attempts);
+        this.backoff(t.id, plan.delay, attempts);
+        this.zhipuCooldownUntil = Math.max(this.zhipuCooldownUntil || 0, Date.now() + plan.delay);
+        // 让前端/任务列表看得见「在等，不是卡死」
+        tasks.update(t.id, { error_message: retryNote(plan) });
         log(
           'warn',
           `任务 #${t.id} 智谱返回 ${r.status}（${cls.kind}：${cls.message}），` +
-            `${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
+            `${Math.round(plan.delay / 1000)}s 后自动重试（第 ${attempts} 次，已等待 ${plan.waitedMin} 分钟，预算 ${Math.round(waitLimitMs / 60_000)} 分钟）`,
         );
         return;
       }
@@ -485,12 +540,15 @@ class Submitter {
     }
     this.lastSubmitAt.set(t.model, Date.now());
     this.retryUntil.delete(t.id);
+    this.zhipuWaitStart.delete(t.id);
+    this.zhipuCooldownUntil = 0; // 提交成功：解除全局冷却
     tasks.update(t.id, {
       task_id: remoteId,
       video_id: remoteId, // 复用现有轮询链路（poller.active 只看 video_id 是否为空）
       submit_response: j,
       status: 'queued',
       progress: 0,
+      error_message: null, // 清掉限流重试期间留下的提示
       submitted_at: Date.now(),
     });
     log('info', `任务 #${t.id} 已提交智谱（id=${remoteId}），等待轮询取片`);
@@ -619,3 +677,4 @@ class Submitter {
 module.exports = new Submitter();
 // 纯函数与常量导出（供单元测试断言退避数学；submitter 单例仍为默认导出）
 module.exports.computeBackoffMs = computeBackoffMs;
+module.exports.planZhipuRetry = planZhipuRetry;

@@ -83,6 +83,7 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
   · **智谱硬约束（`services/payloads.buildZhipuPayload` 已实现）**：时长只有 `5/10` 秒（4–7→5、8–12→10 并留 warning）；画幅只支持 `16:9 / 9:16 / 1:1`；**不支持多图 reference**（取首帧降级，多图留 warning）；不支持音频/视频参考；prompt ≤ **512** 字（超长截断并留 warning）；无音轨（`with_audio:false`，声音仍由本地 TTS/BGM 合成）。
   · **不自动改投智谱/Agnes 之间**：`dreamina_fallback` 只覆盖「智谱/Agnes → 即梦免费档/图片」方向；智谱失败按 `classifyError` 分档退避（`queue-full`/`rate-limit`/`server` 可重试，`auth`/`bad-args`/`content-policy`/`quota` 直接失败），**不跨上游自动改投**，避免意外扣费。需要换时人工切设置里的默认模型。
   · **一级 kill switch**：设置项 `zhipu_enabled='0'` → 提交器/轮询器**保留任务不提交**（不判失败），用于免费档被限流时临时停手；恢复后自动继续。
+  · **限流不判死（v2.7.1，2026-10-31 实测后加）**：免费档晚高峰会持续返回 `429 code 1305「该模型当前访问量过大」`（实测 22:16 起连续命中，与 Key/参数无关）。提交器对此**不再按固定 5 次判死**，而是按「已等待时长预算」一直退避重试：预算 = `max(zhipu_max_active_minutes, 60)` 分钟；任务列表会显示「智谱免费档限流中，已等待 N 分钟」；超预算才转 `submit_error`（可直接重试）。同一时刻多个镜头排队时按账户共享冷却，不并发捶上游。
   · **上游分发**：`core/constants.providerOf(model)` 顺序 **dreamina → zhipu → agnes 兜底**（未知模型仍归 agnes，保证历史数据兼容）；新增第三家上游的完整模板见 `docs/ZHIPU_INTEGRATION.md`。
 - 以下为即梦关键资产的既有策略（保持）：
   · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；

@@ -20,6 +20,8 @@
 
 > 智谱价格与能力以 [BigModel 文档](https://docs.bigmodel.cn/cn/guide/models/free/cogvideox-flash) 为准；Agnes 以 [官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准。
 > **为什么默认智谱**：2026-10-31 实测 Agnes 免费档提交即 `503 video_queue_full`、免费 v2.0 已下线；CogVideoX-Flash 是长期免费档。代价是 5/10 秒两档 + 仅三种画幅 + 不支持多图参考（自动降级首帧）——需要多模态参考或 4/6/8/9/11/12 秒时手动切回 Agnes。接入细节见 [docs/ZHIPU_INTEGRATION.md](docs/ZHIPU_INTEGRATION.md)。
+>
+> **免费档会限流**：晚高峰常返回 `429 code 1305「该模型当前访问量过大」`（不是配置问题）。提交器会自动退避重试——按「已等待时长预算」（≥60 分钟）收口，任务列表显示「智谱免费档限流中，已等待 N 分钟」；等不及可临时切 `cogvideox-3`（付费 1 元/条）或 Agnes 备用通道。
 
 ## ✨ 特性
 

@@ -5,7 +5,7 @@
  *   429：基数 60s，上限 10min；网络异常：基数 10s，上限 60s；最多 5 次尝试。
  */
 
-const { computeBackoffMs } = require('../../workers/submitter');
+const { computeBackoffMs, planZhipuRetry } = require('../../workers/submitter');
 
 describe('computeBackoffMs（429 限流退避）', () => {
   test('第 1–4 次重试按 60s 基数指数递增', () => {
@@ -31,6 +31,38 @@ describe('computeBackoffMs（网络异常退避）', () => {
   test('第 4 次触顶 60 秒上限', () => {
     expect(computeBackoffMs(4, 'net')).toBe(60_000);
     expect(computeBackoffMs(6, 'net')).toBe(60_000);
+  });
+});
+
+describe('planZhipuRetry（智谱免费档按等待预算重试）', () => {
+  test('预算内继续重试，退避沿用 computeBackoffMs', () => {
+    const p = planZhipuRetry({ attempts: 2, waitedMs: 5 * 60_000, waitLimitMs: 60 * 60_000, kind: 'rate-limit' });
+    expect(p.giveUp).toBe(false);
+    expect(p.delay).toBe(computeBackoffMs(2, 'rate-limit'));
+    expect(p.waitedMin).toBe(5);
+  });
+
+  test('等待 + 下次退避会超预算时判死（不再固定 5 次上限）', () => {
+    const limit = 60 * 60_000;
+    const p = planZhipuRetry({ attempts: 7, waitedMs: limit - 30_000, waitLimitMs: limit, kind: 'rate-limit' });
+    expect(p.giveUp).toBe(true);
+  });
+
+  test('第 12 次重试仍可能继续（免费档高峰期不限次数，只看时长）', () => {
+    const p = planZhipuRetry({ attempts: 12, waitedMs: 20 * 60_000, waitLimitMs: 3 * 60 * 60_000, kind: 'rate-limit' });
+    expect(p.giveUp).toBe(false);
+    expect(p.delay).toBe(600_000); // 触顶 10 分钟
+  });
+
+  test('attempts 非法值按 1 处理；waitedMin 取整', () => {
+    const p = planZhipuRetry({ attempts: 0, waitedMs: 90_000, waitLimitMs: 60 * 60_000, kind: 'net' });
+    expect(p.delay).toBe(computeBackoffMs(1, 'net'));
+    expect(p.waitedMin).toBe(2);
+  });
+
+  test('预算为 0/缺省时不主动判死', () => {
+    expect(planZhipuRetry({ attempts: 3, waitedMs: 10 ** 9, waitLimitMs: 0, kind: 'rate-limit' }).giveUp).toBe(false);
+    expect(planZhipuRetry({ attempts: 3, waitedMs: 10 ** 9, kind: 'rate-limit' }).giveUp).toBe(false);
   });
 });
 

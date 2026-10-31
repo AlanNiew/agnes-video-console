@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.1] - 2026-10-31
+
+> **背景**：接上智谱后首次真实出片验证（22:16 起）即命中 `429 code 1305「该模型当前访问量过大」`——
+> 免费档晚高峰容量紧张，是**服务方限流**，与 Key / 参数无关（直连官方接口同样 429）。
+> 旧逻辑沿用 `MAX_ATTEMPTS=5`，约 10–15 分钟就把任务判死，用户会误以为「换了 API 还是废」。
+
+### Fixed
+
+- **智谱限流不再按固定 5 次判死**：新增纯函数 `planZhipuRetry()`，提交阶段对可重试错误改用
+  「已等待时长预算」收口（预算 = `max(zhipu_max_active_minutes, 60)` 分钟）；预算内持续指数退避重试，
+  第 10+ 次也可能继续（退避触顶 10 分钟）。
+- **任务可见性**：限流等待期间把 `error_message` 更新为「智谱免费档限流中，已等待 N 分钟，Ns 后自动重试」，
+  任务列表不再显示为空白卡住的 `queued`；提交成功后自动清空该提示。
+- **账户级冷却**：一次 429 后设置全局冷却（`zhipuCooldownUntil`），同批多个镜头不会同时捶上游把限流拖长；
+  提交成功即解除。
+- **网络异常同规则**：提交阶段网络错误也走等待预算（`net` 退避 10s 起、触顶 60s），不再 5 次即死。
+
+### Tests
+
+- `test/unit/submitter-backoff.test.js` 新增 `planZhipuRetry` 5 例：预算内继续、超预算判死、
+  第 12 次仍可继续、attempts/waitedMs 非法值兜底、预算为 0 不主动判死。
+
 ## [2.7.0] - 2026-10-31
 
 > **背景**：2026-10-31 实测 Agnes 免费档已不可用——`POST /v1/videos`（`agnes-video-2.5-flash`）每次提交都返回
