@@ -10,13 +10,14 @@
 const { settings, tasks, DEFAULT_SETTINGS } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const zhipu = require('../clients/zhipu');
 const dreamina = require('../clients/dreamina');
 const { downloadArtifact, ARTIFACTS_DIR } = require('../lib/artifacts');
 const path = require('node:path');
 const fs = require('node:fs');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
-const { providerOf, DREAMINA_FALLBACK_VIDEO_MODEL } = require('../core/constants');
+const { providerOf, DREAMINA_FALLBACK_VIDEO_MODEL, ZHIPU_DEFAULT_BASE_URL } = require('../core/constants');
 const { dreaminaToAgnes, agnesToDreamina, estimateDreaminaCost } = require('../services/payloads');
 const {
   shouldFallbackFromDreamina,
@@ -327,9 +328,14 @@ class Submitter {
   }
 
   async submitOne(t) {
-    // provider 分流：即梦走本地 CLI（无 apiKey 概念，登录态由 CLI 保管），Agnes 走 HTTP
+    // provider 分流：即梦走本地 CLI（无 apiKey 概念，登录态由 CLI 保管），
+    // 智谱走自己的 HTTP 异步接口（独立 Key），Agnes 走原 HTTP 接口
     if (providerOf(t.model) === 'dreamina') {
       await this.submitDreamina(t);
+      return;
+    }
+    if (providerOf(t.model) === 'zhipu') {
+      await this.submitZhipu(t);
       return;
     }
     const apiKey = settings.get('api_key', '');
@@ -412,6 +418,82 @@ class Submitter {
       submitted_at: Date.now(),
     });
     log('info', `任务 #${t.id} 提交成功 video_id=${j.video_id || '(null)'} status=${j.status || 'queued'}`);
+  }
+
+  /**
+   * 智谱 CogVideoX 提交（v2.7）。
+   * 与 Agnes 的差异：
+   *   - 独立凭证（settings.zhipu_api_key），可只配智谱、不配 Agnes；
+   *   - 创建接口返回**异步任务 id**，查询走 /api/paas/v4/async-result/{id}；
+   *   - 任务号同时写 task_id / video_id：poller 的 active() 靠 video_id 非空判定「已提交」，
+   *     复用即零 schema/零 SQL 改动（与即梦 submit_id 同一套路）。
+   * 一级 kill switch：zhipu_enabled=0 时保留入队、不提交（出问题可立刻止血且不丢任务）。
+   */
+  async submitZhipu(t) {
+    if (settings.get('zhipu_enabled', '1') !== '1') return;
+    const apiKey = settings.get('zhipu_api_key', '');
+    if (!apiKey) return; // 未配置 Key：保留入队状态，配置后下一轮自动提交
+    const payload = t.request_json;
+    if (!payload) {
+      this.fail(t.id, '任务缺少 request_json（历史数据异常），无法提交');
+      return;
+    }
+    const baseUrl = settings.get('zhipu_base_url', ZHIPU_DEFAULT_BASE_URL);
+    const prev = this.retryUntil.get(t.id);
+    const attempts = prev ? prev.attempts + 1 : 1;
+
+    let r;
+    try {
+      r = await zhipu.createTask({ apiKey, baseUrl, payload });
+    } catch (e) {
+      if (attempts >= MAX_ATTEMPTS) {
+        this.fail(t.id, `智谱提交网络异常（自动重试 ${attempts - 1} 次）：${e.message}`);
+        return;
+      }
+      this.backoff(t.id, computeBackoffMs(attempts, 'net'), attempts);
+      log('warn', `任务 #${t.id} 智谱提交网络异常（第 ${attempts} 次）：${e.message}`);
+      return;
+    }
+
+    if (!r.ok) {
+      const cls = zhipu.classifyError(r) || { kind: 'unknown', retryable: false, message: `HTTP ${r.status}` };
+      if (cls.retryable) {
+        if (attempts >= MAX_ATTEMPTS) {
+          this.fail(t.id, `智谱提交失败（${r.status}），自动重试 ${attempts - 1} 次后仍失败：${cls.message}`, r.data);
+          return;
+        }
+        const backoffKind = cls.kind === 'queue-full' ? 'queue' : cls.kind === 'rate-limit' ? 'rate-limit' : 'net';
+        const delay = computeBackoffMs(attempts, backoffKind);
+        this.backoff(t.id, delay, attempts);
+        log(
+          'warn',
+          `任务 #${t.id} 智谱返回 ${r.status}（${cls.kind}：${cls.message}），` +
+            `${Math.round(delay / 1000)}s 后自动重试（${attempts}/${MAX_ATTEMPTS}）`,
+        );
+        return;
+      }
+      // 鉴权/参数/内容审核/余额：不可恢复，直接判死并带可读原因（用户需去改 Key 或提示词）
+      this.fail(t.id, `智谱提交失败（${r.status}，${cls.kind}）：${cls.message}`, r.data);
+      return;
+    }
+
+    const j = r.data || {};
+    const remoteId = zhipu.extractTaskId(j);
+    if (!remoteId) {
+      this.fail(t.id, `智谱未返回任务 id（响应结构可能已变更）：${JSON.stringify(j).slice(0, 300)}`, j);
+      return;
+    }
+    this.lastSubmitAt.set(t.model, Date.now());
+    this.retryUntil.delete(t.id);
+    tasks.update(t.id, {
+      task_id: remoteId,
+      video_id: remoteId, // 复用现有轮询链路（poller.active 只看 video_id 是否为空）
+      submit_response: j,
+      status: 'queued',
+      progress: 0,
+      submitted_at: Date.now(),
+    });
+    log('info', `任务 #${t.id} 已提交智谱（id=${remoteId}），等待轮询取片`);
   }
 
   /**

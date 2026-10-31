@@ -37,6 +37,54 @@ const RETIRED_MODELS = {
 };
 
 /**
+ * 智谱 BigModel（CogVideoX）视频模型 —— 与 Agnes / 即梦 **分离维护**（v2.7）。
+ * 上游接口：POST {base}/api/paas/v4/videos/generations → GET {base}/api/paas/v4/async-result/{id}
+ * 官方文档：https://docs.bigmodel.cn/cn/guide/models/free/cogvideox-flash
+ *
+ * 与 Agnes 的能力差异（适配层必须显式处理，不能假装等价）：
+ *   - **不支持多图参考**：只有首帧（1 张）/首尾帧（2 张）。本系统的 reference 模式在
+ *     services/payloads.js 里降级为「首张角色图作首帧」并记录 warnings，绝不静默丢图；
+ *   - 时长只有 5s / 10s 两档：其余秒数按「≤7→5，>7→10」归并（同样记 warnings）；
+ *   - prompt 上限 512 字符：超长截断（超长会被上游直接 400，整条产线停摆）；
+ *   - 画幅只有 16:9 / 9:16 / 1:1 三种（对应上面的 size 档位），其余画幅明确 400。
+ * 之所以仍按 size 名字写进白名单（而不是画幅）：/api/meta 的 sizes 字段是前端
+ * 「规格」下拉的单一事实来源，与会话里其它模型保持同一形态。
+ */
+const ZHIPU_MODELS = {
+  'cogvideox-flash': {
+    family: 'zhipu',
+    provider: 'zhipu',
+    sizes: ['1280x720', '720x1280', '1024x1024'],
+    durations: ['5', '10'],
+    free: true,
+    short: 'CogVideoX-Flash',
+    hint: '长期免费 · 5/10 秒 · 720P 横屏/竖屏/方形 · 支持首帧（多图参考降级为首帧）',
+    label: '智谱 CogVideoX-Flash（免费）',
+    rate_limit: '免费档受账户速率限制约束，超限由提交器自动退避重试',
+  },
+  'cogvideox-3': {
+    family: 'zhipu',
+    provider: 'zhipu',
+    sizes: ['1280x720', '720x1280', '1024x1024', '1920x1080', '1080x1920'],
+    durations: ['5', '10'],
+    free: false,
+    short: 'CogVideoX-3',
+    hint: '付费 1 元/条（5/10 秒同价）· 最高 1080P · 质量档 · 支持首帧/首尾帧',
+    label: '智谱 CogVideoX-3（付费 1 元/条）',
+    rate_limit: '以账户配额为准',
+  },
+};
+
+const ZHIPU_DEFAULT_MODEL = 'cogvideox-flash';
+const ZHIPU_DEFAULT_BASE_URL = 'https://open.bigmodel.cn';
+const ZHIPU_PROMPT_MAX = 512; // 官方 prompt 上限（字符）
+const ZHIPU_ASPECT_TO_SIZE = {
+  '16:9': '1280x720',
+  '9:16': '720x1280',
+  '1:1': '1024x1024',
+};
+
+/**
  * 即梦（官方 dreamina CLI）视频模型 —— 与 Agnes 的 MODELS **分离维护**：
  * 故意不进 /api/meta 的 models 清单，故前端下拉/默认模型不受影响。
  * 参数矩阵取自 `dreamina <子命令> -h`（CLI v1.4.18 实测）；CLI 侧对取值做严格校验，
@@ -489,13 +537,15 @@ const DREAMINA_DEFAULT_THRESHOLD = 10;
  * 由模型名推导上游 provider。
  * 未知模型一律按 'agnes' 处理，保证历史数据与既有调用向后兼容。
  * @param {string} model
- * @returns {'agnes'|'dreamina'}
+ * @returns {'agnes'|'dreamina'|'zhipu'}
  */
 function providerOf(model) {
   const isDreamina =
     Object.prototype.hasOwnProperty.call(DREAMINA_MODELS, model) ||
     Object.prototype.hasOwnProperty.call(DREAMINA_IMAGE_MODELS, model);
-  return isDreamina ? 'dreamina' : 'agnes';
+  if (isDreamina) return 'dreamina';
+  if (Object.prototype.hasOwnProperty.call(ZHIPU_MODELS, model)) return 'zhipu';
+  return 'agnes';
 }
 
 /* 2.5 家族模式（V2.0 已下线，其 V2_MODES 仅保留供历史数据解析） */
@@ -589,6 +639,11 @@ module.exports = {
   DREAMINA_DEFAULT_THRESHOLD,
   providerOf,
   RETIRED_MODELS,
+  ZHIPU_MODELS,
+  ZHIPU_DEFAULT_MODEL,
+  ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_PROMPT_MAX,
+  ZHIPU_ASPECT_TO_SIZE,
   MODES,
   V2_MODES,
   ASPECT_RATIOS,

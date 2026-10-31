@@ -279,8 +279,15 @@ function cardHTML(p) {
       </div>`;
 }
 
-/* 步骤④的模型标签：与流水线实际使用的免费视频模型保持同源 */
+/* 步骤④的模型标签：与流水线实际使用的免费视频模型保持同源。
+ * 智谱 CogVideoX-Flash 是 Agnes 免费档 503 / 免费 v2.0 下线后的主力免费通道，
+ * 故启用且已配 Key 时优先显示它（数据在 meta.zhipu，不在 meta.models 里）。 */
 function videoModelTag(meta) {
+  const zp = meta.zhipu;
+  const zpModel = zp && zp.enabled && zp.has_key ? (zp.models || []).find((x) => x.id === zp.model) || null : null;
+  if (zpModel) {
+    return `${zpModel.short}（${zpModel.free ? '免费' : '付费'} · ${(zpModel.sizes || ['-'])[0] || '-'}）`;
+  }
   const m =
     meta.models.find((x) => x.id === 'agnes-video-2.5-flash') ||
     meta.models.find((x) => !x.deprecated && x.free) ||

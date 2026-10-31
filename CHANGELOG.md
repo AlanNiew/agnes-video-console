@@ -2,6 +2,53 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.0] - 2026-10-31
+
+> **背景**：2026-10-31 实测 Agnes 免费档已不可用——`POST /v1/videos`（`agnes-video-2.5-flash`）每次提交都返回
+> `503 video_queue_full`（无 task id），且免费 `agnes-video-v2.0` 已于 2026-09-25 正式下线。
+> 视频产线因此断供（不是配置错误：Key / 模型清单 / 轮询接口均正常）。本版接入**智谱 BigModel CogVideoX** 作为新视频主力。
+
+### Added
+
+- **第三家 HTTP 视频上游：智谱 CogVideoX**（`cogvideox-flash` 长期免费 / `cogvideox-3` 付费），零 DDL、零新路由、零 schema 变更：
+  · `clients/zhipu.js`：创建 `POST /api/paas/v4/videos/generations`、查询 `GET /api/paas/v4/async-result/{id}`；
+  纯函数 `normalizeBaseUrl` / `extractTaskId`（只认 `id`/`task_id`，**不认 `request_id`**，避免把请求号当任务号）/
+  `extractVideoUrl`（`video_result[].url` + 多层漂移兜底）/ `normalizeStatus`（`PROCESSING|SUCCESS|FAIL` → 内部状态）/
+  `classifyError`（`auth|quota|bad-args|content-policy|rate-limit|queue-full|not-found|server|net` → 是否可重试）。
+  · `services/payloads.js` 新增 `buildZhipuPayload`：`seconds` 归并 5/10（4–7→5、8–12→10）、画幅映射
+  `16:9↔1280x720`、`9:16↔720x1280`、`1:1↔1024x1024`（其余画幅 400）、`reference` 多图降级首帧、
+  `audios`/`videos` 明确 400、prompt >512 截断留 warning、`with_audio:false`（音轨仍由本地 TTS/BGM 合成）。
+  · `providerOf()` 扩展为 **dreamina → zhipu → agnes** 三态；`submitter.submitZhipu` / `poller.pollZhipu` 接入既有节流与轮询闭环
+  （远端任务号同时写 `task_id`/`video_id`，复用「`video_id` 非空即已提交」的零改动分工）。
+  · 独立设置组（Key 只回掩码）：`zhipu_enabled`（一级 kill switch）/ `zhipu_base_url` / `zhipu_api_key` /
+  `zhipu_model` / `zhipu_quality`（`speed|quality`）/ `zhipu_watermark` / `zhipu_max_active_minutes`。
+  · `/api/meta` 新增加性字段 `zhipu`（含 `has_key`、`prompt_max`、可用模型表），不污染既有 `models` 契约。
+  · 前端：设置弹窗「智谱 CogVideoX」面板（Key 掩码回显、留空不改）；新建任务/工作台模型下拉新增智谱分组，
+  选智谱时自动收敛时长（5/10）、画幅（16:9/9:16/1:1）与尺寸；`ws-render` 兜底标签顺序改为「智谱 → Agnes」。
+- `docs/ZHIPU_INTEGRATION.md`：第三家上游接入的完整模板（含为何这样分发、如何加新供应商、排障表）。
+
+### Changed
+
+- **视频主力从 Agnes 免费档切为智谱 CogVideoX-Flash**：`services/pipeline.js` 的默认模型不再硬编码
+  `agnes-video-2.5-flash`，改为「调用方指定 → 设置项默认 → Agnes 兜底」并接受智谱模型；
+  `services/task-queue.js` 按上游校验各自 Key（智谱缺 Key 时提示「设置 → 智谱 CogVideoX」）。
+- `AGENTS.md` 调度策略同步改写：智谱免费主力 / Agnes 备用 / 即梦关键资产；并记录「Agnes 免费档 2026-10-31
+  提交即 503、免费 v2.0 已下线」这一结论反转的前提。
+
+### Fixed
+
+- **默认模型切到智谱后 `buildV25Payload` 崩溃**：原实现无条件 `MODELS[settings.get('model')]`，
+  `info` 为 `undefined` 时读 `info.sizes` 抛错。现先在 `MODELS` 内回落，再抛明确的「不支持的 Agnes 模型」400。
+- 任务中心「升级/降级模型」跨上游时不再硬塞 Agnes 语义的 `size`/图片模式：目标是智谱时省略 `size`
+  （由画幅映射决定），图片任务升级到智谱明确 400。
+
+### Tests
+
+- 新增 `test/unit/zhipu-client.test.js`（URL 归一 / 任务号与视频地址提取 / 状态归一 / 错误分类）；
+  `test/unit/payloads.test.js` 新增智谱 payload 与 `buildPayload` 分发用例（共 10 例）；
+  `test/mock-e2e.js` 新增智谱 mock 上游与端到端用例（设置保存 → 建任务 → 提交 → PROCESSING → SUCCESS → 归档）。
+- `npm test`：**18 套件 / 301 单测全通过**；e2e 冒烟通过。
+
 ## [2.6.16] - 2026-09-24
 
 ### Changed

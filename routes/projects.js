@@ -3,7 +3,7 @@
  * routes/projects.js —— 创作工作台域：项目 CRUD / 文案版本 / 图片定稿 / 镜头工作副本 /
  * 分镜版本选用 / 视频任务提交入口 / 重拍与定稿（v1.9.1 拆分自 server.js）
  */
-const { projects } = require('../db');
+const { projects, settings } = require('../db');
 const { createPipelineService } = require('../services/pipeline');
 const { log } = require('../core/logger');
 const autoPipeline = require('../workers/auto');
@@ -22,7 +22,7 @@ const { submitTask } = require('../services/task-queue');
 const { normalizeStoryboardShots } = require('../services/prompts');
 
 /* 流水线服务层（镜头/项目视频提交编排，M2） */
-const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log });
+const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log, settings });
 
 /** 项目任务行的展示标注：同镜头已有 completed 任务时，更早的 failed/submit_error 记为
  * superseded（v1.3 起此规则原在 db.js 数据层；M3 上移到 API 聚合层——数据层只做纯查询） */

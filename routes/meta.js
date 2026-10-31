@@ -18,6 +18,10 @@ const {
   IMAGE_SIZES,
   IMAGE_RATIOS,
   LLM_MODEL,
+  ZHIPU_MODELS,
+  ZHIPU_DEFAULT_MODEL,
+  ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_PROMPT_MAX,
 } = require('../core/constants');
 
 /** 即梦 CLI 安装探测（纯文件检查、不 spawn；异常一律保守返回 false） */
@@ -84,6 +88,39 @@ module.exports = function registerMetaRoutes(app) {
           id,
           label: m.label,
           resolutions: m.resolutions,
+        })),
+      },
+      // 智谱 CogVideoX（v2.7 视频替代主力）——同样**不混入上面的 models**，理由同即梦：
+      // meta.models 是 Agnes 的公开契约（e2e 断言 + 前端 Agnes 分组），混入会让「默认模型」
+      // 与「历史任务展示」都变味。前端按 provider 分组渲染，数据全部来自这里。
+      //
+      // 为什么要有这一块：Agnes 免费档（agnes-video-2.5-flash）自 2026-10 起每次提交都返回
+      // 503 video_queue_full、免费 v2.0 又已于 2026-09-25 下线，视频主力必须切到智谱长期
+      // 免费的 CogVideoX-Flash。前端要能选它、要能显示「没配 Key」的状态，都依赖本字段。
+      zhipu: {
+        enabled: settings.get('zhipu_enabled', '1') === '1',
+        // has_key 只回布尔（真实 Key 永不离开服务端；设置弹窗只拿掩码）
+        has_key: Boolean(settings.get('zhipu_api_key', '')),
+        base_url: settings.get('zhipu_base_url', ZHIPU_DEFAULT_BASE_URL),
+        model: settings.get('zhipu_model', ZHIPU_DEFAULT_MODEL),
+        watermark: settings.get('zhipu_watermark', '1') === '1',
+        quality: settings.get('zhipu_quality', 'speed'),
+        // 超时阈值与 Agnes 的 20 分钟**分开**：免费档排队可能更久，且不能连带放宽 Agnes 的判死时间
+        max_active_minutes: Number(
+          settings.get('zhipu_max_active_minutes', DEFAULT_SETTINGS.zhipu_max_active_minutes ?? 30),
+        ),
+        // prompt 上限（512 字符）由服务端下发而非前端写死：上游改限制时只改 constants 一处
+        prompt_max: ZHIPU_PROMPT_MAX,
+        models: Object.entries(ZHIPU_MODELS).map(([id, m]) => ({
+          id,
+          label: m.label,
+          short: m.short,
+          free: Boolean(m.free),
+          hint: m.hint,
+          // sizes 是「规格」下拉的取值（如 1280x720），durations 是时长白名单（只有 5/10）
+          sizes: m.sizes,
+          durations: m.durations,
+          rate_limit: m.rate_limit,
         })),
       },
     });

@@ -5,20 +5,23 @@
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
 ![Tests](https://img.shields.io/badge/tests-74%20unit%20%2B%2072%20e2e-brightgreen)
 
-A local web console for the [Agnes AI video generation API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) with a
+A local web console for **Zhipu CogVideoX (free tier, primary) + the [Agnes AI video API](https://www.agnes-ai.com/en/docs/agnes-video-25-flash) (fallback)** with a
 **creation workspace (6-step pipeline + fully automated final cut) + unified task center (video & image) + background polling + SQLite persistence**.
 
 [中文 README](README.md) · [Contributing](CONTRIBUTING.md) · [Security](SECURITY.md) · [Changelog](CHANGELOG.md)
 
-Supports three models (async task API — `POST /v1/videos` to create, `GET /agnesapi` to poll):
+Multiple video upstreams (all async: create → poll), dispatched by model name:
 
-| Model                   | Modes                                           | Parameters                                                                   | Price               | UI                                                                                   |
-| ----------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------ |
-| `agnes-video-2.5-flash` | text / keyframe / reference (image·audio·video) | `seconds` + `size` + `aspect_ratio`                                          | free (limited time) | ✅ default                                                                           |
-| `agnes-video-2.5`       | text / keyframe / reference                     | `seconds` + `size` + `aspect_ratio`                                          | paid                | ✅ advanced                                                                          |
-| `agnes-video-v2.0`      | text / image-to-video / keyframes animation     | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | free (limited time) | 🗂 kept (hidden from default UI, callable via API, historical tasks display normally) |
+| Model                   | Upstream | Modes                                           | Parameters                                                                   | Price                        | UI                                                                                   |
+| ----------------------- | -------- | ----------------------------------------------- | ---------------------------------------------------------------------------- | ---------------------------- | ------------------------------------------------------------------------------------ |
+| `cogvideox-flash`       | Zhipu    | text / first-frame / first+last frame           | `size` + `duration`(5\|10) + `quality` + `watermark_enabled`                 | **free**                     | ✅ default (auto-switched once a key is saved)                                       |
+| `cogvideox-3`           | Zhipu    | text / first-frame / first+last frame           | `size` (incl. 1080P/2K) + `duration`(5\|10) + `quality`                      | paid (~¥1/video)             | ✅ advanced                                                                          |
+| `agnes-video-2.5-flash` | Agnes    | text / keyframe / reference (image·audio·video) | `seconds` + `size` + `aspect_ratio`                                          | free (limited, **503s now**) | ✅ fallback                                                                          |
+| `agnes-video-2.5`       | Agnes    | text / keyframe / reference                     | `seconds` + `size` + `aspect_ratio`                                          | paid                         | ✅ advanced                                                                          |
+| `agnes-video-v2.0`      | Agnes    | text / image-to-video / keyframes animation     | `num_frames`(8n+1 ≤ 441) + `frame_rate` + `width/height` + `negative_prompt` | retired (2026-09-25)         | 🗂 kept (hidden from default UI, callable via API, historical tasks display normally) |
 
-> Pricing and capabilities follow the [official Agnes AI docs](https://www.agnes-ai.com/en/docs/agnes-video-25-flash); both Flash and V2.0 are currently `$0 / second`.
+> Zhipu pricing/capabilities follow the [BigModel docs](https://docs.bigmodel.cn/cn/guide/models/free/cogvideox-flash); Agnes follows its [official docs](https://www.agnes-ai.com/en/docs/agnes-video-25-flash).
+> **Why Zhipu is the default**: on 2026-10-31 the Agnes free tier returned `503 video_queue_full` on every submit and its free v2.0 model was retired, while CogVideoX-Flash is a long-term free tier. The trade-off is 5/10s only, three aspect ratios only, and no multi-image reference (degrades to the first frame) — switch back to Agnes when you need those. See [docs/ZHIPU_INTEGRATION.md](docs/ZHIPU_INTEGRATION.md).
 
 ## ✨ Features
 

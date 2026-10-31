@@ -66,7 +66,7 @@ const renderer = require('./render'); // 仅用 hasFfmpeg 做渲染前置预检�
 const TICK_MS = 3000;
 const MAX_STAGE_ATTEMPTS = 2; // 每阶段自动重试上限（含首次共 3 次机会）
 
-const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log });
+const pipeline = createPipelineService({ projects, buildPayload, submitTask, ApiError, log, settings });
 
 /** 阶段元数据（前端时间线展示用；与 auto_state.stage 取值一一对应） */
 const STAGE_META = {

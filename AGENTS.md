@@ -78,7 +78,13 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
   ⚠ **CLI 没有视频升级命令**（子命令里只有 `image_upscale` 是图片升级），故「满意后升级高清」只能回即梦网页操作，或在系统里按 720p/1080p **重新生成一版（再扣一次积分）**。
   ⚠ `seedance2.5` 为 **VIP-only**（CLI 原文），`vip_level=standard` 的账号用不了 —— 提交前由 `isVipLevel` 守卫拦截。成本护栏已补 2.5 覆盖档：480p = **9 积分/秒**（网页端 5s/480P/1 条 = 45 积分的观察值），720p/1080p 未实测 → 取「该模型已知最低档」与「通用分辨率档」的较大值（宁可高报不低报）。
 - **`image2video` 的 `--image` 只接受本地文件路径**（官方 help 原文「local first-frame image path」）：`workers/submitter.js` 的 `ensureLocalImage` 负责在提交前把远端 URL / `/artifacts/xxx` 落成本地绝对路径，取不到则任务落 `submit_error`（不静默降级）。子命令由「有无首帧图」自动推导：有 → image2video，无 → text2video。
-- **调度策略（勿偏离）**：Agnes 免费档打主力（分镜视频全量走 `agnes-video-2.5-flash`），即梦只用于「量少但决定成败」的关键资产（**会过期的每日额度优先花在封面/关键镜头上**）：
+- **调度策略（v2.7 起，勿偏离）**：**智谱 CogVideoX-Flash 免费档打主力**（分镜视频全量走 `cogvideox-flash`），Agnes 免费档降为**备用通道**，即梦只用于「量少但决定成败」的关键资产（**会过期的每日额度优先花在封面/关键镜头上**）：
+  · **为什么换主力（2026-10-31 实测）**：Agnes 免费档 `agnes-video-2.5-flash` 提交即 `503 video_queue_full`（`POST /v1/videos` 无 task id 返回），且免费 `agnes-video-v2.0` 已于 2026-09-25 下线——不是配置问题，是该免费档实际不可用。智谱 CogVideoX-Flash 是**长期免费档**（免费模型表，非限时赠额），冲正 Agnes 的「视频主力必须用 Agnes」结论（该结论的前提是 Agnes 免费档可用）。
+  · **智谱硬约束（`services/payloads.buildZhipuPayload` 已实现）**：时长只有 `5/10` 秒（4–7→5、8–12→10 并留 warning）；画幅只支持 `16:9 / 9:16 / 1:1`；**不支持多图 reference**（取首帧降级，多图留 warning）；不支持音频/视频参考；prompt ≤ **512** 字（超长截断并留 warning）；无音轨（`with_audio:false`，声音仍由本地 TTS/BGM 合成）。
+  · **不自动改投智谱/Agnes 之间**：`dreamina_fallback` 只覆盖「智谱/Agnes → 即梦免费档/图片」方向；智谱失败按 `classifyError` 分档退避（`queue-full`/`rate-limit`/`server` 可重试，`auth`/`bad-args`/`content-policy`/`quota` 直接失败），**不跨上游自动改投**，避免意外扣费。需要换时人工切设置里的默认模型。
+  · **一级 kill switch**：设置项 `zhipu_enabled='0'` → 提交器/轮询器**保留任务不提交**（不判失败），用于免费档被限流时临时停手；恢复后自动继续。
+  · **上游分发**：`core/constants.providerOf(model)` 顺序 **dreamina → zhipu → agnes 兜底**（未知模型仍归 agnes，保证历史数据兼容）；新增第三家上游的完整模板见 `docs/ZHIPU_INTEGRATION.md`。
+- 以下为即梦关键资产的既有策略（保持）：
   · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；
   · **封面 / 关键镜头**可手动升级（任务中心的「⬆ 升级即梦」按钮，需 `retry_count ≥ 3` 且当前为 Agnes）。
   · **即梦视频默认主力 = `seedance2.0mini`**（模型清单首位 → 前端默认选中）：官方定位「极致性价比 · 相近体验 · 比 Fast 快 2 倍」，且单模型覆盖多种模式（文生 / 首尾帧 / 智能多帧 / 全能参考）；`seedance2.0fast` 降为备选同档。✅ **Mini 单价已实测标定（2026-09-24）**：5s / 720p / text2video 实扣 **30 积分**（CLI `list_task` 的 `commerce_info.credit_count=30`、`benefit_type=seedance_20_mini_720p_output_5s`）= **6 积分/秒**，已写入 `DREAMINA_CREDIT_COST.videoByModel` 覆盖（此前按 Fast 同档 5/秒保守估，低报 17%）。

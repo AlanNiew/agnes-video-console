@@ -9,10 +9,19 @@
  * 依赖由 server.js 注入（避免循环 require）。
  */
 const { ensureCharacterRefPrefix, ensureStyleAnchor } = require('./prompts');
-const { MODELS } = require('../core/constants');
+const { MODELS, ZHIPU_MODELS, providerOf } = require('../core/constants');
 
 function createPipelineService(deps) {
-  const { projects, buildPayload, submitTask, ApiError, log } = deps;
+  const { projects, buildPayload, submitTask, ApiError, log, settings } = deps;
+
+  /** 本系统已知的模型名（Agnes + 智谱；即梦由 payloads 内部处理，不走这里） */
+  function isKnownModel(m) {
+    if (!m) return false;
+    return hasOwn(MODELS, m) || hasOwn(ZHIPU_MODELS, m);
+  }
+  function hasOwn(obj, key) {
+    return Object.prototype.hasOwnProperty.call(obj, String(key));
+  }
 
   /**
    * 组装并提交一条项目/镜头视频任务（提交队列语义：入队即返回）
@@ -71,17 +80,18 @@ function createPipelineService(deps) {
     // 用提交时覆盖而非改镜头数据：镜头仍保留 ref_image_ids，将来用 flash 生成时照样能引用角色图。
     const effShot = modeOverride === 'text' ? { ...(shot || {}), mode: 'text' } : shot;
     const { mode, prompt: finalPrompt, refs } = composeSubmission({ p, shot: effShot, prompt });
-    // v2.6.6：允许**逐镜指定模型**（默认仍是免费档 flash）。
-    // 动机：flash 队列长期 `video_queue_full`；需要能把个别镜头切到付费档 `agnes-video-2.5` 出片。
-    //（原先的免费替代 agnes-video-v2.0 已于 2026-09-25 下线，故只剩付费档或等队列。）
-    // 未知模型名一律回落到默认档（与 buildPayload 的兜底一致，不静默用错模型）。
-    const pickedModel = model && MODELS[model] ? String(model) : 'agnes-video-2.5-flash';
+    // 逐镜指定模型；默认取「设置」里的默认模型（v2.7：可能是智谱 cogvideox-flash）。
+    // 未知模型名一律回落到 Agnes 免费档（与 buildPayload 的兜底一致，不静默用错模型）。
+    const configured = String(settings.get('model') || '');
+    const pickedModel =
+      model && isKnownModel(model) ? String(model) : isKnownModel(configured) ? configured : 'agnes-video-2.5-flash';
     const base = {
       model: pickedModel,
       prompt: finalPrompt,
       mode,
       seconds: secondsFinal,
-      size: '720P',
+      // 智谱只认像素档位（1280x720 等），由 buildZhipuPayload 按画幅映射；Agnes 用 '720P' 档位名
+      size: providerOf(pickedModel) === 'zhipu' ? undefined : '720P',
       aspect_ratio: ratioFinal,
     };
     const { payload, meta } = buildPayload(

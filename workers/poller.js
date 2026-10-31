@@ -8,11 +8,12 @@
 const { settings, tasks } = require('../db');
 const { instanceLockHeldByOther } = require('../instance-lock');
 const agnes = require('../clients/agnes');
+const zhipu = require('../clients/zhipu');
 const dreamina = require('../clients/dreamina');
 const { downloadArtifact } = require('../lib/artifacts');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
-const { providerOf } = require('../core/constants');
+const { providerOf, ZHIPU_DEFAULT_BASE_URL } = require('../core/constants');
 
 const RETRY_CAP_MS = 60_000; // 单任务退避上限 60s
 // v2.3 视频归档下载失败后的自动重试节奏（30s / 2min / 10min，共 3 次）
@@ -176,6 +177,11 @@ class Poller {
     // provider 分流：即梦的鉴权、状态语义与超时策略都与 Agnes 不同，走独立分支
     if (providerOf(t.model) === 'dreamina') {
       await this.pollDreamina(t);
+      return;
+    }
+    // 智谱 CogVideoX：独立 Key、独立状态枚举（PROCESSING/SUCCESS/FAIL）、独立超时设置
+    if (providerOf(t.model) === 'zhipu') {
+      await this.pollZhipu(t);
       return;
     }
 
@@ -400,6 +406,103 @@ class Poller {
       }
     } else if (finalStatus === 'failed') {
       log('error', `任务 #${t.id} 即梦生成失败: ${j.fail_reason || j.error || '未知原因'}`);
+    }
+  }
+
+  /**
+   * 智谱 CogVideoX 轮询（v2.7）：GET {base}/api/paas/v4/async-result/{id}。
+   * 与 Agnes 的差异：
+   *   - 独立 Key / 独立 base_url（用户可只配智谱）；
+   *   - 状态枚举为大写 PROCESSING / SUCCESS / FAIL，由 clients/zhipu.normalizeStatus 归一；
+   *   - 未知状态一律按 queued 继续轮询，绝不误判为失败；
+   *   - 超时阈值用 zhipu_max_active_minutes（默认 30，免费档高峰期可能排很久）。
+   */
+  async pollZhipu(t) {
+    // 一级 kill switch：关掉后暂停查询（任务保留、可随时恢复），避免故障期持续打上游
+    if (settings.get('zhipu_enabled', '1') !== '1') return;
+    const apiKey = settings.get('zhipu_api_key', '');
+    if (!apiKey) {
+      log('warn', `任务 #${t.id} 跳过智谱轮询：未配置智谱 API Key（请在设置中填写）`);
+      return;
+    }
+    const baseUrl = settings.get('zhipu_base_url', ZHIPU_DEFAULT_BASE_URL);
+    const maxActiveMs = Math.max((Number(settings.get('zhipu_max_active_minutes', 30)) || 30) * 60_000, 60_000);
+    const activeBase = t.submitted_at || t.created_at;
+    if (Date.now() - activeBase > maxActiveMs) {
+      this.retryUntil.delete(t.id);
+      tasks.setPollResult(t.id, {
+        status: 'failed',
+        progress: t.progress,
+        last_poll_response: t.last_poll_response,
+        error_message: `智谱轮询超时（超过 ${Math.round(maxActiveMs / 60000)} 分钟未完成）`,
+      });
+      log('warn', `任务 #${t.id} (${t.video_id}) 智谱轮询超时 → failed`);
+      return;
+    }
+
+    let r;
+    try {
+      r = await zhipu.queryTask({ apiKey, baseUrl, taskId: t.video_id });
+    } catch (e) {
+      this.backoff(t.id, 5000);
+      log('error', `任务 #${t.id} (${t.video_id}) 智谱查询网络异常: ${e.message}`);
+      return;
+    }
+
+    if (!r.ok) {
+      // 404：任务 id 在上游不存在（过期/被清理/从未创建成功）——不可恢复
+      if (r.status === 404) {
+        tasks.setPollResult(t.id, {
+          status: 'failed',
+          last_poll_response: r.data,
+          error_message: '智谱任务不存在（404）：可能已过期、被上游清理或从未创建成功',
+        });
+        log('error', `任务 #${t.id} 智谱任务不存在（404）→ failed`);
+        return;
+      }
+      const cls = zhipu.classifyError(r) || { kind: 'unknown', retryable: false, message: `HTTP ${r.status}` };
+      if (cls.retryable) {
+        this.backoff(t.id, cls.kind === 'rate-limit' || cls.kind === 'queue-full' ? 5000 : 3000);
+        log('warn', `任务 #${t.id} 智谱查询 ${r.status}（${cls.kind}），稍后重试`);
+        return;
+      }
+      tasks.setPollResult(t.id, {
+        status: 'failed',
+        last_poll_response: r.data,
+        error_message: `智谱查询失败（${r.status}，${cls.kind}）：${cls.message}`,
+      });
+      log('error', `任务 #${t.id} 智谱查询失败（${r.status}/${cls.kind}）→ failed`);
+      return;
+    }
+
+    const j = r.data || {};
+    const finalStatus = zhipu.normalizeStatus(j) || 'queued';
+    const metadataUrl = zhipu.extractVideoUrl(j);
+    this.retryUntil.delete(t.id);
+    tasks.touchPoll(t.id);
+    tasks.setPollResult(t.id, {
+      status: finalStatus,
+      progress: finalStatus === 'completed' ? 100 : t.progress,
+      last_poll_response: j,
+      metadata_url: metadataUrl,
+      error_message:
+        finalStatus === 'failed'
+          ? String(j.error?.message || j.error?.code || j.message || '智谱生成失败').slice(0, 300)
+          : null,
+    });
+
+    if (finalStatus === 'completed') {
+      log('info', `任务 #${t.id} 智谱生成完成，视频地址: ${metadataUrl || '(上游未返回 url)'}`);
+      if (metadataUrl && !t.video_local_path) {
+        if (this.autoArchive()) {
+          const ok = await this.downloadAndArchive(t, metadataUrl);
+          if (!ok) this.scheduleArchiveRetry(t.id);
+        } else {
+          log('info', `任务 #${t.id} 完成（自动下载已关闭，仅保留平台链接）`);
+        }
+      }
+    } else if (finalStatus === 'failed') {
+      log('error', `任务 #${t.id} 智谱生成失败: ${j.error?.message || j.error?.code || '未知原因'}`);
     }
   }
 

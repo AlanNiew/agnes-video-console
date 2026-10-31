@@ -12,6 +12,7 @@ import {
   dreaminaVideoInfo,
   videoModelOptions,
   DEFAULT_MODEL,
+  syncZhipuSize,
 } from './task-meta.js';
 
 const refState = { images: [], audios: [], videos: [] };
@@ -222,38 +223,43 @@ function resetNewTaskModal() {
 }
 
 /* ---------------- 模板 ---------------- */
+/* 模板的 model 用惰性函数取 DEFAULT_MODEL()，不写死具体模型：
+ * 本模块在 loadMeta() 之前就被 import，写死常量会永久固化在已 503 的 Agnes 免费档上；
+ * 惰性取值才能跟随「配了智谱 Key → 默认走 CogVideoX-Flash」的运行时选择。 */
+const tmplModel = () => DEFAULT_MODEL();
 const TEMPLATES = {
   'text-city': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'text',
     prompt: '雨后的未来城市街道，霓虹灯倒映在地面，一辆银色跑车缓慢驶过，电影级运镜，自然环境声',
   },
   'text-cats': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'text',
     prompt: '夜晚森林中三只猫组成微型铜管乐队向前行进，镜头平稳后退，月光穿过树叶，自然脚步声与乐器声',
   },
   'text-ocean': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'text',
     prompt: '航拍镜头缓缓掠过翡翠色海面，白色浪花在礁石上翻卷，阳光透过云层洒下，海鸥鸣叫，写实风格',
   },
   'keyframe-walk': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'keyframe',
     prompt: '人物从首帧姿态自然转身走向窗边，衣物和头发运动真实，镜头缓慢推进，平滑过渡到尾帧构图',
   },
   'ref-character': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'reference',
     prompt: '以 <Picture 1> 中的角色和美术风格为参考，角色在花田中自然奔跑，保持外观一致，低机位跟拍',
   },
   'ref-audio': {
-    model: 'agnes-video-2.5-flash',
+    model: tmplModel,
     mode: 'reference',
     prompt: '以 <Picture 1> 为视觉主体，根据 <Audio 1> 的节奏设计动作和镜头切换，保持自然连贯',
   },
   'ref-video': {
+    // 视频参考只有 Agnes 2.5 支持（智谱/即梦都吃不了视频参考），故这一条仍显式指定模型
     model: 'agnes-video-2.5',
     mode: 'reference',
     prompt: '参考 <Video 1> 的主体动作和镜头节奏，将场景改为月光下的卧室，同时保持时序连贯',
@@ -272,8 +278,10 @@ const IMAGE_TEMPLATES = {
 function applyTemplate(key) {
   const t = TEMPLATES[key];
   if (!t) return;
-  if (t.model && t.model !== $('#fModel').value) {
-    $('#fModel').value = t.model;
+  // 模板 model 支持惰性函数（tmplModel → DEFAULT_MODEL()），此处统一解析成具体 id
+  const want = typeof t.model === 'function' ? t.model() : t.model;
+  if (want && want !== $('#fModel').value) {
+    $('#fModel').value = want;
     onModelChange();
   }
   switchMode(t.mode);
@@ -376,6 +384,8 @@ function initNewTask() {
   // 模型切换（视频 / 图片两套表单各自联动规格白名单）
   $('#fModel').addEventListener('change', onModelChange);
   $('#fiModel')?.addEventListener('change', onImageModelChange);
+  // 智谱分支下画幅决定像素档位（后端优先采信表单里的 size），改画幅即同步 size
+  $('#fAspect')?.addEventListener('change', syncZhipuSize);
 
   // ✨ AI 优化提示词（调文本模型；视频与图片两套系统提示词）
   $('#btnAiOptimize').addEventListener('click', () => runAiOptimize({ btn: $('#btnAiOptimize') }));

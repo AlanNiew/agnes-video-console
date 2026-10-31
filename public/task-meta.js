@@ -10,12 +10,36 @@ const MODEL_NAME_FALLBACK = {
   'agnes-video-2.5-flash': 'Flash',
   'agnes-video-2.5': '2.5',
   'agnes-video-v2.0': 'V2.0', // 模型已于 2026-09-25 下线；保留仅为历史任务的展示映射
+  'cogvideox-flash': 'CogVideoX-Flash', // 智谱长期免费档（v2.7 起的视频主力）
+  'cogvideox-3': 'CogVideoX-3',
 };
 const modelInfo = (id) => META?.models.find((m) => m.id === id) || null;
 const modelShort = (id) => modelInfo(id)?.short || MODEL_NAME_FALLBACK[id] || String(id).replace('agnes-video-', '');
 const selectableModels = () => (META ? META.models.filter((m) => !m.deprecated) : []);
-const DEFAULT_MODEL = () =>
-  (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
+
+/* ---------------- 智谱 CogVideoX（v2.7 视频主力） ----------------
+ * 为什么要有它：Agnes 免费档 agnes-video-2.5-flash 自 2026-10 起每次提交都 503 video_queue_full，
+ * 免费 v2.0 已于 2026-09-25 下线，智谱 CogVideoX-Flash 长期免费且排队正常。
+ * 数据同样由 /api/meta 的 zhipu 字段单独下发（**不在 models 里**，理由同即梦：
+ * 不污染 Agnes 下拉契约，也不动 e2e 对 meta.models 的断言）。 */
+const zhipuMeta = () => META?.zhipu || null;
+const zhipuModelInfo = (id) => (zhipuMeta()?.models || []).find((m) => m.id === id) || null;
+/** 是否已可提交智谱任务：开关打开 + 已存 Key。未配 Key 时下拉仍可见但禁用（便于发现入口） */
+const zhipuReady = () => Boolean(zhipuMeta()?.enabled && zhipuMeta()?.has_key);
+/** 智谱只认三种画幅（上游 size 由画幅映射，见 constants 的 ZHIPU_ASPECT_TO_SIZE） */
+const ZHIPU_ASPECTS = ['16:9', '9:16', '1:1'];
+/** 画幅 → 像素档位（与后端 ZHIPU_ASPECT_TO_SIZE 同源；后端优先采信表单里的显式 size） */
+const ZHIPU_ASPECT_TO_SIZE = { '16:9': '1280x720', '9:16': '720x1280', '1:1': '1024x1024' };
+
+const DEFAULT_MODEL = () => {
+  // 配好智谱 Key 后默认直接走长期免费的 CogVideoX-Flash；未配 Key 时回落到 Agnes 免费档（历史行为）
+  if (zhipuReady()) {
+    const list = zhipuMeta().models || [];
+    const zp = list.find((m) => m.free) || list[0];
+    if (zp?.id) return zp.id;
+  }
+  return (selectableModels().find((m) => m.free) || selectableModels()[0])?.id || 'agnes-video-2.5-flash';
+};
 
 /* ---------------- 即梦（可选上游）元数据与分组渲染 ----------------
  * 即梦模型由 /api/meta 的 dreamina 字段单独下发（**不在 models 里**，避免污染 Agnes 下拉契约）。
@@ -49,7 +73,7 @@ function durationOptions(min, max) {
 }
 
 /**
- * 视频模型下拉（Agnes 分组 + 即梦分组）。
+ * 视频模型下拉（Agnes 分组 + 智谱分组 + 即梦分组）。
  * @param {'text'|'keyframe'|'reference'} mode 按当前模式过滤即梦模型——
  *   仅列支持对应子命令的模型（如 keyframe 时隐藏只支持文生视频的老代际差异）
  */
@@ -58,6 +82,19 @@ function videoModelOptions(mode = 'text') {
     .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
     .join('');
   const groups = [`<optgroup label="Agnes（免费 / 自有配额）">${agnes}</optgroup>`];
+  // 智谱分组：Agnes 免费档已 503，这里是当前唯一「长期免费」的视频通道，故排在即梦之前。
+  // 智谱只支持首帧/首尾帧，三种模式都能用（多图参考由后端降级为首帧），不做 mode 过滤。
+  const zp = zhipuMeta();
+  if (zp?.enabled) {
+    const ready = zhipuReady();
+    const items = (zp.models || [])
+      .map((m) => `<option value="${esc(m.id)}"${ready ? '' : ' disabled'}>${esc(m.label)}</option>`)
+      .join('');
+    if (items) {
+      const label = ready ? '智谱 CogVideoX（免费 / 付费）' : '智谱 CogVideoX（需先在设置填 API Key）';
+      groups.push(`<optgroup label="${label}">${items}</optgroup>`);
+    }
+  }
   if (dreaminaAvailable() && mode !== 'reference') {
     const command = mode === 'keyframe' ? 'image2video' : 'text2video';
     const items = (dreaminaMeta().video || [])
@@ -88,6 +125,27 @@ function imageModelOptions() {
   return groups.join('');
 }
 
+/** 重建下拉选项并尽量保留当前选中项（新清单里没有则回落到首项） */
+function fillOptions(sel, values) {
+  if (!sel) return;
+  const prev = sel.value;
+  const list = values?.length ? values : [];
+  sel.innerHTML = list.map((v) => `<option value="${esc(v)}">${esc(v)}</option>`).join('');
+  sel.value = list.includes(prev) ? prev : list[0] || '';
+}
+
+/** 智谱：把 #fSize 对齐到当前画幅。
+ * 后端 buildZhipuPayload 优先采信表单里的显式 size（只要它在模型白名单内），
+ * 不同步就会出现「画幅选了 9:16、size 还是 1280x720」→ 出来是横屏，用户以为设置没生效。 */
+function syncZhipuSize() {
+  const zp = zhipuModelInfo($('#fModel')?.value);
+  if (!zp) return;
+  const size = ZHIPU_ASPECT_TO_SIZE[$('#fAspect')?.value];
+  const sel = $('#fSize');
+  if (!size || !sel) return;
+  if (Array.from(sel.options).some((o) => o.value === size)) sel.value = size;
+}
+
 /** 模型切换联动：更新提示、size/seconds 选项与素材区显隐（供新建任务表单绑定） */
 function onModelChange() {
   const id = $('#fModel').value;
@@ -96,6 +154,25 @@ function onModelChange() {
 
   // 即梦 + 参考模式：v2.6.8 起已接入「全能参考」（multimodal2video），不再拦截；
   // 但实测即梦侧该子命令常失败（generation failed），故在上面的 hint 里给出改用首帧的建议。
+
+  // —— 智谱分支（v2.7 视频主力）——
+  // 智谱只认 5/10 秒与三种画幅、且没有视频参考素材区；规格必须整体换成智谱白名单，
+  // 否则会把 Agnes 的 4–12 秒 / 6 种画幅原样发上去，被上游 400 拒掉。
+  const zp = zhipuModelInfo(id);
+  if (zp) {
+    const zm = zhipuMeta();
+    $('#modelHint').textContent =
+      `（智谱 ${zp.short} · ${zp.hint} · prompt ≤${zm?.prompt_max || 512} 字符` +
+      `${zm?.has_key ? '' : ' · ⚠ 尚未配置 API Key：设置 → 智谱 CogVideoX'}）`;
+    fillOptions($('#fSize'), zp.sizes);
+    fillOptions($('#fSeconds'), zp.durations);
+    const zAspect = $('#fAspect');
+    if (zAspect) zAspect.disabled = false;
+    fillOptions(zAspect, ZHIPU_ASPECTS);
+    syncZhipuSize(); // 默认画幅 16:9 → size 1280x720，避免残留上一个模型的档位
+    $('#grpVideos')?.classList.add('hidden');
+    return;
+  }
 
   const dm = dreaminaVideoInfo(id, mode);
   if (dm) {
@@ -121,13 +198,17 @@ function onModelChange() {
   }
 
   // —— Agnes 分支 ——
+  // 从智谱/即梦切回时必须把规格控件**完整复原**（上面两个分支改写过度/画幅白名单），
+  // 否则会残留「只有 5/10 秒」「只有三种画幅」或视频参考区被隐藏的状态。
+  fillOptions($('#fSeconds'), META?.seconds || ['4', '5', '6', '7', '8', '9', '10', '11', '12']);
+  const agnesAspect = $('#fAspect');
+  if (agnesAspect) agnesAspect.disabled = false;
+  fillOptions(agnesAspect, META?.aspect_ratios || ['21:9', '16:9', '4:3', '1:1', '3:4', '9:16']);
   const info = modelInfo(id);
   $('#modelHint').textContent = info ? `（${info.hint}）` : '';
   $('#fSize').innerHTML = (info?.sizes?.length ? info.sizes : ['720P'])
     .map((s) => `<option value="${esc(s)}">${esc(s)}</option>`)
     .join('');
-  const aspect = $('#fAspect');
-  if (aspect) aspect.disabled = false;
   const grpVideos = $('#grpVideos');
   if (grpVideos) grpVideos.classList.toggle('hidden', info ? !info.video_ref : false);
 }
@@ -269,10 +350,26 @@ async function loadMeta() {
       .map((r) => `<option value="${esc(r)}" ${r === '1:1' ? 'selected' : ''}>${esc(r)}</option>`)
       .join('');
   }
-  // 设置弹窗默认模型下拉（只列 Agnes——即梦刻意不设为默认，符合成本均衡）
-  $('#setModel').innerHTML = selectableModels()
-    .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
-    .join('');
+  // 设置弹窗默认模型下拉：Agnes 分组 + 智谱分组（即梦刻意不设为默认，符合成本均衡）。
+  // 必须含智谱分组，否则用户无法把默认模型切到 CogVideoX-Flash —— 而 Agnes 免费档已 503，
+  // 切不过去等于整个工作台无法出片。
+  const setModelGroups = [
+    `<optgroup label="Agnes（免费 / 自有配额）">${selectableModels()
+      .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+      .join('')}</optgroup>`,
+  ];
+  const zpMeta = zhipuMeta();
+  // 无论启用开关是否打开都列出智谱档位：否则「默认模型已是智谱、但开关被临时关掉」时，
+  // #setModel 里没有对应 option → 一保存设置就把默认模型静默改回已 503 的 Agnes 免费档。
+  if ((zpMeta?.models || []).length) {
+    const zpLabel = zpMeta.enabled ? '智谱 CogVideoX（免费 / 付费）' : '智谱 CogVideoX（通道未启用 · 任务将排队等待）';
+    setModelGroups.push(
+      `<optgroup label="${zpLabel}">${zpMeta.models
+        .map((m) => `<option value="${esc(m.id)}">${esc(m.label)}</option>`)
+        .join('')}</optgroup>`,
+    );
+  }
+  $('#setModel').innerHTML = setModelGroups.join('');
 }
 
 export {
@@ -280,6 +377,11 @@ export {
   modelShort,
   selectableModels,
   DEFAULT_MODEL,
+  zhipuMeta,
+  zhipuModelInfo,
+  zhipuReady,
+  ZHIPU_ASPECTS,
+  syncZhipuSize,
   onModelChange,
   onImageModelChange,
   onWorkspaceImgModelChange,

@@ -5,20 +5,31 @@
  */
 const { settings, DEFAULT_SETTINGS } = require('../db');
 const agnes = require('../clients/agnes');
+const zhipuClient = require('../clients/zhipu');
 const { LEVELS } = require('../clients/netmusic');
 const manager = require('../workers/manager');
 const { log } = require('../core/logger');
-const { MODELS } = require('../core/constants');
+const { MODELS, ZHIPU_MODELS, ZHIPU_DEFAULT_MODEL } = require('../core/constants');
 const { ApiError } = require('../core/errors');
 const dreaminaBudget = require('../services/dreamina-budget');
 const { isHttpUrl } = require('../services/payloads');
 const { getVoicePool } = require('../services/voice-pool');
+
+/**
+ * 智谱 API Key 掩码。
+ * 智谱 Key 形如 `<id>.<secret>`，前缀没有辨识度，故**固定**只露后 4 位
+ * （`sk-…****abcd`）—— 既能核对「是不是这一把」，又不会把可用前缀泄露到浏览器/DOM。
+ */
+function maskZhipuKey(key) {
+  return key ? `sk-…****${String(key).slice(-4)}` : '';
+}
 
 module.exports = function registerSettingsRoutes(app) {
   // 获取设置（API Key 永远只返回掩码）
   app.get('/api/settings', (req, res) => {
     const key = settings.get('api_key', '');
     const fish = settings.get('fish_api_key', '');
+    const zhipuKey = settings.get('zhipu_api_key', '');
     res.json({
       api_key_set: Boolean(key),
       api_key_masked: key ? `${key.slice(0, 4)}****${key.slice(-4)}` : '',
@@ -66,6 +77,20 @@ module.exports = function registerSettingsRoutes(app) {
       ),
       // v2.6.16 图片生成主力档（默认即梦 4.7；Agnes 为免费兜底）
       image_model: settings.get('image_model', DEFAULT_SETTINGS.image_model),
+      // —— v2.7 智谱 CogVideoX（Agnes 免费档 503 后的视频替代主力）——
+      // 免费档 agnes-video-2.5-flash 每次提交都 503 video_queue_full，免费 v2.0 已下线，
+      // 故视频主力切到智谱长期免费的 CogVideoX-Flash。Key 同样只回掩码 + 布尔。
+      zhipu_enabled: settings.get('zhipu_enabled', DEFAULT_SETTINGS.zhipu_enabled) === '1',
+      zhipu_base_url: settings.get('zhipu_base_url', DEFAULT_SETTINGS.zhipu_base_url),
+      zhipu_api_key_set: Boolean(zhipuKey),
+      zhipu_api_key_masked: maskZhipuKey(zhipuKey),
+      zhipu_model: settings.get('zhipu_model', DEFAULT_SETTINGS.zhipu_model),
+      zhipu_quality: settings.get('zhipu_quality', DEFAULT_SETTINGS.zhipu_quality),
+      zhipu_watermark: settings.get('zhipu_watermark', DEFAULT_SETTINGS.zhipu_watermark) === '1',
+      // 与 Agnes 的 max_active_minutes 分开：免费档排队更久，不能连带放宽 Agnes 的判死时间
+      zhipu_max_active_minutes: Number(
+        settings.get('zhipu_max_active_minutes', DEFAULT_SETTINGS.zhipu_max_active_minutes),
+      ),
       ...dreaminaBudget.todaySummary(),
     });
   });
@@ -87,7 +112,10 @@ module.exports = function registerSettingsRoutes(app) {
       changed.push('base_url');
     }
     if (b.model !== undefined) {
-      if (!MODELS[b.model]) throw new ApiError(400, `不支持的模型：${b.model}`);
+      // v2.7：白名单从「仅 Agnes」放宽为「Agnes 或 智谱」——否则用户无法把默认模型
+      // 切到 CogVideoX-Flash（Agnes 免费档已 503、免费 v2.0 已下线，切不过去等于没法用）。
+      // 错误文案保持「不支持的模型」不变：e2e 用它断言非法模型被 400 拒绝。
+      if (!MODELS[b.model] && !ZHIPU_MODELS[b.model]) throw new ApiError(400, `不支持的模型：${b.model}`);
       settings.set('model', b.model);
       changed.push('model');
     }
@@ -248,6 +276,80 @@ module.exports = function registerSettingsRoutes(app) {
       }
       settings.set('image_model', v);
       changed.push('image_model');
+    }
+    // —— v2.7 智谱 CogVideoX（Agnes 免费档 503 后的视频替代主力）——
+    // 全部立即生效：submitter / poller 每轮 tick 重新读 settings，无需重启服务。
+    if (b.zhipu_enabled !== undefined) {
+      settings.set('zhipu_enabled', b.zhipu_enabled ? '1' : '0');
+      changed.push('zhipu_enabled');
+    }
+    if (b.zhipu_base_url !== undefined) {
+      // 用户常直接粘贴文档里的「裸域名」或完整接口路径，这里统一归一化成 https://host
+      // （剥掉尾部 '/' 与 '/api/paas/v4'）；归一化后仍不是合法 http(s) 地址才拒绝。
+      // 注意先挡掉「自带非 http 协议」的输入，否则归一化会给它补 https:// 前缀而蒙混过关。
+      const rawBase = String(b.zhipu_base_url).trim();
+      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rawBase) && !/^https?:\/\//i.test(rawBase))
+        throw new ApiError(400, 'zhipu_base_url 必须是 http(s) 地址');
+      const u = zhipuClient.normalizeBaseUrl(rawBase);
+      let parsedBase;
+      try {
+        parsedBase = new URL(u);
+      } catch {
+        parsedBase = null;
+      }
+      if (!isHttpUrl(u) || !parsedBase || !parsedBase.hostname)
+        throw new ApiError(400, 'zhipu_base_url 必须是 http(s) 地址');
+      settings.set('zhipu_base_url', u);
+      changed.push('zhipu_base_url');
+    }
+    // 智谱 Key：非空才写（空 = 不改，避免误清）；显式 clear_zhipu_api_key=true 才清空
+    let zhipuKeyWritten = false;
+    if (b.zhipu_api_key !== undefined) {
+      const k = String(b.zhipu_api_key).trim();
+      if (k) {
+        settings.set('zhipu_api_key', k);
+        zhipuKeyWritten = true;
+        changed.push('zhipu_api_key');
+      }
+    }
+    if (b.clear_zhipu_api_key === true) {
+      settings.set('zhipu_api_key', '');
+      changed.push('zhipu_api_key');
+    }
+    if (b.zhipu_model !== undefined) {
+      const v = String(b.zhipu_model).trim();
+      if (!ZHIPU_MODELS[v]) throw new ApiError(400, `不支持的智谱模型：${v}`);
+      settings.set('zhipu_model', v);
+      changed.push('zhipu_model');
+    }
+    if (b.zhipu_quality !== undefined) {
+      const q = String(b.zhipu_quality).trim();
+      if (q !== 'speed' && q !== 'quality') throw new ApiError(400, "zhipu_quality 仅支持 'speed' 或 'quality'");
+      settings.set('zhipu_quality', q);
+      changed.push('zhipu_quality');
+    }
+    // 水印默认保留（'1'）：上游 AI 水印是官方默认的合规设置，只有用户显式关才去掉
+    if (b.zhipu_watermark !== undefined) {
+      settings.set('zhipu_watermark', b.zhipu_watermark ? '1' : '0');
+      changed.push('zhipu_watermark');
+    }
+    if (b.zhipu_max_active_minutes !== undefined) {
+      const m = Number(b.zhipu_max_active_minutes);
+      if (!Number.isFinite(m) || m < 1 || m > 1440)
+        throw new ApiError(400, 'zhipu_max_active_minutes 需在 1–1440 之间');
+      settings.set('zhipu_max_active_minutes', String(Math.round(m)));
+      changed.push('zhipu_max_active_minutes');
+    }
+    // 便利行为（合同第 5 条）：本次填了智谱 Key、又没显式指定 model、当前默认仍是已失效的
+    // Agnes 免费档 → 自动把默认模型切到智谱默认档。用户填完 Key 保存即可直接出片，
+    // 不必再手动切一次模型（否则第一次提交仍会 503 video_queue_full，白跑一趟）。
+    if (zhipuKeyWritten && b.model === undefined) {
+      const cur = settings.get('model', DEFAULT_SETTINGS.model);
+      if (cur === 'agnes-video-2.5-flash') {
+        const stored = settings.get('zhipu_model', ZHIPU_DEFAULT_MODEL);
+        settings.set('model', ZHIPU_MODELS[stored] ? stored : ZHIPU_DEFAULT_MODEL);
+        changed.push('model');
+      }
     }
     if (b.clear_api_key === true) settings.set('api_key', '');
     manager.syncPoller(changed);

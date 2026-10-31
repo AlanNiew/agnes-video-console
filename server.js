@@ -28,6 +28,7 @@ const workerManager = require('./workers/manager');
 const { ARTIFACTS_DIR, WORKS_DIR } = require('./lib/artifacts');
 const { log } = require('./core/logger');
 const { ApiError } = require('./core/errors');
+const { providerOf } = require('./core/constants');
 
 const app = express();
 app.use(express.json({ limit: '2mb' }));
@@ -121,8 +122,26 @@ const server = app.listen(PORT, '127.0.0.1', () => {
   console.log('╚════════════════════════════════════════════════════╝');
   console.log(`  ➜ 打开:  http://127.0.0.1:${PORT}`);
   console.log(`  ➜ 数据库: ${DB_PATH}`);
-  console.log(`  ➜ 默认模型: ${settings.get('model')}（当前限时免费）`);
-  console.log('  提示: 请先在页面右上角“设置”中填写你的 Agnes API Key');
+  const activeModel = String(settings.get('model') || DEFAULT_SETTINGS.model);
+  const isZhipu = providerOf(activeModel) === 'zhipu';
+  const agnesReady = Boolean(String(settings.get('api_key') || '').trim());
+  const zhipuReady = Boolean(String(settings.get('zhipu_api_key') || '').trim());
+  console.log(`  ➜ 默认模型: ${activeModel}${isZhipu ? '（智谱免费档）' : ''}`);
+  if (isZhipu) {
+    console.log(
+      zhipuReady
+        ? '  提示: 智谱 Key 已配置，可在页面新建任务直接出片'
+        : '  提示: 请先在页面右上角“设置 → 智谱 CogVideoX”中填写智谱 API Key',
+    );
+  } else {
+    console.log(
+      agnesReady
+        ? '  提示: Agnes Key 已配置（免费档当前常 503，可在“设置”中把默认模型切到 cogvideox-flash）'
+        : zhipuReady
+          ? '  提示: 默认模型仍走 Agnes 且未填 Key；请在“设置”中把默认模型切到 cogvideox-flash'
+          : '  提示: 请先在“设置”中填写 Key（智谱 CogVideoX 免费档优先，Agnes 作备用）',
+    );
+  }
   console.log('');
 });
 

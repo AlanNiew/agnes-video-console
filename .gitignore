@@ -32,3 +32,6 @@ coverage/
 
 # 前端构建产物（M4-B0：vite build → dist/）
 dist/
+
+# 调研/勘察临时笔记（不入库）
+.scratch/

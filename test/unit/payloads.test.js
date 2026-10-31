@@ -6,6 +6,8 @@
 const {
   buildV25Payload,
   buildImagePayload,
+  buildPayload,
+  buildZhipuPayload,
   cleanUrlList,
   cleanVideoList,
   isHttpUrl,
@@ -221,5 +223,112 @@ describe('buildImagePayload', () => {
     expectApiError(400, () =>
       buildImagePayload({ ...agnes, image: ['1', '2', '3', '4', '5', '6'].map((i) => `https://a.com/${i}.jpg`) }),
     );
+  });
+});
+
+describe('buildZhipuPayload / buildPayload（v2.7 智谱 CogVideoX 分发）', () => {
+  const base = { model: 'cogvideox-flash', prompt: '一只橘猫在窗台上打哈欠', mode: 'text', seconds: '5' };
+
+  test('text 模式：默认 720P / 免费档 / 无音轨 / 30fps', () => {
+    const { payload, meta } = buildZhipuPayload(base);
+    expect(payload).toMatchObject({
+      model: 'cogvideox-flash',
+      size: '1280x720',
+      duration: '5',
+      quality: 'speed',
+      with_audio: false,
+      fps: 30,
+    });
+    expect(payload.image_url).toBeUndefined(); // text 模式不带图
+    expect(payload.prompt).toBe(base.prompt);
+    expect(meta.provider).toBe('zhipu');
+    expect(meta.warnings).toEqual([]);
+  });
+
+  test('画幅映射：9:16 → 720x1280，1:1 → 1024x1024', () => {
+    expect(buildZhipuPayload({ ...base, aspect_ratio: '9:16' }).payload.size).toBe('720x1280');
+    expect(buildZhipuPayload({ ...base, aspect_ratio: '1:1' }).payload.size).toBe('1024x1024');
+  });
+
+  test('智谱不支持的画幅（4:3）→ 明确 400，不静默改比例', () => {
+    expectApiError(400, () => buildZhipuPayload({ ...base, aspect_ratio: '4:3' }));
+  });
+
+  test('时长只有 5/10：6s → 5s，9s → 10s，且记 warnings', () => {
+    const six = buildZhipuPayload({ ...base, seconds: '6' });
+    expect(six.payload.duration).toBe('5');
+    expect(six.meta.warnings.join()).toMatch(/归并/);
+    const nine = buildZhipuPayload({ ...base, seconds: '9' });
+    expect(nine.payload.duration).toBe('10');
+    // 显式合法 duration 优先
+    expect(buildZhipuPayload({ ...base, seconds: '6', duration: '10' }).payload.duration).toBe('10');
+  });
+
+  test('keyframe：单帧 → image_url 1 张；首尾帧 → 2 张', () => {
+    const one = buildZhipuPayload({
+      ...base,
+      mode: 'keyframe',
+      first_frame: 'https://a.com/f.jpg',
+    });
+    expect(one.payload.image_url).toEqual(['https://a.com/f.jpg']);
+    const two = buildZhipuPayload({
+      ...base,
+      mode: 'keyframe',
+      first_frame: 'https://a.com/f.jpg',
+      last_frame: 'https://a.com/l.jpg',
+    });
+    expect(two.payload.image_url).toEqual(['https://a.com/f.jpg', 'https://a.com/l.jpg']);
+    expectApiError(400, () => buildZhipuPayload({ ...base, mode: 'keyframe' }));
+    expectApiError(400, () => buildZhipuPayload({ ...base, mode: 'keyframe', first_frame: 'ftp://a.com/f.jpg' }));
+  });
+
+  test('reference 多图降级为首帧（智谱不支持多图参考）并记 warnings', () => {
+    const r = buildZhipuPayload({
+      ...base,
+      mode: 'reference',
+      images: ['https://a.com/1.jpg', 'https://a.com/2.jpg', 'https://a.com/3.jpg'],
+    });
+    expect(r.payload.image_url).toEqual(['https://a.com/1.jpg']);
+    expect(r.meta.warnings.join()).toMatch(/多图参考/);
+    expectApiError(400, () => buildZhipuPayload({ ...base, mode: 'reference', images: [] }));
+  });
+
+  test('text 模式混入图片 / 音频 / 视频参考 → 400', () => {
+    expectApiError(400, () => buildZhipuPayload({ ...base, images: ['https://a.com/1.jpg'] }));
+    expectApiError(400, () => buildZhipuPayload({ ...base, audios: ['https://a.com/a.mp3'] }));
+    expectApiError(400, () => buildZhipuPayload({ ...base, videos: ['https://a.com/v.mp4'] }));
+  });
+
+  test('prompt 超 512 字符截断并记 warnings；空 prompt 400', () => {
+    const long = buildZhipuPayload({ ...base, prompt: '猫'.repeat(600) });
+    expect(long.payload.prompt).toHaveLength(512);
+    expect(long.meta.warnings.join()).toMatch(/512/);
+    expectApiError(400, () => buildZhipuPayload({ ...base, prompt: '   ' }));
+  });
+
+  test('cogvideox-3 支持 1080P 像素档位，且 quality/watermark 可由入参覆盖', () => {
+    const r = buildZhipuPayload({
+      ...base,
+      model: 'cogvideox-3',
+      size: '1920x1080',
+      quality: 'quality',
+      watermark_enabled: false,
+    });
+    expect(r.payload).toMatchObject({
+      model: 'cogvideox-3',
+      size: '1920x1080',
+      quality: 'quality',
+      watermark_enabled: false,
+    });
+  });
+
+  test('buildPayload 按 provider 正确分发：智谱 / Agnes 互不串味', () => {
+    expect(buildPayload({ ...base }).payload).toMatchObject({ model: 'cogvideox-flash', size: '1280x720' });
+    expect(buildPayload({ ...base, model: 'agnes-video-2.5-flash' }).payload).toMatchObject({
+      model: 'agnes-video-2.5-flash',
+      size: '720P',
+    });
+    // 未知模型 → 400（绝不静默降级到默认模型）
+    expectApiError(400, () => buildPayload({ ...base, model: 'no-such-model' }));
   });
 });

@@ -374,6 +374,63 @@
             </label>
           </div>
           <hr style="border: none; border-top: 1px dashed var(--line, #ddd); margin: 16px 0" />
+          <!-- v2.7 智谱 CogVideoX：Agnes 免费档每次提交都 503 video_queue_full、免费 v2.0 已下线，
+               故视频主力改走智谱长期免费的 CogVideoX-Flash。Key 只回掩码，永不回填明文。 -->
+          <div class="field">
+            <label>智谱 CogVideoX <span class="hint" id="zpStatus"></span></label>
+            <div class="dm-panel zp-panel" id="zpPanel">
+              <div class="field" style="display: flex; align-items: flex-start; gap: 8px; margin: 0">
+                <input type="checkbox" id="setZpEnabled" style="width: auto; margin-top: 2px" />
+                <label for="setZpEnabled" style="margin: 0; cursor: pointer">
+                  启用智谱视频通道
+                  <span class="hint"
+                    >Agnes 免费档（flash）每次提交都返回 503 video_queue_full，免费 v2.0 已于 2026-09-25 下线；智谱
+                    CogVideoX-Flash 长期免费，是当前的主力出片通道。</span
+                  >
+                </label>
+              </div>
+              <div class="field" style="margin: 0">
+                <label>智谱 API Key <span class="hint" id="setZpKeyStatus"></span></label>
+                <input type="password" id="setZpKey" placeholder="粘贴智谱 API Key" autocomplete="off" />
+                <p class="hint">
+                  在 bigmodel.cn 控制台创建。只存本地 SQLite、仅服务端使用；输入框永不回填明文 Key（只显示掩码）。
+                </p>
+              </div>
+              <div class="grid2" style="margin: 0">
+                <div class="field" style="margin: 0">
+                  <label>Base URL</label>
+                  <input type="text" id="setZpBaseUrl" placeholder="https://open.bigmodel.cn" />
+                </div>
+                <div class="field" style="margin: 0">
+                  <label>默认智谱模型</label>
+                  <select id="setZpModel"></select>
+                </div>
+                <div class="field" style="margin: 0">
+                  <label>质量档</label>
+                  <select id="setZpQuality">
+                    <option value="speed">speed（更快）</option>
+                    <option value="quality">quality（更好）</option>
+                  </select>
+                </div>
+                <div class="field" style="margin: 0">
+                  <label>智谱任务超时 (分钟)</label>
+                  <input type="number" id="setZpMaxMin" min="1" max="1440" step="1" />
+                </div>
+              </div>
+              <div class="field" style="display: flex; align-items: flex-start; gap: 8px; margin: 0">
+                <input type="checkbox" id="setZpWatermark" style="width: auto; margin-top: 2px" />
+                <label for="setZpWatermark" style="margin: 0; cursor: pointer">
+                  保留 AI 生成水印
+                  <span class="hint">默认保留（上游默认行为）；关闭后生成结果不带水印。</span>
+                </label>
+              </div>
+            </div>
+            <p class="hint">
+              这里只配智谱通道内的档位；要把<strong>全局默认模型</strong>切到 CogVideoX，请改上方的「默认模型」。 保存
+              Key 时若全局默认仍是已失效的 Agnes 免费档，系统会自动切到 CogVideoX-Flash。
+            </p>
+          </div>
+          <hr style="border: none; border-top: 1px dashed var(--line, #ddd); margin: 16px 0" />
           <div class="field">
             <label
               >Fish Audio API Key <span class="hint" id="fishKeyStatus"></span>（TTS 配音，免费档 s2.1-pro-free）</label

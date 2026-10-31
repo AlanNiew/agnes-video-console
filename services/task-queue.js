@@ -18,8 +18,13 @@ const { providerOf } = require('../core/constants');
 async function submitTask(payload, meta, opts = {}) {
   // 即梦走本地 CLI：凭证为 OAuth 登录态（由 CLI 自行保管），故不要求配置 api_key。
   // 但登录态是否有效只有到提交时才由 CLI 反馈，届时 submitter 会保留入队并退避等待人工处理。
-  const isDreamina = providerOf(meta.model) === 'dreamina';
-  if (!isDreamina) {
+  const provider = providerOf(meta.model);
+  if (provider === 'zhipu') {
+    // 智谱用自己的 Key（与 Agnes 的 api_key 互不影响，用户可只配其中一家）
+    if (!settings.get('zhipu_api_key', '')) {
+      throw new ApiError(400, '尚未配置智谱 API Key，请先在“设置 → 智谱 CogVideoX”中填写');
+    }
+  } else if (provider !== 'dreamina') {
     const apiKey = settings.get('api_key', '');
     if (!apiKey) throw new ApiError(400, '尚未配置 API Key，请先在“设置”中填写');
   }
@@ -34,12 +39,13 @@ async function submitTask(payload, meta, opts = {}) {
     image_id: opts.image_id || null,
   });
   submitter.kick(id); // 立即唤醒提交器尝试首次提交（是否放行仍受最小间隔约束）
-  log(
-    'info',
-    `任务 #${id} 已入队（${meta.model}，${
-      isDreamina ? '即梦 CLI 队列，排队时间取决于上游' : '后台提交器按间隔提交，429 自动重试'
-    }）`,
-  );
+  const queueHint =
+    provider === 'dreamina'
+      ? '即梦 CLI 队列，排队时间取决于上游'
+      : provider === 'zhipu'
+        ? '智谱异步任务，提交后由轮询器查询结果'
+        : '后台提交器按间隔提交，429 自动重试';
+  log('info', `任务 #${id} 已入队（${meta.model}，${queueHint}）`);
   return tasks.get(id);
 }
 

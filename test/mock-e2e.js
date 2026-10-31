@@ -19,7 +19,9 @@ const TEST_ARTIFACTS = path.join(DATA_DIR_ROOT, 'e2e-artifacts'); // 测试专�
 
 /* ---------------- 模拟 Agnes API ---------------- */
 const mockJobs = new Map(); // video_id -> job
+const mockZhipuJobs = new Map(); // v2.7：智谱任务 id -> job（POST /api/paas/v4/videos/generations）
 let seq = 0;
+let zhipuSeq = 0; // v2.7：智谱任务序号（独立计数，便于断言 id 归属）
 let rateLimitRemaining = 0; // v1.3：429 模拟计数器（>0 时 POST /v1/videos 返回 429）
 let fixtureFile = null; // v1.3：真实渲染 e2e 用的可解码测试视频（有 ffmpeg 时生成）
 let bgmFixture = null; // v1.4：BGM 渲染用的可解码测试音频（有 ffmpeg 时生成）
@@ -138,6 +140,35 @@ const mockServer = http.createServer(async (req, res) => {
   }
   if (req.method === 'GET' && u.pathname === '/player') {
     return send(200, { code: 200, message: 'success', data: { url: `http://127.0.0.1:${MOCK_PORT}/out/bgm.mp3` } });
+  }
+
+  // v2.7 模拟智谱 BigModel CogVideoX：创建异步任务
+  // （真实契约：POST /api/paas/v4/videos/generations → { id, model, request_id, task_status: 'PROCESSING' }）
+  if (req.method === 'POST' && u.pathname === '/api/paas/v4/videos/generations') {
+    let raw = '';
+    for await (const chunk of req) raw += chunk;
+    const body = JSON.parse(raw || '{}');
+    if (!String(body.prompt || '').trim()) return send(400, { error: { code: '1214', message: 'prompt 不能为空' } });
+    zhipuSeq += 1;
+    const id = `zhipu_mock_${zhipuSeq}`;
+    mockZhipuJobs.set(id, { id, model: body.model, polls: 0 });
+    return send(200, { id, model: body.model, request_id: `req_mock_${zhipuSeq}`, task_status: 'PROCESSING' });
+  }
+
+  // v2.7 模拟智谱结果查询：第一次 PROCESSING，第二次 SUCCESS（验证轮询状态归一化）
+  if (req.method === 'GET' && u.pathname.startsWith('/api/paas/v4/async-result/')) {
+    const id = decodeURIComponent(u.pathname.split('/').pop());
+    const job = mockZhipuJobs.get(id);
+    if (!job) return send(404, { error: { code: '1211', message: '任务不存在' } });
+    job.polls += 1;
+    if (job.polls < 2) return send(200, { id, model: job.model, task_status: 'PROCESSING' });
+    return send(200, {
+      id,
+      model: job.model,
+      task_status: 'SUCCESS',
+      video_result: [{ url: `http://127.0.0.1:${MOCK_PORT}/out/zhipu-${id}.mp4` }],
+      usage: { total_tokens: 100 },
+    });
   }
 
   if (req.method === 'GET' && u.pathname === '/agnesapi') {
@@ -1942,6 +1973,64 @@ async function waitCompleted(id, timeoutMs = 30_000) {
     const vrCtx = (await api('GET', `/api/tasks/${vrId}`)).data;
     if (vrCtx.project_name !== null) err(`独立任务 project_name 应为 null: ${vrCtx.project_name}`);
     ok(`视频任务原地重试闭环：#${vrId} submit_error → 重试（ID 不变·retry_count=1）→ completed`);
+  }
+
+  // 10.2c v2.7 智谱 CogVideoX 端到端：独立 Key/base_url → 建任务 → 提交 → 轮询 → completed
+  //（与 Agnes 完全不同的协议/字段/状态枚举，验证 provider 分流没有串味）
+  {
+    const zSet = await api('PUT', '/api/settings', {
+      zhipu_enabled: true,
+      zhipu_api_key: 'sk-zhipu-test-9999',
+      zhipu_base_url: `http://127.0.0.1:${MOCK_PORT}`,
+      zhipu_model: 'cogvideox-flash',
+      zhipu_max_active_minutes: 5,
+    });
+    if (zSet.status !== 200) err(`智谱设置保存失败: ${JSON.stringify(zSet.data).slice(0, 200)}`);
+    const zSt = await api('GET', '/api/settings');
+    if (zSt.data.zhipu_api_key_set !== true) err('智谱 Key 未标记为已配置');
+    if (String(zSt.data.zhipu_api_key_masked || '') !== 'sk-…****9999') {
+      err(`智谱 Key 掩码异常: ${JSON.stringify(zSt.data.zhipu_api_key_masked)}`);
+    }
+    if (JSON.stringify(zSt.data).includes('sk-zhipu-test-9999')) err('智谱 Key 泄露到设置响应');
+    ok('智谱设置：独立 base_url/Key 保存，Key 仅掩码回显');
+
+    // 非法画幅必须被 payload 校验拦下（智谱只有 16:9 / 9:16 / 1:1）
+    const zBad = await api('POST', '/api/tasks', {
+      model: 'cogvideox-flash',
+      prompt: '非法画幅测试',
+      mode: 'text',
+      seconds: '5',
+      aspect_ratio: '4:3',
+    });
+    if (zBad.status !== 400) err(`智谱 4:3 画幅未被 400 拦截: ${JSON.stringify(zBad.data).slice(0, 200)}`);
+
+    const zTask = await api('POST', '/api/tasks', {
+      model: 'cogvideox-flash',
+      prompt: '雪夜街角，红色邮筒上落满雪，霓虹反射在湿路面',
+      mode: 'text',
+      seconds: '5',
+      aspect_ratio: '16:9',
+    });
+    if (zTask.status !== 201) err(`智谱任务创建失败: ${JSON.stringify(zTask.data).slice(0, 200)}`);
+    const zId = zTask.data.id;
+    if (zTask.data.model !== 'cogvideox-flash') err('智谱任务 model 未落库');
+    if (zTask.data.request_json?.duration !== '5') {
+      err(`智谱 payload duration 应为 5: ${JSON.stringify(zTask.data.request_json)}`);
+    }
+    if (zTask.data.request_json?.size !== '1280x720') {
+      err(`智谱 payload size 应为 1280x720: ${JSON.stringify(zTask.data.request_json)}`);
+    }
+    if (zTask.data.request_json?.with_audio !== false) err('智谱 payload 不应请求音轨（音轨由本地 TTS/BGM 合成）');
+    if ('n' in (zTask.data.request_json || {})) err('智谱 payload 不应带 Agnes 的 n 字段');
+
+    const zDone = await waitCompleted(zId, 40_000);
+    if (zDone?.status !== 'completed') err(`智谱任务未完成: ${zDone?.status} / ${zDone?.error_message}`);
+    if (!String(zDone.video_id || '').startsWith('zhipu_mock_')) err(`智谱任务号未落 video_id: ${zDone.video_id}`);
+    if (!String(zDone.metadata_url || '').includes('/out/zhipu-')) err(`智谱视频地址异常: ${zDone.metadata_url}`);
+    ok(`智谱 CogVideoX 端到端：#${zId} 提交 → PROCESSING → SUCCESS → completed（video_id=${zDone.video_id}）`);
+
+    // 还原默认模型，避免后续用例（未显式指定 model）被智谱接管而改变既有断言
+    await api('PUT', '/api/settings', { model: 'agnes-video-2.5-flash' });
   }
 
   // 10.3 立即查询端点：404 / 已完成任务查询返回当前状态

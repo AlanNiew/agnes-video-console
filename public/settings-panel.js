@@ -4,7 +4,7 @@
  * 依赖：common.js、task-meta.js（模型下拉与旧模型兜底）。
  */
 import { $, esc, toast, api } from './common.js';
-import { selectableModels, DEFAULT_MODEL, onModelChange } from './task-meta.js';
+import { modelInfo, zhipuMeta, zhipuModelInfo, DEFAULT_MODEL, onModelChange } from './task-meta.js';
 
 const settingsState = { settings: null };
 
@@ -45,17 +45,19 @@ async function loadSettings() {
     $('#keyStatus').textContent = settingsState.settings.api_key_set
       ? `（已保存 ${settingsState.settings.api_key_masked}，留空则不修改）`
       : '（未配置）';
-    // 旧模型兜底：设置里的默认模型若已下架，则回退默认免费模型
-    const m = selectableModels().some((x) => x.id === settingsState.settings.model)
-      ? settingsState.settings.model
-      : DEFAULT_MODEL();
+    // 旧模型兜底：设置里的默认模型若已下架，则回退默认免费模型。
+    // 智谱模型不在 META.models 里（走 zhipu 字段），故必须一起判断，否则用户选过的
+    // CogVideoX 会被静默判为「已下架」而回退。
+    const s = settingsState.settings;
+    const known = Boolean(modelInfo(s.model) || zhipuModelInfo(s.model));
+    const m = known ? s.model : DEFAULT_MODEL();
     $('#fModel').value = m;
     onModelChange();
     $('#setModel').value = m; // 设置弹窗同样做旧模型兜底，避免静默不选中
-    $('#setBaseUrl').value = settingsState.settings.base_url;
-    $('#setPollMs').value = settingsState.settings.poll_interval_ms;
-    $('#setMaxMin').value = settingsState.settings.max_active_minutes;
-    $('#setSubmitMs').value = settingsState.settings.submit_interval_ms ?? 60000;
+    $('#setBaseUrl').value = s.base_url;
+    $('#setPollMs').value = s.poll_interval_ms;
+    $('#setMaxMin').value = s.max_active_minutes;
+    $('#setSubmitMs').value = s.submit_interval_ms ?? 60000;
     // TTS（Fish Audio）
     $('#fishKeyStatus').textContent = settingsState.settings.fish_api_key_set
       ? `（已保存 ${settingsState.settings.fish_api_key_masked}，留空则不修改）`
@@ -78,6 +80,28 @@ async function loadSettings() {
     $('#setDmThreshold').value = settingsState.settings.dreamina_confirm_threshold ?? 10;
     // 全自动成片的角色图是否用即梦（默认开）
     $('#setDmAutoChar').checked = settingsState.settings.dreamina_auto_character === true;
+    // —— v2.7 智谱 CogVideoX（Agnes 免费档 503 后的视频替代主力）——
+    // 注意：真实 Key 永远不回填 DOM，只回显掩码（placeholder + 状态文案），
+    // 否则任何能读到页面的人都拿到了明文 Key。
+    const zpKeySet = Boolean(s.zhipu_api_key_set);
+    $('#setZpEnabled').checked = s.zhipu_enabled === true;
+    $('#setZpBaseUrl').value = s.zhipu_base_url || '';
+    $('#setZpKey').value = '';
+    $('#setZpKey').placeholder = zpKeySet
+      ? `已保存 ${s.zhipu_api_key_masked}，留空则不修改`
+      : '粘贴智谱 API Key（bigmodel.cn 控制台获取）';
+    $('#setZpKeyStatus').textContent = zpKeySet ? `（已保存 ${s.zhipu_api_key_masked}，留空则不修改）` : '（未配置）';
+    // 默认模型下拉：数据取 /api/meta 的 zhipu.models（与新建任务下拉同源），此处只赋选中值
+    const zpList = zhipuMeta()?.models || [];
+    const zpSel = $('#setZpModel');
+    if (zpSel) {
+      zpSel.innerHTML = zpList.map((x) => `<option value="${esc(x.id)}">${esc(x.label)}</option>`).join('');
+      zpSel.value = s.zhipu_model || zpList[0]?.id || 'cogvideox-flash';
+    }
+    $('#setZpQuality').value = s.zhipu_quality || 'speed';
+    $('#setZpWatermark').checked = s.zhipu_watermark === true;
+    $('#setZpMaxMin').value = s.zhipu_max_active_minutes ?? 30;
+    renderZhipuState();
     // 即梦 CLI 状态（独立端点，失败不影响设置面板其余部分）
     loadDreaminaStatus();
   } catch (e) {
@@ -91,11 +115,15 @@ async function saveSettings() {
   try {
     const body = {
       base_url: $('#setBaseUrl').value.trim(),
-      model: $('#setModel').value,
       poll_interval_ms: Number($('#setPollMs').value),
       max_active_minutes: Number($('#setMaxMin').value),
       submit_interval_ms: Number($('#setSubmitMs').value),
     };
+    // 默认模型只在用户真的改过时才发送：后端有「本次填了智谱 Key 且未显式给 model → 自动把
+    // 默认模型切到 CogVideoX-Flash」的便利逻辑；若这里无条件带上 model，会把该逻辑顶掉，
+    // 用户保存完 Key 还得手动再切一次模型（否则第一次提交仍 503，白跑一趟）。
+    const setModel = $('#setModel').value;
+    if (setModel && setModel !== settingsState.settings?.model) body.model = setModel;
     const key = $('#setApiKey').value.trim();
     if (key) body.api_key = key;
     const fishKey = $('#setFishKey').value.trim();
@@ -124,18 +152,46 @@ async function saveSettings() {
     if (dmThreshold !== '') body.dreamina_confirm_threshold = Number(dmThreshold);
     // 全自动成片的角色图是否用即梦（PUT 按布尔处理）
     body.dreamina_auto_character = $('#setDmAutoChar').checked;
+    // —— v2.7 智谱 CogVideoX（Agnes 免费档 503 后的视频替代主力）——
+    body.zhipu_enabled = $('#setZpEnabled').checked;
+    const zpBase = $('#setZpBaseUrl').value.trim();
+    if (zpBase) body.zhipu_base_url = zpBase; // 空 = 不改（后端会归一化成 https://host）
+    const zpKey = $('#setZpKey').value.trim();
+    if (zpKey) body.zhipu_api_key = zpKey; // 空 = 不改；掩码永不回写
+    const zpModel = $('#setZpModel').value;
+    if (zpModel) body.zhipu_model = zpModel;
+    body.zhipu_quality = $('#setZpQuality').value;
+    body.zhipu_watermark = $('#setZpWatermark').checked;
+    const zpMax = Number($('#setZpMaxMin').value);
+    if (!Number.isFinite(zpMax) || zpMax < 1 || zpMax > 1440) {
+      toast('智谱任务超时需在 1–1440 分钟之间，请调整后再保存', 'warn');
+      return;
+    }
+    body.zhipu_max_active_minutes = zpMax;
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;
     $('#setApiKey').value = '';
     $('#setFishKey').value = '';
     $('#setMusicToken').value = '';
+    $('#setZpKey').value = '';
     await loadSettings();
   } catch (e) {
     toast('保存失败：' + e.message, 'err');
   } finally {
     btn.disabled = false;
   }
+}
+
+/* ---------------- 智谱 CogVideoX（v2.7 视频主力） ----------------
+ * Agnes 免费档每次提交都 503 video_queue_full、免费 v2.0 已下线，故智谱长期免费的
+ * CogVideoX-Flash 是当前唯一可用的免费视频通道。这里只做启用状态联动：
+ * 关掉开关时把整块变灰 + 明确写「视频仍走 Agnes」，避免用户以为已经切走。 */
+function renderZhipuState() {
+  const on = $('#setZpEnabled').checked;
+  $('#zpPanel')?.classList.toggle('is-off', !on);
+  const st = $('#zpStatus');
+  if (st) st.textContent = on ? '（已启用）' : '（未启用 · 视频仍走 Agnes）';
 }
 
 /* ---------------- 即梦 CLI（可选上游；docs/DREAMINA_CLI_PLAN.md 阶段 2） ----------------
@@ -266,6 +322,8 @@ function initSettings() {
     $('#settingsModal').hidden = false;
   });
   $('#btnSaveSettings').addEventListener('click', saveSettings);
+  // 智谱启用开关：即时联动整块提示（真正的写入仍在「保存设置」时提交）
+  $('#setZpEnabled').addEventListener('change', renderZhipuState);
   // 即梦 CLI：三个即时操作（不经过「保存设置」）
   $('#dmRefreshBtn').addEventListener('click', () => loadDreaminaStatus(true));
   $('#dmLoginBtn').addEventListener('click', startDreaminaLogin);

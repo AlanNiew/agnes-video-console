@@ -115,10 +115,18 @@ module.exports = function registerTaskRoutes(app) {
       if (from === to) {
         throw new ApiError(400, `升级目标须为另一上游（当前 ${from} → 目标 ${to}）；同上游请用「重试」`);
       }
+      // 智谱 CogVideoX 只有视频生成，没有图片模型：图片任务不能升级到智谱
+      if (to === 'zhipu' && t.kind === 'image') {
+        throw new ApiError(400, '智谱 CogVideoX 只支持视频任务，图片任务请升级到即梦或 Agnes');
+      }
 
       // 沿用原任务的输入参数，仅替换模型（payload 结构差异由 build* 处理）
       const src = t.request_json || {};
       const isImage = t.kind === 'image';
+      // size 档位跨上游不通用：智谱用像素（1280x720），Agnes 用 720P 这类档位名。
+      // 迁移时清空，让目标上游按画幅/默认档自行决定（硬塞必被 400）。
+      const srcSize = String(src.size || t.size || '');
+      const sizeForTarget = to === 'zhipu' ? undefined : /^\d+x\d+$/i.test(srcSize) ? undefined : srcSize || undefined;
       const input = isImage
         ? {
             model: targetModel,
@@ -132,7 +140,7 @@ module.exports = function registerTaskRoutes(app) {
             prompt: src.prompt || t.prompt,
             mode: src.mode || t.mode || 'text',
             seconds: src.seconds || t.seconds,
-            size: src.size || t.size,
+            ...(sizeForTarget ? { size: sizeForTarget } : {}),
             aspect_ratio: src.aspect_ratio || t.aspect_ratio,
           };
 

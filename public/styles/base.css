@@ -575,6 +575,17 @@ body {
   background: rgba(245, 158, 11, 0.16);
   color: var(--amber);
 }
+
+/* 智谱 CogVideoX 面板（复用 .dm-panel 外观）：关掉启用开关时整块变灰，
+ * 让「视频仍走 Agnes」一眼可见，避免用户以为已经切到智谱。 */
+.zp-panel {
+  display: grid;
+  gap: 10px;
+  transition: opacity 0.15s;
+}
+.zp-panel.is-off {
+  opacity: 0.55;
+}
 .dm-actions {
   display: flex;
   gap: 8px;

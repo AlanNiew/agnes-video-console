@@ -44,5 +44,15 @@ const DEFAULT_SETTINGS = {
   dreamina_daily_auto_shots: '2', // v2.6.11 自动兜底**每日镜数**上限（用户口径「只在必要镜头用即梦」）：0=不限；超出后自动路径不再改投，需人工一键升级
   dreamina_auto_shot_ledger: '{}', // v2.6.11 当日自动兜底镜数台账：{ "YYYY-MM-DD": 镜数 }，跨天清零
   image_model: 'jimeng-image-4.7', // v2.6.16 **图片生成主力档**（用户口径：即梦 CLI 为图片主力）：调用方未指定 model 时的默认值；Agnes 仍是免费兜底（即梦不可用/积分不足时自动改投）
+  // —— v2.7 智谱 CogVideoX（Agnes 免费档队列关闭后的视频替代主力）——
+  // 说明：Agnes 免费档（agnes-video-2.5-flash）自 2026-10 起提交即 503 video_queue_full，
+  // 免费 v2.0 也已于 2026-09-25 下线，故视频主力切到智谱长期免费的 CogVideoX-Flash。
+  zhipu_enabled: '1', // 一级开关：'0' = 停止提交/轮询智谱任务（任务保持入队，不扣费）
+  zhipu_base_url: 'https://open.bigmodel.cn', // 智谱开放平台地址（国内直连）
+  zhipu_api_key: '', // 智谱 API Key（仅服务端使用；GET /api/settings 只回掩码）
+  zhipu_model: 'cogvideox-flash', // 未显式指定模型时的智谱默认档（flash 免费 / cogvideox-3 付费）
+  zhipu_quality: 'speed', // speed = 更快出片；quality = 质量档（仅 cogvideox-3 明显生效）
+  zhipu_watermark: '1', // 是否保留上游 AI 水印（默认保留：显式水印是官方默认的合规设置）
+  zhipu_max_active_minutes: '30', // 智谱任务超时阈值（免费档排队可能较久，独立于 Agnes 的 20 分钟）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

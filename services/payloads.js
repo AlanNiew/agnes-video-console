@@ -16,6 +16,10 @@ const {
   DREAMINA_IMAGE_RATIOS,
   DREAMINA_CREDIT_COST,
   DREAMINA_DEFAULT_THRESHOLD,
+  ZHIPU_MODELS,
+  ZHIPU_DEFAULT_MODEL,
+  ZHIPU_PROMPT_MAX,
+  ZHIPU_ASPECT_TO_SIZE,
   providerOf,
   MODES,
   SECONDS_OK,
@@ -84,8 +88,12 @@ function cleanVideoList(arr) {
 /* ---------------- 2.5 家族 payload ---------------- */
 
 function buildV25Payload(b) {
-  const model = b.model && MODELS[b.model] ? b.model : settings.get('model', DEFAULT_SETTINGS.model);
+  const configured = settings.get('model', DEFAULT_SETTINGS.model);
+  // 默认模型可能已被切成智谱（v2.7）：此时回落到 Agnes 免费档，避免 MODELS[model] 为 undefined
+  const fallbackModel = MODELS[configured] ? configured : DEFAULT_SETTINGS.model;
+  const model = b.model && MODELS[b.model] ? b.model : fallbackModel;
   const info = MODELS[model];
+  if (!info) throw new ApiError(400, `不支持的 Agnes 模型：${model}`);
   const prompt = String(b.prompt || '').trim();
   if (!prompt) throw new ApiError(400, 'prompt 不能为空');
   const mode = b.mode !== undefined ? String(b.mode) : 'text';
@@ -169,25 +177,159 @@ function buildV25Payload(b) {
   };
 }
 
+/* ---------------- 智谱 CogVideoX payload（v2.7） ---------------- */
+
+/**
+ * 把本系统的三模式（text / keyframe / reference）映射成智谱的「文生 / 首帧（可首尾帧）」。
+ *
+ * 关键差异（依据官方文档，见 core/constants.js 的 ZHIPU_MODELS 注释）：
+ *   - **不支持多图参考**：reference 模式取首张角色图作首帧，其余图不发，但**记 warnings**
+ *     （静默丢图会让"角色一致性"若无其事地退化，事后无法回溯）；
+ *   - 时长只有 5/10 秒：其余秒数按「≤7→5，>7→10」归并并记 warnings；
+ *   - 画幅只有 16:9 / 9:16 / 1:1：其余画幅明确 400（不猜、不静默改比例）；
+ *   - prompt 上限 512 字符：截断 + warnings（超长会被上游直接 400，整条产线停摆）。
+ */
+function buildZhipuPayload(b) {
+  const model = b.model && ZHIPU_MODELS[b.model] ? b.model : settings.get('zhipu_model', ZHIPU_DEFAULT_MODEL);
+  const info = ZHIPU_MODELS[model];
+  if (!info) throw new ApiError(400, `不支持的智谱模型：${model}`);
+  const warnings = [];
+
+  // —— 提示词（智谱上限 512 字符）——
+  const rawPrompt = String(b.prompt || '').trim();
+  if (!rawPrompt) throw new ApiError(400, 'prompt 不能为空');
+  let prompt = rawPrompt;
+  if (prompt.length > ZHIPU_PROMPT_MAX) {
+    prompt = prompt.slice(0, ZHIPU_PROMPT_MAX);
+    warnings.push(`提示词超过智谱上限 ${ZHIPU_PROMPT_MAX} 字符，已截断（原 ${rawPrompt.length} 字符）`);
+  }
+
+  // —— 模式 → 首帧/首尾帧 ——
+  const mode = b.mode !== undefined ? String(b.mode) : 'text';
+  if (!MODES.includes(mode)) throw new ApiError(400, `mode 仅支持 ${MODES.join('/')}，收到：${mode}`);
+  const firstFrame = b.first_frame ? String(b.first_frame).trim() : '';
+  const lastFrame = b.last_frame ? String(b.last_frame).trim() : '';
+  const images = cleanUrlList(b.images, 'images');
+  const audios = cleanUrlList(b.audios, 'audios');
+  const videos = cleanVideoList(b.videos);
+  if (audios.length || videos.length) {
+    throw new ApiError(400, '智谱 CogVideoX 不支持音频/视频参考（仅支持首帧/首尾帧图片）');
+  }
+  const imageUrls = [];
+  if (mode === 'text') {
+    if (firstFrame || lastFrame || images.length) {
+      throw new ApiError(400, 'text 模式不允许携带任何图片字段（first_frame/last_frame/images）');
+    }
+  } else if (mode === 'keyframe') {
+    if (!firstFrame && !lastFrame) throw new ApiError(400, 'keyframe 模式需要 first_frame 与 last_frame 至少一个');
+    if (firstFrame && !isHttpUrl(firstFrame)) throw new ApiError(400, 'first_frame 必须是可公开访问的 URL');
+    if (lastFrame && !isHttpUrl(lastFrame)) throw new ApiError(400, 'last_frame 必须是可公开访问的 URL');
+    if (images.length) throw new ApiError(400, 'keyframe 模式不允许携带 images');
+    // 智谱语义：传 1 张 = 首帧；传 2 张 = 首帧 + 尾帧
+    if (firstFrame) imageUrls.push(firstFrame);
+    if (lastFrame) imageUrls.push(lastFrame);
+  } else {
+    // reference：智谱没有多图参考，降级为首帧
+    if (!images.length) throw new ApiError(400, 'reference 模式需要 images 至少一张（智谱以其作首帧）');
+    imageUrls.push(images[0]);
+    if (images.length > 1) {
+      warnings.push(`智谱不支持多图参考：已用首张作首帧，其余 ${images.length - 1} 张未发送`);
+    }
+  }
+
+  // —— 时长：只有 5 / 10 秒 ——
+  const secondsNum = Number(String(b.seconds ?? '5'));
+  if (!Number.isFinite(secondsNum) || secondsNum < 1) throw new ApiError(400, `seconds 非法：${b.seconds}`);
+  let duration = String(b.duration || '');
+  if (!info.durations.includes(duration)) {
+    duration = secondsNum <= 7 ? '5' : '10';
+    if (Number(secondsNum) !== Number(duration)) {
+      warnings.push(`智谱时长只有 ${info.durations.join('/')} 秒，${secondsNum}s 已归并为 ${duration}s`);
+    }
+  }
+
+  // —— 画幅 → size（智谱只认像素档位，且不支持 4:3 / 3:4 / 21:9）——
+  const aspectRatio = String(b.aspect_ratio || '16:9');
+  if (!ASPECT_RATIOS.includes(aspectRatio)) {
+    throw new ApiError(400, `aspect_ratio 仅支持 ${ASPECT_RATIOS.join('/')}，收到：${aspectRatio}`);
+  }
+  const mappedSize = ZHIPU_ASPECT_TO_SIZE[aspectRatio];
+  if (!mappedSize) {
+    throw new ApiError(
+      400,
+      `智谱 CogVideoX 仅支持 16:9 / 9:16 / 1:1 画幅，收到：${aspectRatio}。` +
+        '请在项目/镜头设置里改用这三种画幅，或改用 Agnes 模型',
+    );
+  }
+  const requestedSize = String(b.size || '').trim();
+  const size = info.sizes.includes(requestedSize) ? requestedSize : mappedSize;
+  if (requestedSize && requestedSize !== size) {
+    warnings.push(`size ${requestedSize} 已映射为智谱档位 ${size}`);
+  }
+
+  // —— 质量档 / 水印 ——
+  const quality = ['speed', 'quality'].includes(String(b.quality || ''))
+    ? String(b.quality)
+    : String(settings.get('zhipu_quality', 'speed')) === 'quality'
+      ? 'quality'
+      : 'speed';
+  const watermark =
+    b.watermark_enabled !== undefined ? Boolean(b.watermark_enabled) : settings.get('zhipu_watermark', '1') === '1';
+
+  const payload = {
+    model,
+    prompt,
+    size,
+    duration,
+    quality,
+    with_audio: false, // 音轨由本系统的 TTS/BGM 环节独立合成，不让上游生成配音
+    watermark_enabled: watermark,
+    fps: 30,
+  };
+  if (imageUrls.length) payload.image_url = imageUrls; // 1 张=首帧，2 张=首帧+尾帧
+
+  return {
+    payload,
+    meta: {
+      model,
+      mode,
+      prompt,
+      seconds: duration,
+      size,
+      aspect_ratio: aspectRatio,
+      duration,
+      quality,
+      watermark_enabled: watermark,
+      image_url: imageUrls,
+      provider: 'zhipu',
+      warnings,
+    },
+  };
+}
+
 /** 校验并构建提交给 API 的请求体（按上游 provider / 模型家族分发） */
 function buildPayload(body) {
   const b = body || {};
-  // 即梦（官方 CLI）与 Agnes 的参数体系完全不同，先按 provider 分流。
-  // 注意：必须在 MODELS 兜底之前判断，否则即梦模型会被当作「未知模型」而静默降级为默认 Agnes 模型。
-  if (providerOf(b.model) === 'dreamina') return buildDreaminaPayload(b);
+  // 未显式指定模型时，由**设置里的默认模型**决定上游（v2.7：默认模型可能已切到智谱）
+  const wanted = b.model || settings.get('model', DEFAULT_SETTINGS.model);
+  const req = b.model ? b : { ...b, model: wanted };
+  const provider = providerOf(wanted);
+  // 各上游参数体系完全不同，必须先按 provider 分流。
+  // 注意：必须在 MODELS 兜底之前判断，否则第三方模型会被当作「未知模型」而静默降级为默认
+  // Agnes 模型（真实扣费 + 产物与预期不符的事故）。
+  if (provider === 'dreamina') return buildDreaminaPayload(req);
+  if (provider === 'zhipu') return buildZhipuPayload(req);
   // 已下线模型：明确报错，**不要**静默回退到默认模型 ——
   // 否则旧任务点"重试"会悄悄换模型重投，产物与预期不符且难排查。
-  if (b.model && RETIRED_MODELS[b.model]) {
+  if (RETIRED_MODELS[wanted]) {
     throw new ApiError(
       400,
-      `模型 ${b.model} 已于 ${RETIRED_MODELS[b.model]} 下线，请改用 2.5 系列` +
-        '（agnes-video-2.5-flash / agnes-video-2.5）重新提交',
+      `模型 ${wanted} 已于 ${RETIRED_MODELS[wanted]} 下线，请改用 2.5 系列` +
+        '（agnes-video-2.5-flash / agnes-video-2.5）或智谱 CogVideoX（cogvideox-flash / cogvideox-3）重新提交',
     );
   }
-  const model = MODELS[b.model] ? b.model : settings.get('model', DEFAULT_SETTINGS.model);
-  const info = MODELS[model];
-  if (!info) throw new ApiError(400, `不支持的模型：${model}`);
-  return buildV25Payload(b);
+  if (!MODELS[wanted]) throw new ApiError(400, `不支持的模型：${wanted}`);
+  return buildV25Payload(req);
 }
 
 /* ---------------- 即梦（dreamina CLI）payload ---------------- */
@@ -722,6 +864,7 @@ module.exports = {
   cleanUrlList,
   cleanVideoList,
   buildV25Payload,
+  buildZhipuPayload,
   buildPayload,
   buildDreaminaPayload,
   buildImagePayload,

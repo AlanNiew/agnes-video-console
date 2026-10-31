@@ -4,19 +4,22 @@
 ![Node](https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=node.js&logoColor=white)
 ![CI](https://img.shields.io/github/actions/workflow/status/AlanNiew/agnes-video-console/ci.yml?label=CI)
 ![Tests](https://img.shields.io/badge/tests-74%20unit%20%2B%2072%20e2e-brightgreen)
-本地 Web 工具，接入 [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)，提供**创作工作台（六步流水线 + 全自动成片）+ 任务中心（视频/图片统一列表）+ 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
+本地 Web 工具，接入**智谱 CogVideoX（免费档主力）+ [Agnes AI 视频生成 API](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash)（备用通道）**，提供**创作工作台（六步流水线 + 全自动成片）+ 任务中心（视频/图片统一列表）+ 后台自动轮询 + SQLite 本地持久化**的一站式 AI 视频创作体验。
 
 [English README](README.en.md) · [贡献指南](CONTRIBUTING.md) · [安全策略](SECURITY.md) · [更新日志](CHANGELOG.md)
 
-支持三个模型（异步任务 API，`POST /v1/videos` 创建、`GET /agnesapi` 轮询）：
+支持多个视频上游（均为异步任务：创建 → 轮询结果），按模型名自动分发：
 
-| 模型                    | 生成模式                                 | 参数体系                                                                   | 价格     | 界面                                                         |
-| ----------------------- | ---------------------------------------- | -------------------------------------------------------------------------- | -------- | ------------------------------------------------------------ |
-| `agnes-video-2.5-flash` | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio`                                        | 限时免费 | ✅ 默认                                                      |
-| `agnes-video-2.5`       | 文生 / 首尾帧 / 多模态参考               | `seconds` + `size` + `aspect_ratio`                                        | 付费     | ✅ 高级分组                                                  |
-| `agnes-video-v2.0`      | 文生 / 图生 / 关键帧动画                 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 限时免费 | 🗂 兼容保留（UI 默认不展示，可经 API 调用，历史任务正常显示） |
+| 模型                    | 上游  | 生成模式                                 | 参数体系                                                                   | 价格                       | 界面                                          |
+| ----------------------- | ----- | ---------------------------------------- | -------------------------------------------------------------------------- | -------------------------- | --------------------------------------------- |
+| `cogvideox-flash`       | 智谱  | 文生 / 首帧 / 首尾帧                     | `size` + `duration`(5\|10) + `quality` + `watermark_enabled`               | **长期免费**               | ✅ 默认（填 Key 后自动切换）                  |
+| `cogvideox-3`           | 智谱  | 文生 / 首帧 / 首尾帧                     | `size`（含 1080P/2K）+ `duration`(5\|10) + `quality`                       | 付费（1 元/条）            | ✅ 高级分组                                   |
+| `agnes-video-2.5-flash` | Agnes | 文生 / 首尾帧 / 多模态参考（图·音·视频） | `seconds` + `size` + `aspect_ratio`                                        | 限时免费（**当前常 503**） | ✅ 备用通道                                   |
+| `agnes-video-2.5`       | Agnes | 文生 / 首尾帧 / 多模态参考               | `seconds` + `size` + `aspect_ratio`                                        | 付费                       | ✅ 高级分组                                   |
+| `agnes-video-v2.0`      | Agnes | 文生 / 图生 / 关键帧动画                 | `num_frames`(8n+1≤441) + `frame_rate` + `width/height` + `negative_prompt` | 已下线（2026-09-25）       | 🗂 兼容保留（UI 默认不展示，历史任务正常显示） |
 
-> 价格与能力以 [Agnes AI 官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准，当前 Flash 与 V2.0 模型限时 `$0 / 秒`。
+> 智谱价格与能力以 [BigModel 文档](https://docs.bigmodel.cn/cn/guide/models/free/cogvideox-flash) 为准；Agnes 以 [官方文档](https://www.agnes-ai.com/zh-Hans/docs/agnes-video-25-flash) 为准。
+> **为什么默认智谱**：2026-10-31 实测 Agnes 免费档提交即 `503 video_queue_full`、免费 v2.0 已下线；CogVideoX-Flash 是长期免费档。代价是 5/10 秒两档 + 仅三种画幅 + 不支持多图参考（自动降级首帧）——需要多模态参考或 4/6/8/9/11/12 秒时手动切回 Agnes。接入细节见 [docs/ZHIPU_INTEGRATION.md](docs/ZHIPU_INTEGRATION.md)。
 
 ## ✨ 特性
 
