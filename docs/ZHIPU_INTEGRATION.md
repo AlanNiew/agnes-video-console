@@ -83,6 +83,14 @@ GET {base_url}/api/paas/v4/async-result/{id}
 **任务号**只认响应里的 `id`（`extractTaskId` 也接受 `task_id`/`taskId`）；**绝不能用 `request_id`** 去查结果
 （智谱两者都有，混用会 404）。
 
+> **实测坑（2026-11-01，19/19 条证实）**：`cogvideox-2` 即便请求 `duration: "10"`，返回的视频也只有 **5.19 秒**
+> （`ffprobe` 实测 5.193548s）——`duration` 字段被接受但不生效，当前账号/模型只出 5 秒；`cogvideox-flash` 同样是 5 秒档。
+> 因此「10 秒镜头」只有两条路：① 换 `cogvideox-3`（1 元/条，原生 10 秒）；② 后期把 5 秒素材插帧慢放到 10 秒
+> （本仓库《我是一条河》3 分钟短片即用
+> `ffmpeg -vf "setpts=1.925*PTS,minterpolate=fps=30:mi_mode=mci:mc_mode=aobmc:me_mode=bidir:vsbmc=1"`，
+> 19 镜并行 6 路约 3 分钟完成，画面变慢动作但观感顺畅）。
+> 不要指望 `buildZhipuPayload` 的 `>7 → 10` 映射能拿到 10 秒成片——它只决定请求参数，不决定上游实际出片时长。
+
 ## 4. 设置项（控制台 → 设置 → 智谱 CogVideoX）
 
 | 键                         | 默认                       | 说明                                                                                                                                                                |
