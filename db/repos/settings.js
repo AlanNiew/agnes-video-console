@@ -54,5 +54,8 @@ const DEFAULT_SETTINGS = {
   zhipu_quality: 'speed', // speed = 更快出片；quality = 质量档（仅 cogvideox-3 明显生效）
   zhipu_watermark: '1', // 是否保留上游 AI 水印（默认保留：显式水印是官方默认的合规设置）
   zhipu_max_active_minutes: '30', // 智谱任务超时阈值（免费档排队可能较久，独立于 Agnes 的 20 分钟）
+  // v2.7.2：免费档被容量限流（429/1305）时，是否自动改投性价比付费档 cogvideox-2（0.5 元/条）。
+  // '1' = 自动改投（默认，保证「免费档打满时也能出片」）；'0' = 只退避等待，不花钱。
+  zhipu_paid_fallback: '1',
 };
 module.exports = { settings, DEFAULT_SETTINGS };

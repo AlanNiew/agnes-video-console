@@ -84,6 +84,7 @@ routes/       11 个领域文件（含 templates 创作模板、characters 角�
   · **不自动改投智谱/Agnes 之间**：`dreamina_fallback` 只覆盖「智谱/Agnes → 即梦免费档/图片」方向；智谱失败按 `classifyError` 分档退避（`queue-full`/`rate-limit`/`server` 可重试，`auth`/`bad-args`/`content-policy`/`quota` 直接失败），**不跨上游自动改投**，避免意外扣费。需要换时人工切设置里的默认模型。
   · **一级 kill switch**：设置项 `zhipu_enabled='0'` → 提交器/轮询器**保留任务不提交**（不判失败），用于免费档被限流时临时停手；恢复后自动继续。
   · **限流不判死（v2.7.1，2026-10-31 实测后加）**：免费档晚高峰会持续返回 `429 code 1305「该模型当前访问量过大」`（实测 22:16 起连续命中，与 Key/参数无关）。提交器对此**不再按固定 5 次判死**，而是按「已等待时长预算」一直退避重试：预算 = `max(zhipu_max_active_minutes, 60)` 分钟；任务列表会显示「智谱免费档限流中，已等待 N 分钟」；超预算才转 `submit_error`（可直接重试）。同一时刻多个镜头排队时按账户共享冷却，不并发捶上游。
+  · **免费档限流自动改投（v2.7.2，2026-11-01 实测后加）**：免费档实测可从晚间持续 429 到次日早上（>11 小时），只等待等于平台不可用。故 `zhipu_paid_fallback='1'`（默认）时，免费档**连续 2 次**容量限流（`rate-limit`/`queue-full`）后，提交器自动把该任务改投 `cogvideox-2`（官方 0.5 元/条、5/10 秒同价，实测提交→出片约 53 秒）并立即重试；任务 `model` 会变为 `cogvideox-2`、`error_message` 写明「已自动改投付费档」，便于对账。`zhipu_paid_fallback='0'` = 只退避等待、不花钱。改投只在**同一上游内换模型**（不跨到 Agnes/即梦），且只改投一次（付费档不会再次改投）。成本口径：20 镜 × 5 秒一集约 10 元。
   · **上游分发**：`core/constants.providerOf(model)` 顺序 **dreamina → zhipu → agnes 兜底**（未知模型仍归 agnes，保证历史数据兼容）；新增第三家上游的完整模板见 `docs/ZHIPU_INTEGRATION.md`。
 - 以下为即梦关键资产的既有策略（保持）：
   · **角色图**（含全自动成片的 `character` 阶段，由设置项 `dreamina_auto_character` 控制、默认开）走即梦主力档 `jimeng-image-3.1`（1 积分/次 ≈ 4 张候选）；**提交前先预检可用性**（未装 CLI / 未登录 / 非 VIP / 积分不足 → 直接用 Agnes）；

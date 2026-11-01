@@ -1,8 +1,8 @@
 # 智谱 BigModel CogVideoX 接入说明（第三家视频上游）
 
-> 版本：v2.7.1（2026-10-31）· 相关代码：`clients/zhipu.js`、`services/payloads.js`（`buildZhipuPayload`）、
-> `workers/submitter.js`（`submitZhipu` / `planZhipuRetry` 限流等待预算）、`workers/poller.js`（`pollZhipu`）、
-> `core/constants.js`（`providerOf`）。
+> 版本：v2.7.2（2026-11-01）· 相关代码：`clients/zhipu.js`、`services/payloads.js`（`buildZhipuPayload`）、
+> `workers/submitter.js`（`submitZhipu` / `planZhipuRetry` 限流等待预算 / `shouldZhipuPaidFallback` 自动改投）、
+> `workers/poller.js`（`pollZhipu`）、`core/constants.js`（`providerOf`）。
 
 ## 1. 为什么接它
 
@@ -70,7 +70,7 @@ GET {base_url}/api/paas/v4/async-result/{id}
 
 | 内部语义                    | 智谱字段                                                                                                            |
 | --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `model`                     | `cogvideox-flash`（免费）/ `cogvideox-3`（付费，1 元/条）                                                           |
+| `model`                     | `cogvideox-flash`（免费）/ `cogvideox-2`（付费 0.5 元/条，自动兜底）/ `cogvideox-3`（付费 1 元/条）                 |
 | `seconds`（4–12）           | `duration`：≤7 → `5`，>7 → `10`（留 warning）                                                                       |
 | `aspect_ratio`              | `size`：16:9→`1280x720`、9:16→`720x1280`、1:1→`1024x1024`；显式传智谱支持的 `size` 时以显式为准；4:3/3:4/21:9 → 400 |
 | `mode: text`                | 不带 `image_url`                                                                                                    |
@@ -85,37 +85,38 @@ GET {base_url}/api/paas/v4/async-result/{id}
 
 ## 4. 设置项（控制台 → 设置 → 智谱 CogVideoX）
 
-| 键                         | 默认                       | 说明                                                                                               |
-| -------------------------- | -------------------------- | -------------------------------------------------------------------------------------------------- |
-| `zhipu_enabled`            | `1`                        | **一级 kill switch**。`0` = 提交器/轮询器保留任务不动（不判失败），恢复后自动继续                  |
-| `zhipu_base_url`           | `https://open.bigmodel.cn` | 会归一化：补 https、去尾斜杠、剥掉 `/api/paas/v4/*`                                                |
-| `zhipu_api_key`            | 空                         | 控制台只回显 `sk-…****后四位`，留空保存 = 不改                                                     |
-| `zhipu_model`              | `cogvideox-flash`          | 新建任务未指定模型时的默认档                                                                       |
-| `zhipu_quality`            | `speed`                    | `speed` / `quality`                                                                                |
-| `zhipu_watermark`          | `1`                        | 是否让上游烧水印                                                                                   |
-| `zhipu_max_active_minutes` | `30`                       | 轮询超时（超时判 `failed`）；**同时作为提交阶段限流等待预算的下限**：实际预算 = max(本值, 60) 分钟 |
+| 键                         | 默认                       | 说明                                                                                                                                                                |
+| -------------------------- | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `zhipu_enabled`            | `1`                        | **一级 kill switch**。`0` = 提交器/轮询器保留任务不动（不判失败），恢复后自动继续                                                                                   |
+| `zhipu_base_url`           | `https://open.bigmodel.cn` | 会归一化：补 https、去尾斜杠、剥掉 `/api/paas/v4/*`                                                                                                                 |
+| `zhipu_api_key`            | 空                         | 控制台只回显 `sk-…****后四位`，留空保存 = 不改                                                                                                                      |
+| `zhipu_model`              | `cogvideox-flash`          | 新建任务未指定模型时的默认档                                                                                                                                        |
+| `zhipu_quality`            | `speed`                    | `speed` / `quality`                                                                                                                                                 |
+| `zhipu_watermark`          | `1`                        | 是否让上游烧水印                                                                                                                                                    |
+| `zhipu_max_active_minutes` | `30`                       | 轮询超时（超时判 `failed`）；**同时作为提交阶段限流等待预算的下限**：实际预算 = max(本值, 60) 分钟                                                                  |
+| `zhipu_paid_fallback`      | `1`                        | v2.7.2：免费档连续 2 次容量限流（429/1305 或 queue-full）时**自动改投 `cogvideox-2`（0.5 元/条）** 并立即重试；`0` = 只退避等待、不花钱。改投只发生一次、且不跨上游 |
 
 **保存 Key 会顺带把默认模型切到 `cogvideox-flash`**（仅当当前默认还是 `agnes-video-2.5-flash` 时），避免用户填完 Key
 却发现任务还派给已失效的 Agnes。想用 Agnes 时在设置里手动切回即可。
 
 ## 5. 排障表
 
-| 现象                                                  | 判定（`classifyError`） | 处理                                                                                                                                                                                                     |
-| ----------------------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `401/403`、`code` 含 `auth`/`invalid api key`         | `auth`（不可重试）      | Key 填错/被删 —— 重填并点「测试」                                                                                                                                                                        |
-| `429`、`code` 含 `rate`/`concurrency`/并发            | `rate-limit`（可重试）  | 免费档限速，按退避等待即可；别急着关 `zhipu_enabled`（关了只会停手）                                                                                                                                     |
-| `429` + `code=1305`「该模型当前访问量过大」持续很久   | `rate-limit`（可重试）  | **免费档晚高峰容量紧张，不是 Key/参数问题**。v2.7.1 起按等待预算（≥60 分钟）持续退避重试，任务列表显示「智谱免费档限流中，已等待 N 分钟」；等不及可临时切 `cogvideox-3`（付费 1 元/条）或 Agnes 备用通道 |
-| `>=500`、`code` 含 `server`/`internal`                | `server`（可重试）      | 上游抖动，按等待预算退避重试（同 429 行）                                                                                                                                                                |
-| `code` 含 `quota`/`余额`/`insufficient`               | `quota`（不可重试）     | 付费档余额不足；切回 `cogvideox-flash`                                                                                                                                                                   |
-| `code` 含 `content`/`policy`/`审核`/`sensitive`       | `content-policy`        | 改提示词，重试无用                                                                                                                                                                                       |
-| `code` 含 `invalid`/`parameter`、`1214`、prompt 为空  | `bad-args`              | 检查时长 / 画幅 / prompt ≤512                                                                                                                                                                            |
-| `404`、`1211`、任务不存在                             | `not-found`             | 任务号错或上游已过期 —— 重新提交                                                                                                                                                                         |
-| 任务一直 `processing` 超过 `zhipu_max_active_minutes` | —                       | 判 `failed`，可直接重试                                                                                                                                                                                  |
+| 现象                                                  | 判定（`classifyError`） | 处理                                                                                                                                                                                                                                                                                                                                    |
+| ----------------------------------------------------- | ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `401/403`、`code` 含 `auth`/`invalid api key`         | `auth`（不可重试）      | Key 填错/被删 —— 重填并点「测试」                                                                                                                                                                                                                                                                                                       |
+| `429`、`code` 含 `rate`/`concurrency`/并发            | `rate-limit`（可重试）  | 免费档限速，按退避等待即可；别急着关 `zhipu_enabled`（关了只会停手）                                                                                                                                                                                                                                                                    |
+| `429` + `code=1305`「该模型当前访问量过大」持续很久   | `rate-limit`（可重试）  | **免费档容量紧张，不是 Key/参数问题**（实测可从晚间持续到次日早上 >11 小时）。v2.7.1 起按等待预算（≥60 分钟）退避；**v2.7.2 起连续 2 次后自动改投 `cogvideox-2`（0.5 元/条）并立即重试**，任务 `model` 变为 `cogvideox-2`、`error_message` 写明已改投。不想花钱：设置里关 `zhipu_paid_fallback`（只等待），或手动切 `cogvideox-3`/Agnes |
+| `>=500`、`code` 含 `server`/`internal`                | `server`（可重试）      | 上游抖动，按等待预算退避重试（同 429 行）                                                                                                                                                                                                                                                                                               |
+| `code` 含 `quota`/`余额`/`insufficient`               | `quota`（不可重试）     | 付费档余额不足；切回 `cogvideox-flash`                                                                                                                                                                                                                                                                                                  |
+| `code` 含 `content`/`policy`/`审核`/`sensitive`       | `content-policy`        | 改提示词，重试无用                                                                                                                                                                                                                                                                                                                      |
+| `code` 含 `invalid`/`parameter`、`1214`、prompt 为空  | `bad-args`              | 检查时长 / 画幅 / prompt ≤512                                                                                                                                                                                                                                                                                                           |
+| `404`、`1211`、任务不存在                             | `not-found`             | 任务号错或上游已过期 —— 重新提交                                                                                                                                                                                                                                                                                                        |
+| 任务一直 `processing` 超过 `zhipu_max_active_minutes` | —                       | 判 `failed`，可直接重试                                                                                                                                                                                                                                                                                                                 |
 
 ## 6. 验证方式
 
 ```bash
-npm run test:unit              # 18 套件 / 301 用例（含 zhipu-client 与 payload 分发）
+npm run test:unit              # 18 套件 / 314 用例（含 zhipu-client、payload 分发、限流等待预算与自动改投）
 npm run test:mock              # e2e：mock 智谱上游建任务 → 提交 → PROCESSING → SUCCESS → 归档
 npm test                       # 两者串跑（提交前必跑）
 ```

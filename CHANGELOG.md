@@ -2,6 +2,34 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.2] - 2026-11-01
+
+> **背景**：智谱免费档 `cogvideox-flash` 从 2026-10-31 22:16 持续 `429 code 1305` 到次日 09:18（>11 小时），
+> v2.7.1 的「等待预算」只解决了「不判死」，没解决「一直不出片」。实测付费门槛：**CogVideoX-2 = 0.5 元/条**
+> （5/10 秒同价），提交到出片约 **53 秒**且不受免费档限流影响；CogVideoX-3 = 1 元/条。据此加
+> 「免费优先、容量限流时按最便宜付费档兜底」的自动改投。
+
+### Added
+
+- **`cogvideox-2` 模型档**（智谱性价比档，0.5 元/条）：`core/constants.ZHIPU_MODELS` 新增，支持文生 /
+  首帧 / 首尾帧、多规格 `size`、`duration` 5|10；`/api/meta.zhipu.models` 自动下发。
+- **免费档限流自动改投**（设置项 `zhipu_paid_fallback`，默认 `'1'`）：提交器在免费档连续 2 次容量限流
+  （`rate-limit` / `queue-full`）后，自动把任务的 `model` 与 `request_json` 改成 `cogvideox-2` 并立即重试；
+  任务 `error_message` 写明「免费档限流（429/1305），已自动改投付费档…」，成功后清空。置 `'0'` 即回到
+  「只退避等待、不花钱」。判定与改投为纯函数 `shouldZhipuPaidFallback()` / `retargetZhipuPayload()`。
+- `/api/meta.zhipu` 增 `paid_fallback` / `paid_fallback_model` / `paid_fallback_label`；
+  `/api/settings` 增 `zhipu_paid_fallback`（GET 布尔 / PUT 可写）；设置面板智谱分组新增开关。
+
+### Fixed
+
+- 免费档 429 不再必须人工切模型：自动改投只发生在**同一上游内换模型**，不跨到 Agnes/即梦，且只改投一次
+  （付费档不会再次改投），避免循环改投与意外扣费。
+
+### Tests
+
+- `test/unit/submitter-backoff.test.js` 新增 `shouldZhipuPaidFallback` 5 例 + `retargetZhipuPayload` 3 例
+  （2 次后才改投、网络类不改投、用户关闭不改投、付费档/未知模型不改投、size 回落、纯函数不改入参）。
+
 ## [2.7.1] - 2026-10-31
 
 > **背景**：接上智谱后首次真实出片验证（22:16 起）即命中 `429 code 1305「该模型当前访问量过大」`——

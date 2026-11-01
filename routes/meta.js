@@ -22,6 +22,7 @@ const {
   ZHIPU_DEFAULT_MODEL,
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROMPT_MAX,
+  ZHIPU_PAID_FALLBACK_MODEL,
 } = require('../core/constants');
 
 /** 即梦 CLI 安装探测（纯文件检查、不 spawn；异常一律保守返回 false） */
@@ -111,6 +112,10 @@ module.exports = function registerMetaRoutes(app) {
         ),
         // prompt 上限（512 字符）由服务端下发而非前端写死：上游改限制时只改 constants 一处
         prompt_max: ZHIPU_PROMPT_MAX,
+        // v2.7.2：免费档被容量限流（429/1305）时自动改投付费性价比档，前端据此提示「会自动花 0.5 元/条」
+        paid_fallback: settings.get('zhipu_paid_fallback', DEFAULT_SETTINGS.zhipu_paid_fallback ?? '1') === '1',
+        paid_fallback_model: ZHIPU_PAID_FALLBACK_MODEL,
+        paid_fallback_label: (ZHIPU_MODELS[ZHIPU_PAID_FALLBACK_MODEL] || {}).label || ZHIPU_PAID_FALLBACK_MODEL,
         models: Object.entries(ZHIPU_MODELS).map(([id, m]) => ({
           id,
           label: m.label,

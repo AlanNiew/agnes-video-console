@@ -17,7 +17,13 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { log } = require('../core/logger');
 const { DEFAULT_BASE_URL } = require('../core/config');
-const { providerOf, DREAMINA_FALLBACK_VIDEO_MODEL, ZHIPU_DEFAULT_BASE_URL } = require('../core/constants');
+const {
+  providerOf,
+  DREAMINA_FALLBACK_VIDEO_MODEL,
+  ZHIPU_DEFAULT_BASE_URL,
+  ZHIPU_MODELS,
+  ZHIPU_PAID_FALLBACK_MODEL,
+} = require('../core/constants');
 const { dreaminaToAgnes, agnesToDreamina, estimateDreaminaCost } = require('../services/payloads');
 const {
   shouldFallbackFromDreamina,
@@ -122,6 +128,35 @@ function planZhipuRetry({ attempts, waitedMs, waitLimitMs, kind }) {
     delay,
     waitedMin: Math.round(waited / 60_000),
   };
+}
+
+/** 免费档限流后自动改投付费档的触发条件（纯函数，便于单测）。 */
+function shouldZhipuPaidFallback({
+  model,
+  kind,
+  enabled = true,
+  attempts = 0,
+  fallbackModel = ZHIPU_PAID_FALLBACK_MODEL,
+}) {
+  const cur = ZHIPU_MODELS[model];
+  const next = ZHIPU_MODELS[fallbackModel];
+  if (!cur || !cur.free) return false; // 只有免费档才值得「花钱换通道」
+  if (!next || next.free) return false; // 兜底档必须存在且是付费档
+  if (String(enabled) === '0') return false; // 用户关掉自动改投 → 只退避等待
+  if (kind !== 'rate-limit' && kind !== 'queue-full') return false; // 容量类限流才改投
+  return Number(attempts) >= 2; // 先给免费档 2 次机会（约 1 分钟），避免瞬时抖动就花钱
+}
+
+/**
+ * 把已组装的智谱 payload 改投到另一个模型：只换 model，size 不在目标模型白名单时
+ * 回落到该模型第一个规格（例如未来新增 480P 档时，免费档的 1280x720 可能不被接受）。
+ */
+function retargetZhipuPayload(payload, fallbackModel) {
+  const info = ZHIPU_MODELS[fallbackModel];
+  if (!info || !payload) return null;
+  const next = { ...payload, model: fallbackModel };
+  if (!Array.isArray(info.sizes) || !info.sizes.includes(next.size)) next.size = info.sizes[0];
+  return next;
 }
 
 /** 上游错误详情：优先 detail / error.message；503 无正文时给可读提示（队列繁忙），避免出现「提交失败（503）：」 */
@@ -506,6 +541,31 @@ class Submitter {
     if (!r.ok) {
       const cls = zhipu.classifyError(r) || { kind: 'unknown', retryable: false, message: `HTTP ${r.status}` };
       if (cls.retryable) {
+        // v2.7.2：免费档持续容量限流（429/1305）→ 自动改投性价比付费档（默认 0.5 元/条），
+        // 保证「免费档打满时也能出片」；判定纯函数见 shouldZhipuPaidFallback（先给免费档 2 次机会）。
+        if (
+          shouldZhipuPaidFallback({
+            model: payload.model,
+            kind: cls.kind,
+            enabled: settings.get('zhipu_paid_fallback', '1'),
+            attempts,
+          })
+        ) {
+          const fb = ZHIPU_PAID_FALLBACK_MODEL;
+          const nextPayload = retargetZhipuPayload(payload, fb);
+          if (nextPayload) {
+            this.retryUntil.delete(t.id);
+            this.zhipuWaitStart.delete(t.id);
+            this.zhipuCooldownUntil = 0; // 冷却只针对免费档，改投后立刻提交
+            tasks.update(t.id, {
+              model: fb,
+              request_json: nextPayload,
+              error_message: `免费档限流（429/1305），已自动改投付费档 ${(ZHIPU_MODELS[fb] || {}).label || fb}`,
+            });
+            log('warn', `任务 #${t.id} 智谱免费档限流（${cls.kind}），自动改投付费档 ${fb}（0.5 元/条）并立即重试提交`);
+            return this.submitZhipu({ ...t, model: fb, request_json: nextPayload });
+          }
+        }
         const backoffKind = cls.kind === 'queue-full' ? 'queue' : cls.kind === 'rate-limit' ? 'rate-limit' : 'net';
         const plan = planZhipuRetry({ attempts, waitedMs, waitLimitMs, kind: backoffKind });
         if (plan.giveUp) {
@@ -678,3 +738,5 @@ module.exports = new Submitter();
 // 纯函数与常量导出（供单元测试断言退避数学；submitter 单例仍为默认导出）
 module.exports.computeBackoffMs = computeBackoffMs;
 module.exports.planZhipuRetry = planZhipuRetry;
+module.exports.shouldZhipuPaidFallback = shouldZhipuPaidFallback;
+module.exports.retargetZhipuPayload = retargetZhipuPayload;

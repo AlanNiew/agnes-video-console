@@ -91,6 +91,8 @@ module.exports = function registerSettingsRoutes(app) {
       zhipu_max_active_minutes: Number(
         settings.get('zhipu_max_active_minutes', DEFAULT_SETTINGS.zhipu_max_active_minutes),
       ),
+      // v2.7.2：免费档被容量限流时是否自动改投付费性价比档（0.5 元/条）
+      zhipu_paid_fallback: settings.get('zhipu_paid_fallback', DEFAULT_SETTINGS.zhipu_paid_fallback) === '1',
       ...dreaminaBudget.todaySummary(),
     });
   });
@@ -339,6 +341,10 @@ module.exports = function registerSettingsRoutes(app) {
         throw new ApiError(400, 'zhipu_max_active_minutes 需在 1–1440 之间');
       settings.set('zhipu_max_active_minutes', String(Math.round(m)));
       changed.push('zhipu_max_active_minutes');
+    }
+    if (b.zhipu_paid_fallback !== undefined) {
+      settings.set('zhipu_paid_fallback', b.zhipu_paid_fallback ? '1' : '0');
+      changed.push('zhipu_paid_fallback');
     }
     // 便利行为（合同第 5 条）：本次填了智谱 Key、又没显式指定 model、当前默认仍是已失效的
     // Agnes 免费档 → 自动把默认模型切到智谱默认档。用户填完 Key 保存即可直接出片，

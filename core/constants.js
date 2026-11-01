@@ -73,11 +73,26 @@ const ZHIPU_MODELS = {
     label: '智谱 CogVideoX-3（付费 1 元/条）',
     rate_limit: '以账户配额为准',
   },
+  // v2.7.2：性价比档 —— 官方刊例 0.5 元/条（5/10 秒同价），实测 2026-11-01 提交到出片约 53 秒，
+  // 且付费档不受免费档的 1305 容量限流影响。免费档被限流时自动改投的就是它。
+  'cogvideox-2': {
+    family: 'zhipu',
+    provider: 'zhipu',
+    sizes: ['1280x720', '720x1280', '1024x1024', '1920x1080', '1080x1920'],
+    durations: ['5', '10'],
+    free: false,
+    short: 'CogVideoX-2',
+    hint: '付费 0.5 元/条（5/10 秒同价）· 性价比档 · 支持首帧（多图参考降级为首帧）',
+    label: '智谱 CogVideoX-2（付费 0.5 元/条）',
+    rate_limit: '以账户配额为准',
+  },
 };
 
 const ZHIPU_DEFAULT_MODEL = 'cogvideox-flash';
 const ZHIPU_DEFAULT_BASE_URL = 'https://open.bigmodel.cn';
 const ZHIPU_PROMPT_MAX = 512; // 官方 prompt 上限（字符）
+// 免费档被容量限流（429/1305）时自动改投的性价比档（0.5 元/条）。可在设置里用 zhipu_paid_fallback 关闭。
+const ZHIPU_PAID_FALLBACK_MODEL = 'cogvideox-2';
 const ZHIPU_ASPECT_TO_SIZE = {
   '16:9': '1280x720',
   '9:16': '720x1280',
@@ -644,6 +659,7 @@ module.exports = {
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROMPT_MAX,
   ZHIPU_ASPECT_TO_SIZE,
+  ZHIPU_PAID_FALLBACK_MODEL,
   MODES,
   V2_MODES,
   ASPECT_RATIOS,

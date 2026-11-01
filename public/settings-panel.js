@@ -100,6 +100,8 @@ async function loadSettings() {
     }
     $('#setZpQuality').value = s.zhipu_quality || 'speed';
     $('#setZpWatermark').checked = s.zhipu_watermark === true;
+    // v2.7.2：默认开（免费档限流时自动改投 0.5 元/条付费档；关掉=只等待不花钱）
+    if ($('#setZpPaidFallback')) $('#setZpPaidFallback').checked = s.zhipu_paid_fallback !== false;
     $('#setZpMaxMin').value = s.zhipu_max_active_minutes ?? 30;
     renderZhipuState();
     // 即梦 CLI 状态（独立端点，失败不影响设置面板其余部分）
@@ -168,6 +170,8 @@ async function saveSettings() {
       return;
     }
     body.zhipu_max_active_minutes = zpMax;
+    // v2.7.2：免费档限流时是否自动改投付费档（默认开；关掉=不产生费用）
+    body.zhipu_paid_fallback = $('#setZpPaidFallback') ? $('#setZpPaidFallback').checked : true;
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;

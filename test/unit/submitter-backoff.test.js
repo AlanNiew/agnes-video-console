@@ -5,7 +5,12 @@
  *   429：基数 60s，上限 10min；网络异常：基数 10s，上限 60s；最多 5 次尝试。
  */
 
-const { computeBackoffMs, planZhipuRetry } = require('../../workers/submitter');
+const {
+  computeBackoffMs,
+  planZhipuRetry,
+  shouldZhipuPaidFallback,
+  retargetZhipuPayload,
+} = require('../../workers/submitter');
 
 describe('computeBackoffMs（429 限流退避）', () => {
   test('第 1–4 次重试按 60s 基数指数递增', () => {
@@ -63,6 +68,55 @@ describe('planZhipuRetry（智谱免费档按等待预算重试）', () => {
   test('预算为 0/缺省时不主动判死', () => {
     expect(planZhipuRetry({ attempts: 3, waitedMs: 10 ** 9, waitLimitMs: 0, kind: 'rate-limit' }).giveUp).toBe(false);
     expect(planZhipuRetry({ attempts: 3, waitedMs: 10 ** 9, kind: 'rate-limit' }).giveUp).toBe(false);
+  });
+});
+
+describe('shouldZhipuPaidFallback（免费档限流 → 自动改投付费性价比档）', () => {
+  const base = { model: 'cogvideox-flash', kind: 'rate-limit', enabled: '1', attempts: 2 };
+
+  test('免费档 + 容量限流 + 已试 2 次 → 改投', () => {
+    expect(shouldZhipuPaidFallback(base)).toBe(true);
+    expect(shouldZhipuPaidFallback({ ...base, kind: 'queue-full', attempts: 3 })).toBe(true);
+  });
+
+  test('只试 1 次不改投（避免瞬时抖动就花钱）', () => {
+    expect(shouldZhipuPaidFallback({ ...base, attempts: 1 })).toBe(false);
+    expect(shouldZhipuPaidFallback({ ...base, attempts: 0 })).toBe(false);
+  });
+
+  test('网络类错误不改投（不是容量问题）', () => {
+    expect(shouldZhipuPaidFallback({ ...base, kind: 'net' })).toBe(false);
+    expect(shouldZhipuPaidFallback({ ...base, kind: 'server' })).toBe(false);
+  });
+
+  test('用户关掉自动改投 → 只等待不花钱', () => {
+    expect(shouldZhipuPaidFallback({ ...base, enabled: '0' })).toBe(false);
+  });
+
+  test('当前已是付费档 / 未知模型 / 兜底档本身免费 → 不改投', () => {
+    expect(shouldZhipuPaidFallback({ ...base, model: 'cogvideox-2' })).toBe(false);
+    expect(shouldZhipuPaidFallback({ ...base, model: 'not-exist' })).toBe(false);
+    expect(shouldZhipuPaidFallback({ ...base, fallbackModel: 'cogvideox-flash' })).toBe(false);
+  });
+});
+
+describe('retargetZhipuPayload（改投时只换 model，必要时回落 size）', () => {
+  const payload = { model: 'cogvideox-flash', prompt: '猫', size: '1280x720', duration: '5', quality: 'speed' };
+
+  test('目标模型支持原 size 时保持不动，且不修改入参对象', () => {
+    const next = retargetZhipuPayload(payload, 'cogvideox-2');
+    expect(next).toMatchObject({ model: 'cogvideox-2', size: '1280x720', duration: '5', prompt: '猫' });
+    expect(payload.model).toBe('cogvideox-flash'); // 纯函数，不改入参
+  });
+
+  test('目标模型不支持原 size 时回落到其第一个规格', () => {
+    const next = retargetZhipuPayload({ ...payload, size: '999x999' }, 'cogvideox-2');
+    expect(next.size).toBe('1280x720');
+  });
+
+  test('未知目标模型返回 null（调用方据此放弃改投）', () => {
+    expect(retargetZhipuPayload(payload, 'not-exist')).toBeNull();
+    expect(retargetZhipuPayload(null, 'cogvideox-2')).toBeNull();
   });
 });
 

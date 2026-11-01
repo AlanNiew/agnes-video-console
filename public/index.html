@@ -424,6 +424,17 @@
                   <span class="hint">默认保留（上游默认行为）；关闭后生成结果不带水印。</span>
                 </label>
               </div>
+              <!-- v2.7.2：免费档持续限流（429/1305）时自动改投付费性价比档，保证出片；关掉则只等待不花钱 -->
+              <div class="field" style="display: flex; align-items: flex-start; gap: 8px; margin: 0">
+                <input type="checkbox" id="setZpPaidFallback" style="width: auto; margin-top: 2px" />
+                <label for="setZpPaidFallback" style="margin: 0; cursor: pointer">
+                  免费档被限流时自动改投付费档
+                  <span class="hint"
+                    >免费档连续 2 次容量限流后，自动改用智谱 CogVideoX-2（官方 0.5 元/条、5/10
+                    秒同价）继续出片。关掉则只排队等待、不产生费用（免费档高峰期可能等很久）。</span
+                  >
+                </label>
+              </div>
             </div>
             <p class="hint">
               这里只配智谱通道内的档位；要把<strong>全局默认模型</strong>切到 CogVideoX，请改上方的「默认模型」。 保存
