@@ -262,7 +262,14 @@ class Submitter {
       log('warn', `任务 #${t.id} ${why}，但没有可映射的提示词，无法改投免费档`);
       return false;
     }
-    if (!settings.get('api_key', '')) {
+    // 凭证守卫按目标上游分流（v2.7.4：回退目标可能是智谱——Agnes 与智谱各用各的 Key）。
+    // dreaminaToAgnes 选智谱的前提就是 Key 已配置，这里是双保险：映射与守卫不共享假设。
+    if (providerOf(mapped.model) === 'zhipu') {
+      if (!settings.get('zhipu_api_key', '')) {
+        log('warn', `任务 #${t.id} ${why}，但未配置智谱 API Key，回退路径不可用`);
+        return false;
+      }
+    } else if (!settings.get('api_key', '')) {
       log('warn', `任务 #${t.id} ${why}，但未配置 Agnes API Key，回退路径不可用`);
       return false;
     }

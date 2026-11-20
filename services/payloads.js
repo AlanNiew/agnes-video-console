@@ -665,7 +665,9 @@ function checkDreaminaGuard(model, params = {}, opts = {}) {
 
   if (!est) return null; // 非即梦模型：不套护栏
   const isVideo = Boolean(DREAMINA_MODELS[model]);
-  const freeModel = isVideo ? FREE_VIDEO_MODEL : FREE_IMAGE_MODEL;
+  // v2.7.4：建议的免费档跟着「当前真正可用的免费通道」走——Agnes flash 已 503 断供，
+  // 智谱可用时建议 cogvideox-flash（否则用户按建议切过去只会撞死墙）。
+  const freeModel = isVideo ? (zhipuFreeReady() ? ZHIPU_DEFAULT_MODEL : FREE_VIDEO_MODEL) : FREE_IMAGE_MODEL;
   const base = {
     points: est.points,
     confidence: est.confidence,
@@ -690,12 +692,38 @@ function checkDreaminaGuard(model, params = {}, opts = {}) {
 }
 
 /**
- * 即梦任务 → 免费档（Agnes）任务映射（纯函数）。
+ * 「免费兜底」当前可用的视频目标（v2.7.4）：智谱已启用且配了 Key → cogvideox-flash；
+ * 否则沿用旧的 Agnes flash 映射。
+ *
+ * 背景：Agnes 免费档（agnes-video-2.5-flash）自 2026-10 起提交即 503 video_queue_full
+ * （v2.7 实测），把失败任务改投过去等于撞死墙——回退目标必须跟着「当前真正的免费档」走。
+ * 只认**免费**的智谱档（cogvideox-flash）：回退语义就是免费兜底，绝不把失败任务自动送进
+ * 付费档（那是 cogvideox-2 的自动改投路径，有它自己的配额闸门）。
+ * `zhipu_enabled='0'`（kill switch）期间不选智谱：kill switch 的语义是「什么都别发给智谱」，
+ * 把回退任务塞进智谱队列会违背它（虽然只是排队不提交，但恢复后会一次性全放出去）。
+ */
+function zhipuFreeReady() {
+  return (
+    settings.get('zhipu_enabled', DEFAULT_SETTINGS.zhipu_enabled ?? '1') === '1' &&
+    Boolean(String(settings.get('zhipu_api_key') || '').trim())
+  );
+}
+
+/** 智谱不支持 3:4/4:3/21:9——按**同方向**就近映射（不猜、不静默，映射记进 notes） */
+const ZHIPU_ASPECT_DEGRADE = { '3:4': '9:16', '4:3': '16:9', '21:9': '16:9' };
+
+/**
+ * 即梦任务 → 免费档任务映射（纯函数）。
  *
  * 用途：积分不足 / 生成失败 / 非 VIP / 环境未就绪时，把**同一份创意**改投免费档，
  * 由调用方把返回值写回 tasks 行（model + request_json），制作不中断。
  *
- * 映射规则：
+ * ⚠ 函数名里的 "Agnes" 是历史叫法（v2.6.1 起），v2.7.4 起语义改为「改投**当前可用的**免费档」：
+ *   - 视频且智谱可用 → `cogvideox-flash`（组装复用 `buildZhipuPayload`，同一套校验与降级 notes）；
+ *   - 其余（智谱未启用/无 Key、或 kind='image'——智谱没有图片 API）→ 沿用 Agnes 映射。
+ * 调用方（submitter.fallbackDreaminaVideo / image-worker.fallbackDreaminaImage）不变。
+ *
+ * Agnes 映射规则（保留）：
  *   - 提示词原样保留（改投不降级创意）；
  *   - 视频时长钳到免费档 4–12s；分辨率落到 Flash 仅支持的 720P；
  *   - 首帧**只在是公网 http(s) URL 时**保留（转 `keyframe` 模式）；本地路径 Agnes 取不到 → 降级纯文生并记 note；
@@ -735,7 +763,45 @@ function dreaminaToAgnes(kind, job = {}) {
     };
   }
 
-  // —— 视频 ——
+  // —— 视频：智谱可用时优先改投 cogvideox-flash（v2.7.4）——
+  if (zhipuFreeReady()) {
+    // 首帧与旧路径同一判据：只有公网 http(s) URL 才保留（智谱 image_url 同样只认公网地址）
+    const frame = isHttpUrl(rj.image) ? String(rj.image).trim() : '';
+    if (rj.image && !frame) notes.push('首帧为本地路径/不可达 URL → 降级为纯文生');
+    let aspect = ASPECT_RATIOS.includes(String(job.aspect_ratio || '')) ? String(job.aspect_ratio) : '16:9';
+    if (ZHIPU_ASPECT_DEGRADE[aspect]) {
+      notes.push(`画幅 ${aspect} 智谱不支持 → ${ZHIPU_ASPECT_DEGRADE[aspect]}`);
+      aspect = ZHIPU_ASPECT_DEGRADE[aspect];
+    }
+    const secondsNum = Math.round(Number(job.seconds ?? rj.duration) || 5);
+    // 组装复用 buildZhipuPayload：时长 5/10 归并、画幅→像素档、prompt 512 截断等校验与
+    // 手动提交智谱**完全同源**，不另写一份参数逻辑（其 warnings 一并带入 notes）。
+    try {
+      const { payload: zPayload, meta: zMeta } = buildZhipuPayload({
+        model: ZHIPU_DEFAULT_MODEL, // 回退永远落免费档，不读用户的 zhipu_model 默认（可能是付费档）
+        prompt,
+        mode: frame ? 'keyframe' : 'text',
+        ...(frame ? { first_frame: frame } : {}),
+        seconds: String(secondsNum),
+        aspect_ratio: aspect,
+      });
+      notes.push(...(zMeta.warnings || []));
+      return {
+        model: ZHIPU_DEFAULT_MODEL,
+        size: zMeta.size,
+        seconds: zMeta.seconds,
+        aspect_ratio: aspect,
+        request_json: zPayload,
+        notes,
+      };
+    } catch (e) {
+      // 智谱侧校验不通过（如首帧 URL 非法）→ 不改投，保留原失败状态等人工
+      if (e instanceof ApiError) return null;
+      throw e;
+    }
+  }
+
+  // —— 视频：智谱不可用 → 沿用旧 Agnes flash 映射（历史行为，没配智谱时的兜底）——
   const rawSeconds = job.seconds ?? rj.duration;
   const seconds = clampFreeSeconds(rawSeconds);
   if (String(rawSeconds) !== String(seconds)) notes.push(`时长 ${rawSeconds}s → ${seconds}s（免费档 4–12s）`);

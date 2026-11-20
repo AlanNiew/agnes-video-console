@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.4] - 2026-11-20
+
+> **背景**：v2.6.1 的即梦失败回退（`dreaminaToAgnes`）目标写死 `agnes-video-2.5-flash`，而该免费档自
+> 2026-10 起**每次提交都 503 断供**（v2.7 自己实测）——即梦任务失败后会被改投进死通道，白烧 ~22 分钟
+> 重试；若服务器开着反向回退（`dreamina_agnes_fallback='1'`）还会弹回即梦花积分。回退目标必须跟着
+> 「当前真正可用的免费档」走。
+
+### Changed
+
+- **即梦失败回退目标按可用性选择（视频）**：`services/payloads.dreaminaToAgnes('video')` 在智谱已启用
+  （`zhipu_enabled='1'`）且配了 Key 时改投 `cogvideox-flash`——组装复用 `buildZhipuPayload`，与手动提交
+  智谱同一套校验（时长 5/10 归并、prompt 512 截断、画幅映射 3:4→9:16 / 4:3→16:9 / 21:9→16:9，全部记
+  notes，不静默）；**只落免费档**（不读用户可能配成付费档的 `zhipu_model`，自动路径绝不花钱）；
+  `zhipu_enabled='0'`（kill switch）期间不选智谱，回落旧 Agnes flash 映射（无智谱 Key 时的历史兜底）。
+  智谱侧校验不通过（如首帧 URL 非法）→ 返回 null 不改投，保留原失败状态等人工。
+- `checkDreaminaGuard` 的 `free_model` 建议同规则：智谱可用时视频建议 `cogvideox-flash`
+  （不再推荐已 503 断供的 Agnes flash）；图片建议不变。
+- `workers/submitter.fallbackDreaminaVideo` 的凭证守卫按目标上游分流（智谱目标查 `zhipu_api_key`、
+  Agnes 目标查 `api_key`）——映射与守卫不共享假设，双保险。
+
+### Fixed
+
+- 修复「即梦失败 → 改投已死的 Agnes flash → 503 重试 ~22 分钟 → （开着反向回退时）再弹回即梦花积分」
+  的失效回退链：智谱可用时即梦失败直接改投 `cogvideox-flash` 继续制作，不再撞死墙。
+- 图片回退目标（`agnes-image-2.5-flash`）不变：v2.7 只实测了**视频**接口 503，图片接口未证实失效。
+
+### Tests
+
+- `test/unit/provider-fallback.test.js` 新增 7 例：智谱可用时视频改投智谱形态（无首帧/公网首帧 keyframe/
+  本地首帧降级/画幅与时长归并 notes）、kill switch 回落 Agnes、kind=image 不受影响、`free_model` 建议跟走。
+
 ## [2.7.3] - 2026-11-20
 
 > **背景**：v2.7.2 的「免费档限流自动改投 cogvideox-2（0.5 元/条）」没有任何上限——而免费档限流实测可整晚

@@ -308,6 +308,101 @@ describe('dreaminaToAgnes（即梦任务 → 免费档任务映射）', () => {
   });
 });
 
+describe('dreaminaToAgnes（v2.7.4：免费兜底按可用性选目标——智谱优先，Agnes flash 已 503 断供）', () => {
+  const { settings } = require('../../db');
+
+  beforeEach(() => {
+    settings.set('zhipu_api_key', 'sk-zhipu-test');
+    settings.set('zhipu_enabled', '1');
+  });
+  afterEach(() => {
+    settings.set('zhipu_api_key', '');
+    settings.set('zhipu_enabled', '1');
+  });
+
+  test('智谱可用 → 视频改投 cogvideox-flash，请求体为智谱形态', () => {
+    const m = dreaminaToAgnes('video', {
+      prompt: '秋夜的河堤',
+      seconds: 10,
+      size: '720p',
+      aspect_ratio: '16:9',
+      request_json: { model: 'seedance2.0', duration: 10, videoResolution: '720p' },
+    });
+    expect(m.model).toBe('cogvideox-flash');
+    expect(m.seconds).toBe('10');
+    expect(m.size).toBe('1280x720');
+    expect(m.request_json).toMatchObject({
+      model: 'cogvideox-flash',
+      prompt: '秋夜的河堤',
+      size: '1280x720',
+      duration: '10',
+      with_audio: false,
+    });
+    expect(m.request_json.image_url).toBeUndefined(); // 无首帧 → 纯文生
+  });
+
+  test('公网首帧 → keyframe 语义（image_url 数组 1 张），提示词原样保留', () => {
+    const m = dreaminaToAgnes('video', {
+      prompt: 'x',
+      seconds: 5,
+      request_json: { image: 'https://cdn.example.com/a.png' },
+    });
+    expect(m.model).toBe('cogvideox-flash');
+    expect(m.request_json.image_url).toEqual(['https://cdn.example.com/a.png']);
+    expect(m.request_json.prompt).toBe('x');
+  });
+
+  test('本地路径首帧 → 降级纯文生并记 note（智谱同样只认公网 URL）', () => {
+    const m = dreaminaToAgnes('video', {
+      prompt: 'x',
+      seconds: 5,
+      request_json: { image: 'D:\\tmp\\a.png' },
+    });
+    expect(m.request_json.image_url).toBeUndefined();
+    expect(m.notes.join()).toContain('降级');
+  });
+
+  test('画幅 4:3 → 同方向映射 16:9 并记 note；时长 9s → 归并 10s（buildZhipuPayload warnings 进 notes）', () => {
+    const m = dreaminaToAgnes('video', { prompt: 'x', seconds: 9, aspect_ratio: '4:3' });
+    expect(m.aspect_ratio).toBe('16:9');
+    expect(m.size).toBe('1280x720');
+    expect(m.seconds).toBe('10');
+    expect(m.notes.join()).toContain('4:3 智谱不支持 → 16:9');
+    expect(m.notes.join()).toContain('归并');
+  });
+
+  test('zhipu_enabled=0（kill switch）→ 回落旧 Agnes 映射，不把任务塞进智谱队列', () => {
+    settings.set('zhipu_enabled', '0');
+    const m = dreaminaToAgnes('video', { prompt: 'x', seconds: 10, size: '720p' });
+    expect(m.model).toBe(FREE_VIDEO_MODEL);
+    expect(m.request_json.model).toBe(FREE_VIDEO_MODEL);
+  });
+
+  test('kind=image 不受影响：智谱没有图片 API，图片回退仍走 Agnes', () => {
+    const m = dreaminaToAgnes('image', { prompt: 'x', size: '2k', request_json: { count: 1 } });
+    expect(m.model).toBe(FREE_IMAGE_MODEL);
+  });
+
+  test('checkDreaminaGuard 的 free_model 建议跟着智谱可用性走（不再推荐已 503 的 Agnes flash）', () => {
+    const g = checkDreaminaGuard(
+      'seedance2.0',
+      { duration: 10, video_resolution: '720p' },
+      {
+        threshold: 10,
+        remainingCredit: 50,
+      },
+    );
+    expect(g.free_model).toBe('cogvideox-flash');
+    // 图片侧建议不变（智谱没有图片模型）
+    const gi = checkDreaminaGuard(
+      'jimeng-image-3.1',
+      { size: '1k' },
+      { threshold: 10, remainingCredit: 500, vipLevel: '' },
+    );
+    expect(gi.free_model).toBe(FREE_IMAGE_MODEL);
+  });
+});
+
 describe('免费档规格钳制工具', () => {
   test('clampFreeSeconds 落在 4–12', () => {
     expect([3, 4, 10, 12, 30].map(clampFreeSeconds)).toEqual([4, 4, 10, 12, 12]);
