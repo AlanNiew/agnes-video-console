@@ -102,6 +102,12 @@ async function loadSettings() {
     $('#setZpWatermark').checked = s.zhipu_watermark === true;
     // v2.7.2：默认开（免费档限流时自动改投 0.5 元/条付费档；关掉=只等待不花钱）
     if ($('#setZpPaidFallback')) $('#setZpPaidFallback').checked = s.zhipu_paid_fallback !== false;
+    // v2.7.3：自动改投每日条数上限 + 当日已用（费用为估算，实际以智谱账单为准）
+    if ($('#setZpPaidDailyCap')) $('#setZpPaidDailyCap').value = s.zhipu_paid_daily_cap ?? 20;
+    if ($('#zpPaidTodayStatus')) {
+      $('#zpPaidTodayStatus').textContent =
+        s.zhipu_paid_used > 0 ? `（今日已自动改投 ${s.zhipu_paid_used} 条 ≈ ${s.zhipu_paid_cost_yuan} 元）` : '';
+    }
     $('#setZpMaxMin').value = s.zhipu_max_active_minutes ?? 30;
     renderZhipuState();
     // 即梦 CLI 状态（独立端点，失败不影响设置面板其余部分）
@@ -172,6 +178,16 @@ async function saveSettings() {
     body.zhipu_max_active_minutes = zpMax;
     // v2.7.2：免费档限流时是否自动改投付费档（默认开；关掉=不产生费用）
     body.zhipu_paid_fallback = $('#setZpPaidFallback') ? $('#setZpPaidFallback').checked : true;
+    // v2.7.3：自动改投每日条数上限（0=不限；空 = 不改）。手动选付费档提交不占此配额。
+    const zpCapRaw = $('#setZpPaidDailyCap') ? $('#setZpPaidDailyCap').value.trim() : '';
+    if (zpCapRaw !== '') {
+      const zpCap = Number(zpCapRaw);
+      if (!Number.isInteger(zpCap) || zpCap < 0 || zpCap > 10000) {
+        toast('自动改投每日上限需为 0–10000 的整数（0=不限）', 'warn');
+        return;
+      }
+      body.zhipu_paid_daily_cap = zpCap;
+    }
     await api('/api/settings', { method: 'PUT', body });
     toast('设置已保存', 'ok');
     $('#settingsModal').hidden = true;

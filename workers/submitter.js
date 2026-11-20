@@ -33,6 +33,7 @@ const {
   toDreaminaReasonText,
 } = require('../core/provider-policy');
 const { checkBudget, recordSpend, checkAutoShotQuota, recordAutoShot } = require('../services/dreamina-budget');
+const { checkPaidQuota, recordPaidShot } = require('../services/zhipu-budget');
 
 /**
  * v2.6.7 反向回退用的即梦账户状态缓存（60s）：
@@ -543,6 +544,9 @@ class Submitter {
       if (cls.retryable) {
         // v2.7.2：免费档持续容量限流（429/1305）→ 自动改投性价比付费档（默认 0.5 元/条），
         // 保证「免费档打满时也能出片」；判定纯函数见 shouldZhipuPaidFallback（先给免费档 2 次机会）。
+        // v2.7.3：改投前必须过**每日条数配额**（zhipu_paid_daily_cap，默认 20 条/天）——
+        // 限流可整晚持续，无配额的自动花钱会把无人值守的一整集都翻成付费。
+        let quotaNote = '';
         if (
           shouldZhipuPaidFallback({
             model: payload.model,
@@ -551,19 +555,31 @@ class Submitter {
             attempts,
           })
         ) {
-          const fb = ZHIPU_PAID_FALLBACK_MODEL;
-          const nextPayload = retargetZhipuPayload(payload, fb);
-          if (nextPayload) {
-            this.retryUntil.delete(t.id);
-            this.zhipuWaitStart.delete(t.id);
-            this.zhipuCooldownUntil = 0; // 冷却只针对免费档，改投后立刻提交
-            tasks.update(t.id, {
-              model: fb,
-              request_json: nextPayload,
-              error_message: `免费档限流（429/1305），已自动改投付费档 ${(ZHIPU_MODELS[fb] || {}).label || fb}`,
-            });
-            log('warn', `任务 #${t.id} 智谱免费档限流（${cls.kind}），自动改投付费档 ${fb}（0.5 元/条）并立即重试提交`);
-            return this.submitZhipu({ ...t, model: fb, request_json: nextPayload });
+          const quota = checkPaidQuota();
+          if (quota.allowed) {
+            const fb = ZHIPU_PAID_FALLBACK_MODEL;
+            const nextPayload = retargetZhipuPayload(payload, fb);
+            if (nextPayload) {
+              // 记账时机 = 改投即预扣：改投后提交失败也可能已被智谱扣费，宁可高估已花（配额只会更早收紧）
+              const usedAfter = recordPaidShot();
+              this.retryUntil.delete(t.id);
+              this.zhipuWaitStart.delete(t.id);
+              this.zhipuCooldownUntil = 0; // 冷却只针对免费档，改投后立刻提交
+              tasks.update(t.id, {
+                model: fb,
+                request_json: nextPayload,
+                error_message: `免费档限流（429/1305），已自动改投付费档 ${(ZHIPU_MODELS[fb] || {}).label || fb}（今日自动改投第 ${usedAfter} 条）`,
+              });
+              log(
+                'warn',
+                `任务 #${t.id} 智谱免费档限流（${cls.kind}），自动改投付费档 ${fb}（0.5 元/条，今日已改投 ${usedAfter}/${quota.cap} 条）并立即重试提交`,
+              );
+              return this.submitZhipu({ ...t, model: fb, request_json: nextPayload });
+            }
+          } else {
+            // 配额用尽：不改投，落到下方共享的退避等待路径（只等待、不再花钱），备注里写明原因
+            quotaNote = quota.text;
+            log('warn', `任务 #${t.id} 智谱免费档限流（${cls.kind}），但${quota.text}`);
           }
         }
         const backoffKind = cls.kind === 'queue-full' ? 'queue' : cls.kind === 'rate-limit' ? 'rate-limit' : 'net';
@@ -578,8 +594,10 @@ class Submitter {
         }
         this.backoff(t.id, plan.delay, attempts);
         this.zhipuCooldownUntil = Math.max(this.zhipuCooldownUntil || 0, Date.now() + plan.delay);
-        // 让前端/任务列表看得见「在等，不是卡死」
-        tasks.update(t.id, { error_message: retryNote(plan) });
+        // 让前端/任务列表看得见「在等，不是卡死」；配额用尽时附上原因，用户知道为什么没自动花钱
+        tasks.update(t.id, {
+          error_message: quotaNote ? `${retryNote(plan)}；${quotaNote}` : retryNote(plan),
+        });
         log(
           'warn',
           `任务 #${t.id} 智谱返回 ${r.status}（${cls.kind}：${cls.message}），` +

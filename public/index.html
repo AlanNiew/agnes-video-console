@@ -435,6 +435,15 @@
                   >
                 </label>
               </div>
+              <!-- v2.7.3：自动改投的每日条数硬上限——限流可整晚持续，无上限会把无人值守的一整集都翻成付费 -->
+              <div class="field" style="margin: 0">
+                <label>自动改投每日上限（条） <span class="hint" id="zpPaidTodayStatus"></span></label>
+                <input type="number" id="setZpPaidDailyCap" min="0" max="10000" step="1" />
+                <p class="hint">
+                  0.5 元/条：默认 20 条 ≈ 10 元/天，达到上限后只等待免费档恢复、不再自动花钱；0 =
+                  不限。手动选择付费档提交不受此限。
+                </p>
+              </div>
             </div>
             <p class="hint">
               这里只配智谱通道内的档位；要把<strong>全局默认模型</strong>切到 CogVideoX，请改上方的「默认模型」。 保存

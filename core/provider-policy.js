@@ -10,7 +10,7 @@
  *   - `shouldFallbackFromDreamina()` 运行期失败后是否改投免费档（按 dreamina.classify 的 kind）
  * 具体「改投」动作由 workers（submitter / image-worker）与装配层执行，见 workers/*.js。
  */
-const { MODELS, IMAGE_MODEL, DREAMINA_DAILY_BUDGET_DEFAULT } = require('./constants');
+const { MODELS, IMAGE_MODEL, DREAMINA_DAILY_BUDGET_DEFAULT, ZHIPU_PAID_DAILY_CAP_DEFAULT } = require('./constants');
 
 /** 预算上限非法时的回落值（与 core/constants 的默认值同源，避免两处漂移） */
 const DAILY_BUDGET_DEFAULT = DREAMINA_DAILY_BUDGET_DEFAULT;
@@ -224,6 +224,32 @@ function dreaminaAutoQuotaAllows(o = {}) {
   return { allowed: usedToday < realCap, usedToday, cap: realCap };
 }
 
+/**
+ * v2.7.3 智谱**付费改投**的每日条数配额（纯函数，便于单测）。
+ *
+ * 为什么需要：免费档限流（429/1305）实测可整晚持续（>11 小时），v2.7.2 的「自动改投
+ * cogvideox-2（0.5 元/条）」若无配额，无人值守的 24h 创作会把每个高峰的整集镜头全部
+ * 翻成付费——这与用户「自动花钱必须有硬上限」的既有口径（即梦每日 100 积分）冲突。
+ *
+ * 语义对齐 `dreaminaBudgetAllows` 的安全方向：
+ *   - cap=0 → 不限（唯一合法的"不限"）；
+ *   - cap 非法（NaN/负数）→ 回落**默认上限 20**，不能当"不限"——一条坏配置就放开自动花钱。
+ *   - 记账时机 = 改投即预扣：改投后提交失败也可能已被扣费，宁可高估已花（配额只会更早收紧）。
+ * 手动选 cogvideox-2/3 提交不占此配额（正如即梦手动「升级」不占自动兜底配额）。
+ *
+ * @param {{cap?:number, usedToday?:number}} o
+ * @returns {{allowed:boolean, usedToday:number, cap:number}}
+ */
+function zhipuPaidQuotaAllows(o = {}) {
+  const cap = Number(o.cap);
+  const usedToday = Number(o.usedToday) || 0;
+  // ⚠ 非法 cap 回落到默认上限（危险方向收紧），与 dreaminaAutoQuotaAllows 的"视为 0"相反：
+  // 这里的默认值本身就是硬约束（20 条/天），放开比收紧危险得多。
+  const realCap = !Number.isFinite(cap) || cap < 0 ? ZHIPU_PAID_DAILY_CAP_DEFAULT : cap;
+  if (realCap <= 0) return { allowed: true, usedToday, cap: 0 };
+  return { allowed: usedToday < realCap, usedToday, cap: realCap };
+}
+
 module.exports = {
   FREE_VIDEO_MODEL,
   FREE_IMAGE_MODEL,
@@ -240,4 +266,5 @@ module.exports = {
   dreaminaBudgetAllows,
   budgetReasonText,
   dreaminaAutoQuotaAllows,
+  zhipuPaidQuotaAllows,
 };

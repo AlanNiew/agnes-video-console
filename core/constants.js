@@ -93,6 +93,18 @@ const ZHIPU_DEFAULT_BASE_URL = 'https://open.bigmodel.cn';
 const ZHIPU_PROMPT_MAX = 512; // 官方 prompt 上限（字符）
 // 免费档被容量限流（429/1305）时自动改投的性价比档（0.5 元/条）。可在设置里用 zhipu_paid_fallback 关闭。
 const ZHIPU_PAID_FALLBACK_MODEL = 'cogvideox-2';
+/**
+ * 智谱**自动改投**的每日条数上限（v2.7.3，默认 20 条 ≈ 10 元/天）。
+ *
+ * 背景：免费档限流实测可从晚上持续到次日早上（>11 小时），v2.7.2 的自动改投若无上限，
+ * 无人值守的 24h 创作会在每个高峰把整集镜头都翻成付费（20 镜 ≈ 10 元/集，跨集无界）。
+ * 语义与即梦每日预算闸门（DREAMINA_DAILY_BUDGET_DEFAULT）一致：
+ *   '0' = 不限；非法值回落本默认（不能当"不限"，那是危险方向）。
+ * 只拦**自动改投**：手动选 cogvideox-2/3 提交不占此配额（用户自己的决定）。
+ */
+const ZHIPU_PAID_DAILY_CAP_DEFAULT = 20;
+/** cogvideox-2 官方刊例价（元/条，5/10 秒同价；仅用于提示文案，计费以智谱账单为准） */
+const ZHIPU_PAID_FALLBACK_PRICE_YUAN = 0.5;
 const ZHIPU_ASPECT_TO_SIZE = {
   '16:9': '1280x720',
   '9:16': '720x1280',
@@ -660,6 +672,8 @@ module.exports = {
   ZHIPU_PROMPT_MAX,
   ZHIPU_ASPECT_TO_SIZE,
   ZHIPU_PAID_FALLBACK_MODEL,
+  ZHIPU_PAID_DAILY_CAP_DEFAULT,
+  ZHIPU_PAID_FALLBACK_PRICE_YUAN,
   MODES,
   V2_MODES,
   ASPECT_RATIOS,

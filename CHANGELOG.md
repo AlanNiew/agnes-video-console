@@ -2,6 +2,37 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.3] - 2026-11-20
+
+> **背景**：v2.7.2 的「免费档限流自动改投 cogvideox-2（0.5 元/条）」没有任何上限——而免费档限流实测可整晚
+> 持续（>11 小时），无人值守的 24h 创作会在每个高峰把整集镜头全部翻成付费（20 镜 ≈ 10 元/集，跨集无界）。
+> 这与「自动花钱必须有硬上限」的既有口径（即梦每日 100 积分预算）冲突，补上同款每日配额闸门。
+
+### Added
+
+- **自动改投每日条数配额**（设置项 `zhipu_paid_daily_cap`，默认 **20 条 ≈ 10 元/天**；`'0'`=不限；
+  **非法值回落默认 20**，不能当"不限"——与即梦预算闸门同一安全方向）：
+  - 纯函数 `core/provider-policy.zhipuPaidQuotaAllows()`（cap 非法回落默认，显式 0 才是不限）；
+  - 记账与闸门 `services/zhipu-budget.js`（完全镜像 dreamina-budget 模式）：台账存 settings
+    `zhipu_paid_ledger`（`{ "YYYY-MM-DD": 条 }`，跨天清零、保留 7 天），**改投即预扣**（提交失败也可能
+    已被扣费，宁可高估已花）；`checkPaidQuota()` / `recordPaidShot()` / `setPaidForDay()` / `todayPaidSummary()`；
+  - 提交器：改投前先过配额，用尽时不改投、落到共享退避等待路径（只等待、不再自动花钱），
+    任务 `error_message` 与日志附上「智谱付费改投今日已达上限（N/20 条 ≈ X 元）」；改投成功路径的
+    备注/日志带「今日自动改投第 N 条」便于对账。
+- `/api/settings` 增 `zhipu_paid_daily_cap`（GET 数值 / PUT 可写，0–10000 整数）与
+  `zhipu_paid_used` / `zhipu_paid_cap` / `zhipu_paid_remain` / `zhipu_paid_cost_yuan` 当日概览；
+  人工校正 PUT `zhipu_paid_today`（与 `dreamina_spent_today` 同款）。`/api/meta.zhipu` 增
+  `paid_daily_cap` / `paid_used_today` / `paid_fallback_price_yuan`。设置面板新增上限输入框与
+  「今日已自动改投 N 条」状态。
+- **只拦自动改投**：手动选 `cogvideox-2` / `cogvideox-3` 提交不占此配额（用户自己的决定，
+  正如即梦手动「升级」不占自动兜底配额）。
+
+### Tests
+
+- `test/unit/zhipu-budget.test.js` 新增 12 例：纯函数（配额内放行/用满即拦/显式 0 不限/非法 cap 回落
+  默认 20/脏 usedToday 兜底）+ 台账（计数不污染即梦账、拦截文案含条数与估算费用、跨天不串账、
+  脏台账不抛、人工校正、设 0 不限、坏配置回落默认）。
+
 ## [2.7.2] - 2026-11-01
 
 > **背景**：智谱免费档 `cogvideox-flash` 从 2026-10-31 22:16 持续 `429 code 1305` 到次日 09:18（>11 小时），

@@ -23,7 +23,9 @@ const {
   ZHIPU_DEFAULT_BASE_URL,
   ZHIPU_PROMPT_MAX,
   ZHIPU_PAID_FALLBACK_MODEL,
+  ZHIPU_PAID_FALLBACK_PRICE_YUAN,
 } = require('../core/constants');
+const zhipuBudget = require('../services/zhipu-budget');
 
 /** 即梦 CLI 安装探测（纯文件检查、不 spawn；异常一律保守返回 false） */
 function safeInstalled() {
@@ -116,6 +118,10 @@ module.exports = function registerMetaRoutes(app) {
         paid_fallback: settings.get('zhipu_paid_fallback', DEFAULT_SETTINGS.zhipu_paid_fallback ?? '1') === '1',
         paid_fallback_model: ZHIPU_PAID_FALLBACK_MODEL,
         paid_fallback_label: (ZHIPU_MODELS[ZHIPU_PAID_FALLBACK_MODEL] || {}).label || ZHIPU_PAID_FALLBACK_MODEL,
+        paid_fallback_price_yuan: ZHIPU_PAID_FALLBACK_PRICE_YUAN,
+        // v2.7.3：自动改投每日条数上限与当日已用（前端据此提示「今天还会不会再自动花钱」）
+        paid_daily_cap: zhipuBudget.paidCap(),
+        paid_used_today: zhipuBudget.paidShotsToday(),
         models: Object.entries(ZHIPU_MODELS).map(([id, m]) => ({
           id,
           label: m.label,

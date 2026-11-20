@@ -57,5 +57,9 @@ const DEFAULT_SETTINGS = {
   // v2.7.2：免费档被容量限流（429/1305）时，是否自动改投性价比付费档 cogvideox-2（0.5 元/条）。
   // '1' = 自动改投（默认，保证「免费档打满时也能出片」）；'0' = 只退避等待，不花钱。
   zhipu_paid_fallback: '1',
+  // v2.7.3：**自动改投**的每日条数上限（0=不限；非法值回落默认 20）：无人值守时防止整集翻付费。
+  // 20 条 ≈ 10 元/天；手动选 cogvideox-2/3 提交不占此配额。闸门实现见 services/zhipu-budget.js。
+  zhipu_paid_daily_cap: '20',
+  zhipu_paid_ledger: '{}', // v2.7.3 当日自动改投条数台账：{ "YYYY-MM-DD": 条 }，跨天清零（配额闸门的判据）
 };
 module.exports = { settings, DEFAULT_SETTINGS };

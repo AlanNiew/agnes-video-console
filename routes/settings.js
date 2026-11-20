@@ -12,6 +12,7 @@ const { log } = require('../core/logger');
 const { MODELS, ZHIPU_MODELS, ZHIPU_DEFAULT_MODEL } = require('../core/constants');
 const { ApiError } = require('../core/errors');
 const dreaminaBudget = require('../services/dreamina-budget');
+const zhipuBudget = require('../services/zhipu-budget');
 const { isHttpUrl } = require('../services/payloads');
 const { getVoicePool } = require('../services/voice-pool');
 
@@ -93,6 +94,9 @@ module.exports = function registerSettingsRoutes(app) {
       ),
       // v2.7.2：免费档被容量限流时是否自动改投付费性价比档（0.5 元/条）
       zhipu_paid_fallback: settings.get('zhipu_paid_fallback', DEFAULT_SETTINGS.zhipu_paid_fallback) === '1',
+      // v2.7.3：自动改投的每日条数上限（0=不限；默认 20 条 ≈ 10 元/天）+ 当日已用概览
+      zhipu_paid_daily_cap: Number(settings.get('zhipu_paid_daily_cap', DEFAULT_SETTINGS.zhipu_paid_daily_cap)),
+      ...zhipuBudget.todayPaidSummary(),
       ...dreaminaBudget.todaySummary(),
     });
   });
@@ -345,6 +349,19 @@ module.exports = function registerSettingsRoutes(app) {
     if (b.zhipu_paid_fallback !== undefined) {
       settings.set('zhipu_paid_fallback', b.zhipu_paid_fallback ? '1' : '0');
       changed.push('zhipu_paid_fallback');
+    }
+    // v2.7.3：自动改投的每日条数上限（0=不限；默认 20 条 ≈ 10 元/天，防无人值守整集翻付费）
+    if (b.zhipu_paid_daily_cap !== undefined) {
+      const n = Number(b.zhipu_paid_daily_cap);
+      if (!Number.isInteger(n) || n < 0 || n > 10000)
+        throw new ApiError(400, 'zhipu_paid_daily_cap 须为 0–10000 的整数（0=不限）');
+      settings.set('zhipu_paid_daily_cap', String(n));
+      changed.push('zhipu_paid_daily_cap');
+    }
+    // v2.7.3 人工校正当日已自动改投条数（记账漂移时的修正入口，与 dreamina_spent_today 同款）
+    if (b.zhipu_paid_today !== undefined) {
+      zhipuBudget.setPaidForDay(zhipuBudget.todayKey(), Number(b.zhipu_paid_today));
+      changed.push('zhipu_paid_ledger');
     }
     // 便利行为（合同第 5 条）：本次填了智谱 Key、又没显式指定 model、当前默认仍是已失效的
     // Agnes 免费档 → 自动把默认模型切到智谱默认档。用户填完 Key 保存即可直接出片，
