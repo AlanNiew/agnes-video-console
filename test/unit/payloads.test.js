@@ -245,9 +245,27 @@ describe('buildZhipuPayload / buildPayload（v2.7 智谱 CogVideoX 分发）', (
     expect(meta.warnings).toEqual([]);
   });
 
-  test('画幅映射：9:16 → 720x1280，1:1 → 1024x1024', () => {
-    expect(buildZhipuPayload({ ...base, aspect_ratio: '9:16' }).payload.size).toBe('720x1280');
+  test('画幅映射按模型分档：cogvideox-2 的 9:16 → 720x1280，flash 的 1:1 → 1024x1024', () => {
+    const { ZHIPU_MODELS } = require('../../core/constants');
+    expect(buildZhipuPayload({ ...base, model: 'cogvideox-2', aspect_ratio: '9:16' }).payload.size).toBe('720x1280');
     expect(buildZhipuPayload({ ...base, aspect_ratio: '1:1' }).payload.size).toBe('1024x1024');
+    // 付费档的竖屏档位是官方文档口径，未实测（不花钱验证），仅做清单不漂移护栏
+    expect(ZHIPU_MODELS['cogvideox-2'].sizes).toContain('720x1280');
+  });
+
+  test('flash 实测无竖屏（2026-11-20 两次复现 400「不支持当前size值」）', () => {
+    // 画幅映射出的 720x1280 不在 flash 支持集 → 明确 400（不静默改画幅），文案给出可操作建议
+    expectApiError(400, () => buildZhipuPayload({ ...base, aspect_ratio: '9:16' }));
+    try {
+      buildZhipuPayload({ ...base, aspect_ratio: '9:16' });
+    } catch (e) {
+      expect(e.message).toContain('cogvideox-flash 不支持 9:16');
+      expect(e.message).toContain('渲染竖屏版');
+    }
+    // 模型清单护栏：flash 的 sizes 不得再含 720x1280（上游实测拒收）
+    const { ZHIPU_MODELS } = require('../../core/constants');
+    expect(ZHIPU_MODELS['cogvideox-flash'].sizes).not.toContain('720x1280');
+    expect(ZHIPU_MODELS['cogvideox-flash'].sizes).toEqual(expect.arrayContaining(['1280x720', '1024x1024']));
   });
 
   test('智谱不支持的画幅（4:3）→ 明确 400，不静默改比例', () => {

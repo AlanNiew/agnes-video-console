@@ -261,6 +261,16 @@ function buildZhipuPayload(b) {
         '请在项目/镜头设置里改用这三种画幅，或改用 Agnes 模型',
     );
   }
+  // v2.7.5：画幅映射出的像素档还必须落在**该模型**的支持集内——flash 实测无竖屏
+  // （720x1280 被上游 400 拒）。按仓库原则「不猜、不静默改比例」：不支持时明确 400
+  // 并给出可操作建议，绝不偷偷换画幅（静默改画幅 = 用户以为在拍竖屏实际出了横屏）。
+  if (!info.sizes.includes(mappedSize)) {
+    throw new ApiError(
+      400,
+      `${model} 不支持 ${aspectRatio} 画幅（该模型仅支持 ${info.sizes.join(' / ')}）。` +
+        '竖屏创作建议：改用 16:9 源 + 渲染竖屏版，或选支持 1080x1920 的 cogvideox-3（付费）',
+    );
+  }
   const requestedSize = String(b.size || '').trim();
   const size = info.sizes.includes(requestedSize) ? requestedSize : mappedSize;
   if (requestedSize && requestedSize !== size) {

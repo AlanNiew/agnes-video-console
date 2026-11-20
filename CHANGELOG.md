@@ -2,6 +2,28 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与 [Semantic Versioning](https://semver.org/lang/zh-CN/)。
 
+## [2.7.5] - 2026-11-20
+
+> **背景**：本地从 0 到 1 实测撞出——全自动成片在 **9:16 竖屏项目**的 videos 阶段全军覆没：
+> `cogvideox-flash` 提交 `720x1280` 被上游 `400「不支持当前size值」` 拒收（两次复现；`1024x1024` 与
+> `1280x720` 均正常受理）。v2.7 接入时的 19/19 实测全是 16:9，**竖屏路径从未真跑过**——免费档没有竖屏。
+
+### Fixed
+
+- **`cogvideox-flash` 的 sizes 移除 `720x1280`**（`core/constants`）：免费档真实支持集 =
+  `1280x720 / 1024x1024`；hint 同步改口。竖屏两条正路：16:9 源 + 渲染竖屏版（模糊背景 + 字幕顶锚定），
+  或 cogvideox-3（1080x1920，付费 1 元/条）。
+- **画幅 → 像素档增加模型级校验**（`services/payloads.buildZhipuPayload`）：`ZHIPU_ASPECT_TO_SIZE`
+  映射出的 size 不在该模型 `sizes` 内 → **明确 400**（含可操作建议「改 16:9 + 渲染竖屏版，或换
+  cogvideox-3」），按仓库原则不静默改画幅——此前 flash+9:16 会把上游的 400 原样透传，文案不可读。
+- **前端画幅下拉按模型 sizes 推导**（`public/task-meta.js`）：选 flash 时不再给出必 400 的 9:16 选项
+  （越界旧值由 fillOptions 自动收回到首个合法项）；付费档仍显示其官方文档口径的竖屏档。
+
+### Tests
+
+- `payloads.test.js`：画幅映射改为**按模型分档**（cogvideox-2 的 9:16 → 720x1280；flash 的 1:1 →
+  1024x1024）；新增 flash 无竖屏护栏（9:16 → 400 且文案含建议 + sizes 清单不含 720x1280）。
+
 ## [2.7.4] - 2026-11-20
 
 > **背景**：v2.6.1 的即梦失败回退（`dreaminaToAgnes`）目标写死 `agnes-video-2.5-flash`，而该免费档自

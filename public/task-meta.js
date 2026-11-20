@@ -168,7 +168,22 @@ function onModelChange() {
     fillOptions($('#fSeconds'), zp.durations);
     const zAspect = $('#fAspect');
     if (zAspect) zAspect.disabled = false;
-    fillOptions(zAspect, ZHIPU_ASPECTS);
+    // v2.7.5：画幅选项按模型 sizes 推导——flash 实测无竖屏（720x1280 上游 400），
+    // 不能给用户一个必 400 的 9:16 选项；fillOptions 会自动把越界旧值收回到首个合法项。
+    const modelAspects = [
+      ...new Set(
+        (zp.sizes || [])
+          .map((sz) => {
+            const m = /^(\d+)x(\d+)$/.exec(String(sz));
+            if (!m) return null;
+            const w = Number(m[1]);
+            const h = Number(m[2]);
+            return w > h ? '16:9' : h > w ? '9:16' : '1:1';
+          })
+          .filter(Boolean),
+      ),
+    ];
+    fillOptions(zAspect, modelAspects.length ? modelAspects : ZHIPU_ASPECTS);
     syncZhipuSize(); // 默认画幅 16:9 → size 1280x720，避免残留上一个模型的档位
     $('#grpVideos')?.classList.add('hidden');
     return;

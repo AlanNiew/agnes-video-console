@@ -51,14 +51,18 @@ const RETIRED_MODELS = {
  * 「规格」下拉的单一事实来源，与会话里其它模型保持同一形态。
  */
 const ZHIPU_MODELS = {
+  // ⚠ v2.7.5（2026-11-20 两次实测复现）：flash 提交 720x1280 被上游 400「不支持当前size值」拒绝，
+  // 1024x1024 与 1280x720 正常受理 —— 免费档**没有竖屏**。竖屏两条正路：① 16:9 源 + 渲染竖屏版
+  // （模糊背景 + 字幕顶锚定，见 CREATION_PLAYBOOK 避坑 #18）；② cogvideox-3（1080x1920，付费 1 元/条）。
+  // buildZhipuPayload 对「画幅映射出的 size 不在该模型支持集」会明确 400，不静默改画幅。
   'cogvideox-flash': {
     family: 'zhipu',
     provider: 'zhipu',
-    sizes: ['1280x720', '720x1280', '1024x1024'],
+    sizes: ['1280x720', '1024x1024'],
     durations: ['5', '10'],
     free: true,
     short: 'CogVideoX-Flash',
-    hint: '长期免费 · 5/10 秒 · 720P 横屏/竖屏/方形 · 支持首帧（多图参考降级为首帧）',
+    hint: '长期免费 · 5/10 秒 · 横屏 720P 与 1:1 方形（无竖屏，竖屏请走 16:9 源 + 渲染竖屏版）· 支持首帧（多图参考降级为首帧）',
     label: '智谱 CogVideoX-Flash（免费）',
     rate_limit: '免费档受账户速率限制约束，超限由提交器自动退避重试',
   },
